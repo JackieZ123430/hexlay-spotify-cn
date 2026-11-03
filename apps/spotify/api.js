@@ -136,8 +136,14 @@ class SpotifyClient {
         this.isCurrentLiked = false;
         this._lastCheckedTrackId = null;
 
+        this.isLoadingPlaylists = false;
+        this.isLoadingLiked = false;
+        this.lastPlaylistsFetch = 0;
+        this.lastLikedFetch = 0;
+        this.refreshing = false;
+
         this._loadAuth();
-        if (this.token) {
+        if (this.token || this.refreshToken) {
             this.initialFetch();
         }
 
@@ -225,7 +231,7 @@ class SpotifyClient {
 
             if (fs.existsSync(configPath)) {
                 const data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-                if (data.token) {
+                if (data.token || data.refreshToken) {
                     this.token = data.token;
                     this.refreshToken = data.refreshToken;
                     this.expiresAt = data.expiresAt || 0;
@@ -272,14 +278,25 @@ class SpotifyClient {
     }
 
     async refreshAccessToken() {
-        if (!this.refreshToken || !this.clientId || !this.clientSecret) return false;
+        if (!this.refreshToken || !this.clientId) return false;
         try {
-            const postData = new URLSearchParams({
+            const params = {
                 grant_type: 'refresh_token',
-                refresh_token: this.refreshToken
-            }).toString();
+                refresh_token: this.refreshToken,
+                client_id: this.clientId
+            };
+            const postData = new URLSearchParams(params).toString();
 
-            const authHeader = 'Basic ' + Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
+            const headers = {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Content-Length': Buffer.byteLength(postData)
+            };
+
+            // Basic auth is only used if a clientSecret was explicitly provided (standard OAuth).
+            // For PKCE mobile pairing, no secret is used and Spotify expects client_id in the body.
+            if (this.clientSecret) {
+                headers['Authorization'] = 'Basic ' + Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
+            }
 
             return new Promise((resolve) => {
                 const req = https.request({
@@ -287,11 +304,8 @@ class SpotifyClient {
                     port: 443,
                     path: '/api/token',
                     method: 'POST',
-                    headers: {
-                        'Authorization': authHeader,
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        'Content-Length': Buffer.byteLength(postData)
-                    }
+                    headers: headers,
+                    timeout: 6000
                 }, (res) => {
                     let data = '';
                     res.on('data', c => { data += c; });
@@ -302,6 +316,8 @@ class SpotifyClient {
                                 this.token = parsed.access_token;
                                 this.expiresAt = Date.now() + (parsed.expires_in * 1000);
                                 if (parsed.refresh_token) this.refreshToken = parsed.refresh_token;
+                                this.paired = true;
+                                this.isOnline = true;
 
                                 // Persist updated tokens
                                 const paths = [
@@ -321,12 +337,27 @@ class SpotifyClient {
                                 });
                                 this.log.info('Successfully refreshed Spotify access token');
                                 return resolve(true);
+                            } else {
+                                this.log.warn('Spotify token refresh rejected: ' + data);
+                                if (parsed.error === 'invalid_grant' || res.statusCode === 400) {
+                                    this.token = null;
+                                    this.paired = false;
+                                }
                             }
-                        } catch (e) {}
+                        } catch (e) {
+                            this.log.warn('Spotify token refresh parse error: ' + e.message);
+                        }
                         resolve(false);
                     });
                 });
-                req.on('error', () => resolve(false));
+                req.on('error', (err) => {
+                    this.log.warn('Spotify token refresh network error: ' + err.message);
+                    resolve(false);
+                });
+                req.on('timeout', () => {
+                    req.destroy();
+                    resolve(false);
+                });
                 req.write(postData);
                 req.end();
             });
@@ -337,6 +368,10 @@ class SpotifyClient {
 
     async initialFetch() {
         try {
+            // If token is missing, expired, or expiring in less than 60s, refresh first
+            if (this.refreshToken && (!this.token || (this.expiresAt && Date.now() >= this.expiresAt - 60000))) {
+                await this.refreshAccessToken();
+            }
             await this.pollPlayer();
             await this.fetchPlaylists();
             await this.fetchLikedSongs();
@@ -372,8 +407,15 @@ class SpotifyClient {
                             if (refreshed) {
                                 return this._request(method, endpoint, body).then(resolve).catch(reject);
                             }
+                            this.token = null;
+                            this.paired = false;
                             reject(new Error('Spotify session expired. Please re-authenticate.'));
                         }).catch(reject);
+                    }
+                    if (res.statusCode === 401 && !this.refreshToken) {
+                        this.token = null;
+                        this.paired = false;
+                        return reject(new Error('Spotify session expired. Please re-authenticate.'));
                     }
                     try {
                         const json = data ? JSON.parse(data) : {};
@@ -429,9 +471,11 @@ class SpotifyClient {
 
     async fetchPlaylists() {
         if (!this.token) return;
+        this.isLoadingPlaylists = true;
+        this.lastPlaylistsFetch = Date.now();
         try {
             const res = await this._request('GET', '/v1/me/playlists?limit=25');
-            if (res && res.items && res.items.length) {
+            if (res && res.items) {
                 const list = res.items.map((pl, i) => {
                     const count = pl.tracks ? (pl.tracks.total ?? 0) : (pl.items ? (pl.items.total ?? 0) : 0);
                     return {
@@ -445,12 +489,14 @@ class SpotifyClient {
                     };
                 });
                 this.playlists = list;
-                if (list[0]) {
+                if (list[0] && (!this.currentPlaylist || !this.currentPlaylist.tracks)) {
                     this.selectPlaylist(list[0]);
                 }
             }
         } catch (e) {
             this.log.warn('Fetch playlists error: ' + e.message);
+        } finally {
+            this.isLoadingPlaylists = false;
         }
     }
 
@@ -522,6 +568,8 @@ class SpotifyClient {
 
     async fetchLikedSongs() {
         if (!this.token) return;
+        this.isLoadingLiked = true;
+        this.lastLikedFetch = Date.now();
         try {
             const res = await this._request('GET', '/v1/me/tracks?limit=50');
             if (res && res.items) {
@@ -545,6 +593,8 @@ class SpotifyClient {
             }
         } catch (e) {
             this.log.warn('Fetch liked songs error: ' + e.message);
+        } finally {
+            this.isLoadingLiked = false;
         }
     }
 
@@ -597,6 +647,12 @@ class SpotifyClient {
         const dt = now - this.lastTickTime;
         this.lastTickTime = now;
 
+        // Auto-refresh token if expiring within 2 minutes
+        if (this.token && this.refreshToken && this.expiresAt && (now >= this.expiresAt - 120000) && !this.refreshing) {
+            this.refreshing = true;
+            this.refreshAccessToken().finally(() => { this.refreshing = false; });
+        }
+
         // Poll state from Spotify cloud every 2.5 seconds
         if (this.token && now - this.lastSync > 2500 && !this.syncing) {
             this.lastSync = now;
@@ -605,6 +661,18 @@ class SpotifyClient {
                 this.pollPlayer(),
                 this.fetchDevices()
             ]).finally(() => { this.syncing = false; });
+        }
+
+        // Retry playlists if online and authenticated, but none loaded yet
+        if (this.token && this.playlists.length === 0 && !this.isLoadingPlaylists && (now - this.lastPlaylistsFetch > 10000)) {
+            this.lastPlaylistsFetch = now;
+            this.fetchPlaylists().catch(() => {});
+        }
+
+        // Retry liked songs if online and authenticated, but none loaded yet
+        if (this.token && this.likedSongs.length === 0 && !this.isLoadingLiked && (now - this.lastLikedFetch > 10000)) {
+            this.lastLikedFetch = now;
+            this.fetchLikedSongs().catch(() => {});
         }
 
         // Local progress interpolation between poll ticks

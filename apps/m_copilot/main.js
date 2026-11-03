@@ -34,7 +34,6 @@ const PROMPTS = [
     { title: 'Launch Protocol', query: 'What are the launch control prerequisites and sequence for BMW G-Series ZF 8HP?' },
     { title: 'Turbo Cooling', query: 'What are the turbo cooling and post-drive heat management guidelines for BMW turbocharged engines?' },
     { title: 'Tire Grip & PSI', query: 'Analyze current tire pressures and rubber temperature grip window.' },
-    { title: 'ECU Health & DTC', query: 'Run full OBD-II UDS scan for active or shadow fault codes.' },
     { title: 'Mountain Pass', query: 'Analyze vehicle handling, chassis balance, and sport differential for aggressive mountain twisties.' },
     { title: 'BMW Specs & Oil', query: 'What are the factory oil specifications, change intervals, and Longlife (LL-01 / LL-04 / LL-17FE+) service guidelines for BMW G-Series engines?' }
 ];
@@ -246,49 +245,6 @@ mgu.run({
             return lines;
         }
 
-        /* ---------- Neural Orb Drawing (Restrained OEM Aesthetics) ---------- */
-        function drawNeuralOrb(cv, cx, cy, radius, now) {
-            // Calm, understated background bezel
-            cv.circle(cx, cy, radius, '#08101a');
-            cv.strokeRoundRect(cx - radius, cy - radius, radius * 2, radius * 2, radius, 1.5, '#1e293b');
-
-            // Fixed BMW M Tricolour gauge bezel accent (Stationary, OEM-styled gauge bezel)
-            cv.arc(cx, cy, radius - 8, radius - 4, 210, 330, '#00a3e0', { round: true }); // M Light Blue
-            cv.arc(cx, cy, radius - 16, radius - 12, 215, 325, '#163a8a', { round: true }); // M Dark Blue
-            cv.arc(cx, cy, radius - 24, radius - 20, 220, 320, '#e1001a', { round: true }); // M Red
-
-            // Inner AI Core
-            const isThinkingActive = isThinking;
-            const breath = isThinkingActive ? (Math.sin(now / 300) + 1) * 0.5 : 0;
-            const coreRad = 32 + (isThinkingActive ? breath * 4 : 0);
-
-            if (isThinkingActive) {
-                cv.circle(cx, cy, coreRad + 8, withAlpha('#00a3e0', 0.15 + breath * 0.2));
-            }
-
-            cv.circle(cx, cy, 32, '#0f172a');
-            cv.strokeRoundRect(cx - 32, cy - 32, 64, 64, 32, 1.5, isThinkingActive ? '#00a3e0' : '#334155');
-
-            // Minimalist AI Voice Waveform (Static when idle, gentle wave when thinking)
-            const bars = 5;
-            const barW = 4;
-            const barSpacing = 8;
-            const totalW = bars * barSpacing;
-            const startX = cx - Math.floor(totalW / 2);
-            const baseHeights = [8, 14, 22, 14, 8];
-
-            for (let i = 0; i < bars; i++) {
-                let bH = baseHeights[i];
-                if (isThinkingActive) {
-                    const wave = Math.abs(Math.sin((now / 180) + i * 0.9));
-                    bH = Math.max(6, Math.floor(wave * 26));
-                }
-                const bx = startX + i * barSpacing;
-                const by = cy - Math.floor(bH / 2);
-                cv.roundRect(bx, by, barW, bH, 2, i === 2 ? '#00a3e0' : '#e2e8f0');
-            }
-        }
-
         /* ---------- Offline Screen: No Internet Connection ---------- */
         function drawNoInternet(cv, t) {
             G.panel(cv, t, 40, 52, 1520, 410, 'Network Status: Offline');
@@ -369,27 +325,36 @@ mgu.run({
             }
         }
 
-        /* ---------- M-Copilot AI Main Screen ---------- */
+        /* ---------- M-Copilot AI Main Screen (2-Panel Wide Architecture) ---------- */
         function drawMainCopilot(cv, t, now) {
-            // Panel 1 (Left): AI Neural Core
-            G.panel(cv, t, 40, 52, 380, 410, 'M Neural Core');
+            // Panel 1 (Left): Quick Topics & Control Actions
+            G.panel(cv, t, 40, 52, 440, 410, 'Co-Driver Topics');
 
-            drawNeuralOrb(cv, 230, 168, 70, now);
+            PROMPTS.forEach((p, idx) => {
+                const py = 104 + idx * 48;
+                const isCur = currentPrompt === p.title;
 
-            // Live Engine Vitals (real vehicle signals)
-            cv.text(`${telemetry.oilTemp}°C OIL  ·  ${telemetry.coolantTemp}°C COOLANT`, 230, 264, 14, t.dim, { align: 'center', font: 'num' });
-            cv.text(`${telemetry.batteryVoltage}V BATT  ·  ${telemetry.boost} BAR BOOST`, 230, 286, 13, t.dim, { align: 'center', font: 'num' });
+                cv.roundRect(60, py, 400, 42, 8, isCur ? withAlpha('#00a3e0', 0.22) : t.track);
+                cv.strokeRoundRect(60, py, 400, 42, 8, isCur ? 1.5 : 1, isCur ? '#00a3e0' : t.panelEdge);
+
+                cv.circle(82, py + 21, 5, isCur ? '#00a3e0' : t.dim);
+                cv.text(p.title, 100, py + 26, 15, isCur ? '#ffffff' : '#cbd5e1', { font: isCur ? 'bold' : 'normal' });
+
+                cv.target(60, py, 400, 42, () => {
+                    askCopilot(p.query, p.title);
+                }, 'chip_' + idx, 8);
+            });
 
             // Primary Ask button
-            const askW = 300, askH = 46, askX = 80, askY = 318;
+            const askW = 400, askH = 46, askX = 60, askY = 352;
             cv.roundRect(askX, askY, askW, askH, 10, isThinking ? '#1e293b' : '#00a3e0');
             cv.text(isThinking ? 'THINKING...' : 'ASK M-COPILOT', askX + askW / 2, askY + 29, 17, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
             cv.target(askX, askY, askW, askH, () => {
                 askCopilot(PROMPTS[0].query, PROMPTS[0].title);
             }, 'btn_ask', 10);
 
-            // Secondary Re-pair / QR Code button (Clean, high-visibility outlined pill)
-            const pairW = 300, pairH = 38, pairX = 80, pairY = 380;
+            // Secondary Re-pair / QR Code button
+            const pairW = 400, pairH = 38, pairX = 60, pairY = 406;
             cv.roundRect(pairX, pairY, pairW, pairH, 8, withAlpha('#00a3e0', 0.12));
             cv.strokeRoundRect(pairX, pairY, pairW, pairH, 8, 1.5, '#00a3e0');
             cv.text('PAIR PHONE / QR CODE', pairX + pairW / 2, pairY + 24, 14, '#00a3e0', { align: 'center', font: 'bold', spacing: 1 });
@@ -398,11 +363,14 @@ mgu.run({
                 render(true);
             }, 'btn_relink', 8);
 
-            // Panel 2 (Center): Conversation Stream
-            G.panel(cv, t, 440, 52, 740, 410, 'Dialogue: ' + currentPrompt);
+            // Panel 2 (Right): Wide Dialogue & Analysis Stream
+            G.panel(cv, t, 510, 52, 1050, 410, 'Dialogue: ' + currentPrompt);
+
+            // Live Engine Vitals in header
+            cv.text(`${telemetry.oilTemp}°C OIL  ·  ${telemetry.coolantTemp}°C COOLANT  ·  ${telemetry.batteryVoltage}V`, 1530, 80, 13, t.dim, { align: 'right', font: 'num' });
 
             // Response Box Card
-            const rx = 460, ry = 114, rw = 700, rh = 328;
+            const rx = 530, ry = 104, rw = 1010, rh = 340;
             cv.roundRect(rx, ry, rw, rh, 12, '#090e15');
             cv.strokeRoundRect(rx, ry, rw, rh, 12, 1, t.panelEdge);
 
@@ -410,7 +378,7 @@ mgu.run({
             cv.fillRect(rx + 2, ry + 12, 4, rh - 24, '#00a3e0');
 
             // Render Response text with wrap and scroll
-            const lines = wrapLines(currentResponse, 62);
+            const lines = wrapLines(currentResponse, 88);
             const maxVisibleLines = 11;
             const maxScroll = Math.max(0, lines.length - maxVisibleLines);
             if (dialogueScroll > maxScroll) dialogueScroll = maxScroll;
@@ -455,24 +423,6 @@ mgu.run({
                     render(true);
                 }, 'card_scroll_down', 4);
             }
-
-            // Panel 3 (Right): Quick Prompt Chips
-            G.panel(cv, t, 1200, 52, 360, 410, 'Co-Driver Quick Chips');
-
-            PROMPTS.forEach((p, idx) => {
-                const py = 114 + idx * 54;
-                const isCur = currentPrompt === p.title;
-
-                cv.roundRect(1220, py, 320, 46, 8, isCur ? withAlpha('#00a3e0', 0.25) : t.track);
-                cv.strokeRoundRect(1220, py, 320, 46, 8, isCur ? 1.5 : 1, isCur ? '#00a3e0' : t.panelEdge);
-
-                cv.circle(1242, py + 23, 5, isCur ? '#00a3e0' : t.dim);
-                cv.text(p.title, 1260, py + 29, 16, isCur ? '#ffffff' : '#cbd5e1', { font: isCur ? 'bold' : 'normal' });
-
-                cv.target(1220, py, 320, 46, () => {
-                    askCopilot(p.query, p.title);
-                }, 'chip_' + idx, 8);
-            });
         }
 
         /* ---------- Adaptive Pacing Render Loop ---------- */

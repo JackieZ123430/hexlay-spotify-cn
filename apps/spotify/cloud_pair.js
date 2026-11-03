@@ -34,6 +34,11 @@ class CloudPairManager {
         return this.shortCode;
     }
 
+    reset() {
+        this.channel = 'bmw_spot_' + Math.random().toString(36).substring(2, 10);
+        this.shortCode = this.channel.replace('bmw_spot_', '').toUpperCase();
+    }
+
     startPolling() {
         if (this.isPolling) return;
         this.isPolling = true;

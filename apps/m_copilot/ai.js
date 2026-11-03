@@ -305,11 +305,10 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
         const persona = options.persona || this.config.persona || 'm_engineer';
         const lower = (prompt || '').toLowerCase();
 
-        // Safety Interception: M-Copilot is strictly Read-Only
+        // Safety Interception: M-Copilot is strictly Read-Only for vehicle modification/coding commands
         const codingTriggers = [
-            'code', 'coding', 'turn off start stop', 'disable start stop', 'enable start stop',
-            'change color', 'set ambient', 'unlock video', 'enable vim', 'flash ecu',
-            'write ecu', 'change chime', 'modify setting'
+            'apply coding', 'code ecu', 'write ecu', 'flash ecu', 'disable start stop',
+            'enable start stop', 'change ambient', 'unlock video', 'enable vim', 'change chime'
         ];
         if (codingTriggers.some((t) => lower.includes(t))) {
             return `[SAFETY INTERLOCK: READ-ONLY OBSERVATION]\n\n` +
@@ -344,16 +343,16 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
             ],
             generationConfig: {
                 maxOutputTokens: 1000,
-                temperature: 0.6,
-                thinkingConfig: { thinkingBudget: 0 }
+                temperature: 0.6
             }
         });
 
-        // Best available models on Google AI Studio with high-speed fallback
+        // Fast, high-quota, resilient Gemini models on Google AI Studio
         const candidateModels = [
-            'gemini-3.5-flash',
-            'gemini-3.8-flash',
             'gemini-3.1-flash-lite',
+            'gemini-3.5-flash',
+            'gemini-3.7-flash',
+            'gemini-3.8-flash',
             'gemini-flash-latest'
         ];
 
@@ -377,7 +376,15 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
                             try {
                                 const json = JSON.parse(data);
                                 if (res.statusCode >= 200 && res.statusCode < 300 && json.candidates && json.candidates[0] && json.candidates[0].content) {
-                                    resolve({ ok: true, text: json.candidates[0].content.parts[0].text.trim() });
+                                    const parts = json.candidates[0].content.parts || [];
+                                    const nonThought = parts.filter((p) => !p.thought);
+                                    const chosen = nonThought.length > 0 ? nonThought[nonThought.length - 1] : parts[0];
+                                    const text = (chosen && chosen.text) ? chosen.text.trim() : '';
+                                    if (text) {
+                                        resolve({ ok: true, text });
+                                    } else {
+                                        resolve({ ok: false, status: res.statusCode, error: 'Empty text parts' });
+                                    }
                                 } else if (json.error) {
                                     resolve({ ok: false, status: res.statusCode, error: json.error.message || JSON.stringify(json.error) });
                                 } else {

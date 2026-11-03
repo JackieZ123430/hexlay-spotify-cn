@@ -376,7 +376,28 @@ mgu.run({
             const playlists = spotify.getPlaylists();
 
             if (!playlists || playlists.length === 0) {
-                drawRequireConnect(cv, t);
+                if (!spotify.token || !spotify.paired) {
+                    drawRequireConnect(cv, t);
+                } else {
+                    G.panel(cv, t, 40, 52, 1520, 388, 'Your Playlists (0)');
+
+                    cv.roundRect(70, 140, 1460, 160, 12, t.track);
+                    cv.strokeRoundRect(70, 140, 1460, 160, 12, 1, t.panelEdge);
+
+                    const isBusy = spotify.isLoadingPlaylists || spotify.syncing;
+                    cv.text(isBusy ? 'LOADING PLAYLISTS...' : 'NO PLAYLISTS FOUND', 800, 205, 22, t.dim, { align: 'center', font: 'bold', spacing: 1 });
+                    cv.text(isBusy ? 'Fetching your playlists from Spotify cloud...' : 'Create or follow playlists on Spotify, or browse Liked Songs.', 800, 240, 16, t.dim, { align: 'center' });
+
+                    const rfW = 240, rfH = 42, rfX = 680, rfY = 265;
+                    cv.roundRect(rfX, rfY, rfW, rfH, 8, withAlpha(t.accent, 0.22));
+                    cv.strokeRoundRect(rfX, rfY, rfW, rfH, 8, 1.5, t.accent);
+                    cv.text('REFRESH PLAYLISTS', rfX + rfW / 2, rfY + 26, 14, t.accent, { align: 'center', font: 'bold', spacing: 1 });
+                    cv.target(rfX, rfY, rfW, rfH, () => {
+                        spotify.fetchPlaylists().then(() => render());
+                    }, 'btn_refresh_pls', 12);
+
+                    drawBottomPlayerDock(cv, t);
+                }
                 return;
             }
 
@@ -517,8 +538,10 @@ mgu.run({
 
             if (!liked || liked.length === 0) {
                 cv.roundRect(70, 140, 1460, 160, 12, t.track);
-                cv.text('LOADING LIKED SONGS...', 800, 205, 22, t.dim, { align: 'center', font: 'bold', spacing: 1 });
-                cv.text('Fetching your saved songs from Spotify cloud...', 800, 240, 16, t.dim, { align: 'center' });
+                cv.strokeRoundRect(70, 140, 1460, 160, 12, 1, t.panelEdge);
+                const isBusy = spotify.isLoadingLiked || spotify.syncing;
+                cv.text(isBusy ? 'LOADING LIKED SONGS...' : 'NO LIKED SONGS FOUND', 800, 205, 22, t.dim, { align: 'center', font: 'bold', spacing: 1 });
+                cv.text(isBusy ? 'Fetching your saved songs from Spotify cloud...' : 'Like songs on Spotify to access them directly here.', 800, 240, 16, t.dim, { align: 'center' });
                 drawBottomPlayerDock(cv, t);
                 return;
             }
@@ -772,6 +795,7 @@ mgu.run({
                 cv.target(dcX, dcY, dcW, dcH, () => {
                     spotify.logout();
                     cachedQr = null;
+                    cloudPair.reset();
                     cloudPair.startPolling();
                 }, 'btn_logout', 15);
             } else {

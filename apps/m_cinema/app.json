@@ -19,7 +19,6 @@
       "kind": "canvas",
       "title": "M-Cinema",
       "buttons": [
-        ["BTN_PAGE", "Next page"],
         ["BTN_SETTINGS", "Settings"]
       ]
     }

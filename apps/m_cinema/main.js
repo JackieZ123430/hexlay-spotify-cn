@@ -33,6 +33,7 @@ const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
 const { YouTubeSearchEngine } = require('./youtube_search');
 const { YouTubeLoungeReceiver } = require('./lounge');
+const { VideoPlayer } = require('./player');
 
 const W = 1600, H = 520;
 const PAGES = ['Now Playing', 'Search', 'Connect'];
@@ -73,6 +74,28 @@ mgu.run({
         let vehicleSpeed = 0;
         let statusMsg = null;
         let statusTime = 0;
+
+        // Native Hardware Video Engine (Protocol 4 OP_VIDEO)
+        const player = new VideoPlayer(log, { shmPath: '/dev/shm/mgu-video-cinema' });
+        if (ctx.display && ctx.display.video) {
+            ctx.display.video(1, '/dev/shm/mgu-video-cinema');
+        }
+
+        player.onProgress = (pts, dur, playing) => {
+            currentTimeSec = Math.floor(pts);
+            if (dur > 0) totalDurationSec = Math.floor(dur);
+            isPlaying = playing;
+            if (totalDurationSec > 0) {
+                playProgress = Math.min(1, Math.max(0, currentTimeSec / totalDurationSec));
+            }
+            render().catch(() => {});
+        };
+
+        player.onEnded = () => {
+            isPlaying = false;
+            notify('Playback finished');
+            render().catch(() => {});
+        };
 
         // In-Car Search State
         let searchQuery = '';
@@ -126,13 +149,17 @@ mgu.run({
                 loungeReceiver.sendPlayVideo(video.ytId);
             }
 
+            // Start native video engine playback
+            const streamUrl = video.streamUrl || video.url || ('https://youtube.com/watch?v=' + video.ytId);
+            player.play(streamUrl, totalDurationSec);
+
             notify('Playing: ' + video.title);
             render().catch(() => {});
         }
 
-        // Active Playback Progress Ticker (1 second interval)
+        // Active Playback Progress Ticker (fallback if not driven by native player)
         const playbackTimer = setInterval(() => {
-            if (isPlaying && totalDurationSec > 0) {
+            if (isPlaying && totalDurationSec > 0 && !player.proc) {
                 currentTimeSec++;
                 playProgress = Math.min(1, currentTimeSec / totalDurationSec);
                 if (currentTimeSec >= totalDurationSec) {
@@ -236,6 +263,7 @@ mgu.run({
                 playProgress = rel;
                 if (totalDurationSec > 0) {
                     currentTimeSec = Math.floor(rel * totalDurationSec);
+                    player.seek(currentTimeSec);
                 }
                 notify(`Seek: ${formatTime(currentTimeSec)}`);
                 render().catch(() => {});
@@ -266,6 +294,8 @@ mgu.run({
             cv.text(isPlaying ? 'PAUSE' : 'PLAY', 1124 + btnW / 2, 307, 16, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
             cv.target(1124, 276, btnW, btnH, () => {
                 isPlaying = !isPlaying;
+                if (isPlaying) player.resume();
+                else player.pause();
                 notify(isPlaying ? 'Resumed' : 'Paused');
                 render().catch(() => {});
             }, 'btn_play_toggle', 10);
@@ -320,21 +350,14 @@ mgu.run({
             // Quality Badge
             cv.text('720p HD', x + w - 20, y + 28, 13, '#00a3e0', { align: 'right', font: 'bold' });
 
-            // Center Stage: Refined Minimalist Playback Indicator
+            // Center Stage: Refined Minimalist Playback Indicator & Hardware Video Surface
             if (video.ytId) {
+                // Render live hardware video via Protocol 4 OP_VIDEO 19
+                if (cv.video) {
+                    cv.video(1, x, y, w, h, 8);
+                }
+
                 if (isPlaying) {
-                    // Pulsing animated playback ring
-                    const pulse = (Math.sin(now / 300) + 1) * 0.5;
-                    const rSize = 34 + pulse * 3;
-                    cv.circle(cx, cy - 6, rSize + 8, withAlpha('#0066b1', 0.18));
-                    cv.circle(cx, cy - 6, rSize, '#0c1524');
-                    cv.arc(cx, cy - 6, rSize - 2, rSize, 0, 360, '#00a3e0');
-                    drawPlayGlyph(cv, cx + 4, cy - 6, 20, '#2af575');
-
-                    // Channel & Views readout below ring (using ASCII |, never Unicode bullet)
-                    const chText = `${video.channel || 'YouTube'}  |  ${video.views || 'Playing'}`;
-                    cv.text(chText, cx, cy + 46, 15, '#cbd5e1', { align: 'center', font: 'bold' });
-
                     // Sleek 16-bar Spectrum Visualizer in bottom-right corner
                     const eqX = x + w - 160, eqY = y + h - 14;
                     for (let bi = 0; bi < 16; bi++) {
@@ -628,6 +651,7 @@ mgu.run({
         }
 
         /* ---------- Tab Navigation & Interactions ---------- */
+        ctx.hideButton('BTN_PAGE');
         ctx.onTab((idx) => {
             page = idx;
             return render();

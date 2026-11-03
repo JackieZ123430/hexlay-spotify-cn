@@ -48,6 +48,8 @@ apps/quick_code/quick_code_state.json
 /backups/
 *.mgu
 *.tgz
+native/vidplay/deps/
+native/vidplay/build/
 *.pcap
 *.pcapng
 *.dlt

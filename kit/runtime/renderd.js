@@ -27,7 +27,7 @@ const rec = require('./record');
 const SOCKETS = process.env.MGU_RENDERD_SOCKET ? [process.env.MGU_RENDERD_SOCKET] : ['/run/mgu-renderd/renderd.sock', '/run/mgu-render/render.sock'];
 const SOCKET = SOCKETS[0];
 const isSocket = (p) => { try { return fs.statSync(p).isSocket(); } catch (e) { return false; } };
-const M = { HELLO: 1, PLACE: 2, SHOW: 3, ATLAS: 4, RAMP: 5, LAYER: 6, FRAME: 7, DROP_LAYER: 8, IMAGE: 9, GRAB: 10 };
+const M = { HELLO: 1, PLACE: 2, SHOW: 3, ATLAS: 4, RAMP: 5, LAYER: 6, FRAME: 7, DROP_LAYER: 8, IMAGE: 9, GRAB: 10, VIDEO: 13, DROP_VIDEO: 14 };
 const E = { READY: 101, TICK: 102, ERROR: 103, STATS: 104, CCU: 105 };
 // touch (mgu-render, IterioDev's mgu-renderd): message 9 is CLAIM there; 105 and 106 come back as TOUCH and CLOSED
 const CLAIM = 9, TOUCH = 105, CLOSED = 106;
@@ -54,6 +54,7 @@ class RenderClient extends EventEmitter {
         this.sock = null;
         this.connected = false;
         this.ready = false;
+        this.videos = new Map();     // id -> frame file path (Protocol 4)
         this.screen = { w: 1920, h: 720 };
         this.placement = null;
         this.visible = false;
@@ -187,6 +188,7 @@ class RenderClient extends EventEmitter {
                     (this.native ? ', mgu-render/1 ' + JSON.stringify(this.info) : this.opts.native ? ', upstream dialect (no mgu-render/1)' : ''));
                 if (this.native) this._write(this._u32msg(X.MODE, [X_MODE_LAYER]));
                 else if (this.grabbing && this.opts.native) this._write(this._u32msg(M.GRAB, [1]));
+                this._sendVideos();
                 this.emit('ready', this.screen);
                 // after the app's placement (sent in 'ready'): SHOW again. A SHOW sent before the renderer
                 // knew where the app goes (or before X_MODE) left the first app opened after start blank.
@@ -249,6 +251,23 @@ class RenderClient extends EventEmitter {
         if (on === this.visible) return;
         this.visible = on;
         if (this.ready) this._write(this._u32msg(M.SHOW, [on ? 1 : 0]));
+    }
+
+    /* ---- videos (Protocol 4) ---- */
+    /** Video id's frames come from file (/dev/shm/mgu-video-<name>); null forgets it. */
+    video(id, file) {
+        if (!file) {
+            if (this.videos.delete(id) && this.ready && this.native) this._write(this._u32msg(M.DROP_VIDEO, [id]));
+            return;
+        }
+        this.videos.set(id, file);
+        if (this.ready && this.native) this._sendVideo(id, file);
+    }
+    _sendVideos() { this.videos.forEach((file, id) => this._sendVideo(id, file)); }
+    _sendVideo(id, file) {
+        const idBuf = Buffer.alloc(4);
+        idBuf.writeUInt32LE(id, 0);
+        this._write(msg(M.VIDEO, Buffer.concat([idBuf, Buffer.from(file)])));
     }
 
     _ensureAtlas(id) {

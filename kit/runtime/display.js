@@ -188,6 +188,7 @@ class Display {
         gpu.on('closed', () => setTimeout(() => { if (this.gpu === gpu) this._syncVisible(); }, 700));
         G.onLayerDrop((id) => { if (this.gpu) this.gpu.dropLayer(id); });
         gpu.connect();
+        if (this._videos) this._videos.forEach((f, i) => gpu.video(i, f));
         if (this.grabbing) gpu.grab(true);
     }
 

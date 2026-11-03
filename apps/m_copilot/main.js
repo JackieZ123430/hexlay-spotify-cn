@@ -6,18 +6,21 @@
  *   1. Zero Duplicate Tabs:
  *      Single unified screen ('M-Copilot'). When unconfigured, it seamlessly displays the
  *      Setup & Pairing QR code. Once paired, it unlocks the full AI Co-Driver interface.
- *   2. Cloud Pairing (Zero 127.0.0.1 / localhost):
+ *   2. Cloud Pairing & Real-time Voice Relay (Zero 127.0.0.1 / localhost):
  *      QR Code points to https://hexlay.github.io/idrive7-custom-apps/copilot.html?channel=...
  *      Allows pairing from any smartphone over 4G/5G/Wi-Fi with free Google Gemini API Key.
- *   3. Mandatory Online Mode:
- *      Head unit verifies active vehicle uplink (cellular/hotspot). Gating screens if offline
- *      or unconfigured, preventing CPU-heavy local offline regex/NLP simulations.
+ *      Enables live Smartphone Microphone Voice Input and Bluetooth Text-to-Speech (TTS).
+ *   3. 20 Technical Co-Driver Topics across 4 Categories:
+ *      - Dynamics & Track (Launch, Drift/xDrive, Mountain Pass, M Brakes, Shift Speed)
+ *      - Thermal & DME (Turbo Cooling, Oil Warm-Up, Intercooling, Air Flaps, Cat Warm)
+ *      - Chassis & Tires (Tire Grip/PSI, Adaptive EDC Damper, Differential, Steering, Camber)
+ *      - Service & Health (BMW Oil Specs, ECU Fault Scan, ZF 8HP, 12V/48V, Fuel Octane)
  *   4. Ultra-Low CPU/GPU Adaptive Pacing:
  *      Eliminates continuous 66 fps loop in favor of 4 fps idle refresh (~250ms), dynamically
  *      switching to 25 fps (~40ms) ONLY while neural thinking animation is active.
  *   5. Vehicle Context Engine:
  *      Pours rich, safe, read-only CAN & UDS telemetry directly into Google Gemini with
- *      prompt-specific intent analysis (Launch control, Cooling, Grip, DTCs).
+ *      prompt-specific intent analysis (Launch control, Cooling, Grip, DTCs, Brakes).
  */
 const mgu = require('./kit/mgu');
 const { withAlpha } = require('./kit/canvas');
@@ -30,12 +33,55 @@ const qrcodegen = require('./qrcodegen');
 const W = 1600, H = 520;
 const PAGES = ['M-Copilot'];
 
-const PROMPTS = [
-    { title: 'Launch Protocol', query: 'What are the launch control prerequisites and sequence for BMW G-Series ZF 8HP?' },
-    { title: 'Turbo Cooling', query: 'What are the turbo cooling and post-drive heat management guidelines for BMW turbocharged engines?' },
-    { title: 'Tire Grip & PSI', query: 'Analyze current tire pressures and rubber temperature grip window.' },
-    { title: 'Mountain Pass', query: 'Analyze vehicle handling, chassis balance, and sport differential for aggressive mountain twisties.' },
-    { title: 'BMW Specs & Oil', query: 'What are the factory oil specifications, change intervals, and Longlife (LL-01 / LL-04 / LL-17FE+) service guidelines for BMW G-Series engines?' }
+const TOPIC_CATEGORIES = [
+    {
+        id: 'dynamics',
+        name: 'DYNAMICS',
+        label: 'Performance & Track',
+        topics: [
+            { title: 'Launch Protocol', query: 'What are the launch control prerequisites and sequence for BMW G-Series ZF 8HP?' },
+            { title: 'Drift & xDrive Modes', query: 'Explain 4WD Sport, 2WD rear-wheel-drive mode, DSC OFF, and MDM (M Dynamic Mode) handling characteristics.' },
+            { title: 'Mountain Pass', query: 'Analyze vehicle handling, chassis balance, and sport differential for aggressive mountain twisties.' },
+            { title: 'M Brakes & Fade', query: 'Analyze M Sport brake temperatures, pad bite, brake fluid boiling threshold, and thermal fade resistance.' },
+            { title: 'Gearbox & Shift Speed', query: 'Explain D1-D3 and S1-S3 Drivelogic shift speeds, torque converter lockup, and manual paddle response.' }
+        ]
+    },
+    {
+        id: 'thermal',
+        name: 'THERMAL',
+        label: 'Thermal & DME',
+        topics: [
+            { title: 'Turbo Cooling', query: 'What are the turbo cooling and post-drive heat management guidelines for BMW turbocharged engines?' },
+            { title: 'Oil Warm-Up & Boost', query: 'What are the exact engine oil temperature thresholds before full DME turbo boost is unlocked?' },
+            { title: 'Charge Air & Cooling', query: 'Explain indirect charge air intercooling, low-temp coolant loop, and heat-soak management on hard runs.' },
+            { title: 'Radiator & Air Flaps', query: 'How do the active kidney grille air flaps and auxiliary engine oil coolers manage high ambient heat?' },
+            { title: 'Cold Start & Cat Warm', query: 'What occurs during BMW catalytic converter heating cycle, cold start high idle, and exhaust flap operation?' }
+        ]
+    },
+    {
+        id: 'chassis',
+        name: 'CHASSIS',
+        label: 'Chassis & Tires',
+        topics: [
+            { title: 'Tire Grip & PSI', query: 'Analyze current tire pressures, cold vs hot delta, and rubber temperature grip window.' },
+            { title: 'Adaptive M Damper', query: 'Compare COMFORT, SPORT, and SPORT+ adaptive EDC damper stiffness, body roll, and rebound damping.' },
+            { title: 'Sport Differential', query: 'How does the electronically controlled M rear axle limited-slip differential (GHAS) manage torque vectoring?' },
+            { title: 'Steering & Agility', query: 'Analyze Servotronic variable sport steering ratio, high-speed on-center stability, and turn-in sharpness.' },
+            { title: 'Wheel Alignment & Wear', query: 'What are factory negative camber and toe alignment recommendations for high-speed stability and track wear?' }
+        ]
+    },
+    {
+        id: 'care',
+        name: 'CARE',
+        label: 'Service & Health',
+        topics: [
+            { title: 'BMW Specs & Oil', query: 'What are the factory oil specifications, change intervals, and Longlife (LL-01 / LL-04 / LL-17FE+) service guidelines for BMW G-Series engines?' },
+            { title: 'ECU Fault & Health', query: 'Run an OBD-II UDS diagnostic health check across DME, EGS transmission, DSC, and electrical sensors.' },
+            { title: 'ZF 8HP Service', query: 'What are the transmission fluid service intervals, pan filter replacement, and adaptation resets for ZF 8HP?' },
+            { title: '12V & 48V Hybrid', query: 'Analyze 12V AGM battery state of health, charging voltage, and 48V mild-hybrid regenerative braking.' },
+            { title: 'Fuel Octane & Knock', query: 'Explain 98 RON / 93 AKI minimum octane requirements, ignition timing pull, and ethanol (E10/E25) compatibility.' }
+        ]
+    }
 ];
 
 mgu.run({
@@ -49,13 +95,17 @@ mgu.run({
         cloudPair.startPolling();
 
         let showPairing = false;
+        let showVoiceModal = false;
         let isThinking = false;
         let thinkTimer = null;
         let lastRenderTime = 0;
         let dialogueScroll = 0;
 
-        let currentPrompt = PROMPTS[0].title;
-        let currentResponse = 'M-Copilot ready. Select a quick telemetry chip or ask a vehicle question.';
+        let activeCategory = 0;
+        let selectedTopicIdx = 0;
+
+        let currentPrompt = TOPIC_CATEGORIES[0].topics[0].title;
+        let currentResponse = 'M-Copilot ready. Select a category & topic chip or speak via smartphone microphone.';
         let statusMsg = null;
         let statusTime = 0;
 
@@ -127,6 +177,16 @@ mgu.run({
             render(true).catch(() => {});
         };
 
+        // Real-time Voice Query Handler from smartphone
+        cloudPair.onVoiceQuery = (queryText, title) => {
+            showVoiceModal = false;
+            showPairing = false;
+            const preview = queryText.length > 28 ? queryText.slice(0, 28) + '...' : queryText;
+            notify('Voice: "' + preview + '"');
+            currentPrompt = title && title !== 'Voice Assistant' ? title : ('Voice: ' + preview);
+            askCopilot(queryText, currentPrompt);
+        };
+
         function notify(msg) {
             statusMsg = msg;
             statusTime = Date.now();
@@ -172,6 +232,8 @@ mgu.run({
             try {
                 const answer = await ai.ask(queryText, telemetry, { persona });
                 currentResponse = answer;
+                // Dispatch answer back to smartphone relay for Bluetooth Text-to-Speech (TTS)
+                cloudPair.sendResponse(queryText, answer);
             } catch (e) {
                 currentResponse = 'Error: ' + e.message;
             } finally {
@@ -305,7 +367,7 @@ mgu.run({
             cv.text('GOOGLE GEMINI AI SETUP', ix, 170, 24, '#00a3e0', { font: 'bold', spacing: 1 });
             cv.text('M-Copilot connects directly to Google Gemini 1.5/2.0 Flash (Free Tier @ $0.00).', ix, 206, 17, '#ffffff');
             cv.text('Scan the QR code with your phone (Zero 127.0.0.1 / localhost - works anywhere over 4G/5G/Wi-Fi).', ix, 234, 16, '#94a3b8');
-            cv.text('Enter your free Gemini API key on the phone page to link your car co-driver.', ix, 258, 16, '#94a3b8');
+            cv.text('Enter your free Gemini API key on the phone page to link your car co-driver and enable voice input.', ix, 258, 16, '#94a3b8');
 
             // Status indicator
             cv.roundRect(ix, 290, 380, 36, 8, withAlpha('#00a3e0', 0.15));
@@ -325,45 +387,167 @@ mgu.run({
             }
         }
 
+        /* ---------- Voice Co-Driver Station (Panel 2 Overlay) ---------- */
+        function drawVoiceStation(cv, t, now) {
+            G.panel(cv, t, 510, 52, 1050, 410, 'Voice Co-Driver Station');
+
+            // Live Engine Vitals in header
+            cv.text(`${telemetry.oilTemp}°C OIL  ·  ${telemetry.coolantTemp}°C COOLANT  ·  ${telemetry.batteryVoltage}V`, 1530, 80, 13, t.dim, { align: 'right', font: 'num' });
+
+            // Voice Station Card
+            const rx = 530, ry = 104, rw = 1010, rh = 340;
+            cv.roundRect(rx, ry, rw, rh, 12, '#090e15');
+            cv.strokeRoundRect(rx, ry, rw, rh, 12, 1, t.panelEdge);
+
+            // Left decorative M stripe
+            cv.fillRect(rx + 2, ry + 12, 4, rh - 24, '#00a3e0');
+
+            // Mic Icon & Animated Voice Soundwave Ripples
+            const cx = 615, cy = 185;
+            const pulse = (now % 1600) / 1600;
+            cv.circle(cx, cy, 38 + Math.floor(pulse * 14), withAlpha('#00a3e0', (1 - pulse) * 0.45));
+            cv.circle(cx, cy, 32, withAlpha('#004e8c', 0.85));
+            cv.arc(cx, cy, 30.5, 32, 0, 360, '#00f0ff');
+            cv.text('MIC', cx, cy + 5, 12, '#00f0ff', { align: 'center', font: 'bold' });
+
+            // Title & Subtitle
+            cv.text('VOICE CO-DRIVER (SMARTPHONE MIC)', 675, 168, 21, '#00a3e0', { font: 'bold', spacing: 1 });
+            cv.text('Speak freely into your paired smartphone microphone to ask any vehicle question.', 675, 196, 14, '#ffffff');
+
+            // Channel Status Badge
+            const chW = 460, chH = 34, chX = 675, chY = 216;
+            cv.roundRect(chX, chY, chW, chH, 6, withAlpha('#00a3e0', 0.15));
+            cv.strokeRoundRect(chX, chY, chW, chH, 6, 1, '#00a3e0');
+            cv.text(`LISTENING ON RELAY: ${cloudPair.getShortCode()}  ·  CELLULAR / WI-FI`, chX + chW / 2, chY + 23, 13, '#00f0ff', { align: 'center', font: 'bold' });
+
+            // Suggested Voice Queries
+            cv.text('Sample voice questions to try:', 565, 276, 14, '#cbd5e1', { font: 'bold' });
+            cv.text('· "Is the engine oil warm enough to launch right now?"', 575, 299, 14, '#94a3b8');
+            cv.text('· "Check tire pressures and rubber compound grip window"', 575, 320, 14, '#94a3b8');
+            cv.text('· "What are the recommended factory oil specifications?"', 575, 341, 14, '#94a3b8');
+            cv.text('· "Scan powertrain for any pending OBD-II fault codes"', 575, 362, 14, '#94a3b8');
+
+            // Back to Dialogue button
+            const bBackX = 565, bBackY = 388, bBackW = 220, bBackH = 40;
+            cv.roundRect(bBackX, bBackY, bBackW, bBackH, 8, '#004e8c');
+            cv.strokeRoundRect(bBackX, bBackY, bBackW, bBackH, 8, 1.5, '#00a3e0');
+            cv.text('BACK TO DIALOGUE', bBackX + bBackW / 2, bBackY + 25, 14, '#ffffff', { align: 'center', font: 'bold' });
+            cv.target(bBackX, bBackY, bBackW, bBackH, () => {
+                showVoiceModal = false;
+                render(true);
+            }, 'btn_close_voice', 10);
+
+            // Right side Companion QR Card to open Phone Mic
+            const qr = getPairingQr();
+            if (qr) {
+                const qrx = 1250, qry = 135, qrsz = 180;
+                const modCount = qr.size;
+                const modPx = Math.floor(qrsz / modCount);
+                const actualSz = modPx * modCount;
+                const ox = qrx + Math.floor((qrsz - actualSz) / 2);
+                const oy = qry + Math.floor((qrsz - actualSz) / 2);
+
+                cv.roundRect(ox - 8, oy - 8, actualSz + 16, actualSz + 16, 8, '#ffffff');
+                for (let r = 0; r < modCount; r++) {
+                    for (let c = 0; c < modCount; c++) {
+                        if (qr.getModule(c, r)) {
+                            cv.fillRect(ox + c * modPx, oy + r * modPx, modPx, modPx, '#000000');
+                        }
+                    }
+                }
+
+                cv.text('OPEN PHONE MIC', 1340, 345, 14, '#00f0ff', { align: 'center', font: 'bold' });
+                cv.text('Scan with phone camera', 1340, 366, 12, '#94a3b8', { align: 'center' });
+                cv.text('Speaks answers via Bluetooth audio', 1340, 386, 11, '#64748b', { align: 'center' });
+            }
+        }
+
         /* ---------- M-Copilot AI Main Screen (2-Panel Wide Architecture) ---------- */
         function drawMainCopilot(cv, t, now) {
+            const curCat = TOPIC_CATEGORIES[activeCategory] || TOPIC_CATEGORIES[0];
+            const topics = curCat.topics;
+
             // Panel 1 (Left): Quick Topics & Control Actions
             G.panel(cv, t, 40, 52, 440, 410, 'Co-Driver Topics');
 
-            PROMPTS.forEach((p, idx) => {
-                const py = 104 + idx * 48;
+            // Category Selector Tabs Bar (4 Categories across 400px width)
+            TOPIC_CATEGORIES.forEach((cat, cIdx) => {
+                const tabW = 96;
+                const tabX = 60 + cIdx * 101;
+                const tabY = 96;
+                const tabH = 26;
+                const isCurCat = activeCategory === cIdx;
+
+                cv.roundRect(tabX, tabY, tabW, tabH, 6, isCurCat ? '#004e8c' : t.track);
+                cv.strokeRoundRect(tabX, tabY, tabW, tabH, 6, 1, isCurCat ? '#00a3e0' : t.panelEdge);
+                cv.text(cat.name, tabX + tabW / 2, tabY + 18, 11, isCurCat ? '#00f0ff' : '#94a3b8', { align: 'center', font: isCurCat ? 'bold' : 'normal' });
+
+                cv.target(tabX, tabY, tabW, tabH, () => {
+                    activeCategory = cIdx;
+                    selectedTopicIdx = 0;
+                    currentPrompt = cat.topics[0].title;
+                    render(true);
+                }, 'cat_' + cIdx, 6);
+            });
+
+            // 5 Topic Chips for selected category
+            topics.forEach((p, idx) => {
+                const py = 130 + idx * 42;
+                const isSelected = selectedTopicIdx === idx;
                 const isCur = currentPrompt === p.title;
 
-                cv.roundRect(60, py, 400, 42, 8, isCur ? withAlpha('#00a3e0', 0.22) : t.track);
-                cv.strokeRoundRect(60, py, 400, 42, 8, isCur ? 1.5 : 1, isCur ? '#00a3e0' : t.panelEdge);
+                cv.roundRect(60, py, 400, 36, 8, isSelected ? withAlpha('#00a3e0', 0.22) : t.track);
+                cv.strokeRoundRect(60, py, 400, 36, 8, isSelected ? 1.5 : 1, isSelected ? '#00a3e0' : t.panelEdge);
 
-                cv.circle(82, py + 21, 5, isCur ? '#00a3e0' : t.dim);
-                cv.text(p.title, 100, py + 26, 15, isCur ? '#ffffff' : '#cbd5e1', { font: isCur ? 'bold' : 'normal' });
+                cv.circle(80, py + 18, 4.5, isCur ? '#00f0ff' : (isSelected ? '#00a3e0' : t.dim));
+                cv.text(p.title, 98, py + 23, 14, isSelected ? '#ffffff' : '#cbd5e1', { font: isSelected ? 'bold' : 'normal' });
 
-                cv.target(60, py, 400, 42, () => {
+                cv.target(60, py, 400, 36, () => {
+                    selectedTopicIdx = idx;
                     askCopilot(p.query, p.title);
                 }, 'chip_' + idx, 8);
             });
 
             // Primary Ask button
-            const askW = 400, askH = 46, askX = 60, askY = 352;
+            const askW = 400, askH = 44, askX = 60, askY = 348;
             cv.roundRect(askX, askY, askW, askH, 10, isThinking ? '#1e293b' : '#00a3e0');
-            cv.text(isThinking ? 'THINKING...' : 'ASK M-COPILOT', askX + askW / 2, askY + 29, 17, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+            cv.text(isThinking ? 'THINKING...' : 'ASK M-COPILOT', askX + askW / 2, askY + 28, 16, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
             cv.target(askX, askY, askW, askH, () => {
-                askCopilot(PROMPTS[0].query, PROMPTS[0].title);
+                const currentTopic = topics[selectedTopicIdx] || topics[0];
+                askCopilot(currentTopic.query, currentTopic.title);
             }, 'btn_ask', 10);
 
-            // Secondary Re-pair / QR Code button
-            const pairW = 400, pairH = 38, pairX = 60, pairY = 406;
-            cv.roundRect(pairX, pairY, pairW, pairH, 8, withAlpha('#00a3e0', 0.12));
-            cv.strokeRoundRect(pairX, pairY, pairW, pairH, 8, 1.5, '#00a3e0');
-            cv.text('PAIR PHONE / QR CODE', pairX + pairW / 2, pairY + 24, 14, '#00a3e0', { align: 'center', font: 'bold', spacing: 1 });
-            cv.target(pairX, pairY, pairW, pairH, () => {
+            // Dual Bottom Action Row: [ 🎙️ VOICE INPUT ] & [ PAIR / QR ]
+            const botY = 402, botH = 38;
+            const vW = 195, vX = 60;
+            cv.roundRect(vX, botY, vW, botH, 8, withAlpha('#00a3e0', showVoiceModal ? 0.35 : 0.14));
+            cv.strokeRoundRect(vX, botY, vW, botH, 8, 1.5, showVoiceModal ? '#00f0ff' : '#00a3e0');
+            cv.text('VOICE INPUT', vX + vW / 2, botY + 24, 13, showVoiceModal ? '#ffffff' : '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
+            cv.target(vX, botY, vW, botH, () => {
+                if (!ai.isConfigured()) {
+                    showPairing = true;
+                } else {
+                    showVoiceModal = !showVoiceModal;
+                }
+                render(true);
+            }, 'btn_voice_mode', 8);
+
+            const pW = 195, pX = 265;
+            cv.roundRect(pX, botY, pW, botH, 8, withAlpha('#00a3e0', 0.12));
+            cv.strokeRoundRect(pX, botY, pW, botH, 8, 1.5, '#00a3e0');
+            cv.text('PAIR / QR', pX + pW / 2, botY + 24, 13, '#00a3e0', { align: 'center', font: 'bold', spacing: 1 });
+            cv.target(pX, botY, pW, botH, () => {
                 showPairing = true;
+                showVoiceModal = false;
                 render(true);
             }, 'btn_relink', 8);
 
-            // Panel 2 (Right): Wide Dialogue & Analysis Stream
+            // Panel 2 (Right): Dialogue Stream OR Voice Co-Driver Station
+            if (showVoiceModal) {
+                drawVoiceStation(cv, t, now);
+                return;
+            }
+
             G.panel(cv, t, 510, 52, 1050, 410, 'Dialogue: ' + currentPrompt);
 
             // Live Engine Vitals in header
@@ -464,17 +648,21 @@ mgu.run({
 
         /* ---------- HMI Button & Touch Interactions ---------- */
         ui.onClick('BTN_PROMPT', () => {
-            askCopilot(PROMPTS[0].query, PROMPTS[0].title);
+            const currentCat = TOPIC_CATEGORIES[activeCategory] || TOPIC_CATEGORIES[0];
+            const currentTopic = currentCat.topics[selectedTopicIdx] || currentCat.topics[0];
+            askCopilot(currentTopic.query, currentTopic.title);
             return render(true);
         });
 
         ui.onClick('BTN_REPAIR', () => {
             showPairing = !showPairing;
+            showVoiceModal = false;
             return render(true);
         });
 
         ctx.onTab(() => {
             showPairing = false;
+            showVoiceModal = false;
             return render(true);
         });
 

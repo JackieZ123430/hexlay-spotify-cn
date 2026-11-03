@@ -251,6 +251,54 @@ class AiBridge {
 - Active ECU DTC Fault Codes: ${dtcs}
 - 12V Battery Rail Voltage: ${battery} V (Alternator actively charging)
 - Safety System: Dynamic Stability Control (DSC) fully functional.`;
+        } else if (q.includes('brake') || q.includes('fade') || q.includes('pad') || q.includes('stopping') || q.includes('rotor') || q.includes('caliper')) {
+            focusedAnalysis = `
+[FOCUSED ANALYSIS: M SPORT / COMPOUND BRAKING THERMAL MANAGEMENT]
+- Kinetic Energy & Speed: ${speed} km/h | Longitudinal Decel: ${longG} G
+- Brake Fluid Boiling Window: Typical DOT 4 Low Viscosity dry boiling pt is 265°C, wet 175°C.
+- Guidance: After repeated high-speed stops (above 160 km/h), maintain driving airflow at moderate speeds to cool brake rotors and calipers evenly. Avoid resting on the brake pedal at a standstill immediately after track stops to prevent pad material transfer onto hot rotors.`;
+        } else if (q.includes('trans') || q.includes('gearbox') || q.includes('zf') || q.includes('8hp') || q.includes('shift') || q.includes('drivelogic') || q.includes('clutch')) {
+            focusedAnalysis = `
+[FOCUSED ANALYSIS: ZF 8HP STEPTRONIC & DRIVELOGIC TRANSMISSION]
+- Current Engaged Gear: ${gear} | Output Torque: ${torque} Nm | Engine RPM: ${rpm}
+- Operating Temperature: Normal EGS fluid temp follows engine coolant (${coolant}°C).
+- Sequence & Care: D1-D3 provides smooth progressive torque converter lockup. S1-S3 delivers sharp direct clutch shifts. ZF recommends transmission oil and filter pan replacement every 80,000 to 100,000 km (Lifeguard 8).`;
+        } else if (q.includes('xdrive') || q.includes('drift') || q.includes('mdm') || q.includes('differential') || q.includes('ghas') || q.includes('4wd') || q.includes('2wd') || q.includes('vectoring')) {
+            focusedAnalysis = `
+[FOCUSED ANALYSIS: M xDRIVE & REAR AXLE SPORT DIFFERENTIAL (GHAS)]
+- Current Dynamic Mode: ${mode} | Lateral Acceleration: ${latG} G
+- System Architecture: Electronic multi-plate clutch transfer case splits torque front/rear seamlessly.
+- Handling Modes: 4WD provides maximum all-weather traction; 4WD Sport shifts torque rearward for neutral drift angle; 2WD mode transmits 100% torque to rear wheels with DSC OFF. Active M Differential locks up to 100% to maximize corner exit traction.`;
+        } else if (q.includes('damper') || q.includes('suspension') || q.includes('edc') || q.includes('rebound') || q.includes('body roll') || q.includes('chassis')) {
+            focusedAnalysis = `
+[FOCUSED ANALYSIS: ADAPTIVE M SUSPENSION & CHASSIS DYNAMICS]
+- Active Drive Mode: ${mode} | Measured Forces: ${latG} G Lateral | ${longG} G Longitudinal
+- Electronic Damper Control (EDC): Millisecond-speed magnetic solenoid valving adapts rebound and compression continuously.
+- COMFORT mode absorbs road expansion joints and surface imperfections; SPORT/SPORT+ stiffens valving to eliminate roll and squat under high cornering loads.`;
+        } else if (q.includes('battery') || q.includes('48v') || q.includes('voltage') || q.includes('hybrid') || q.includes('alternator') || q.includes('recuperation')) {
+            focusedAnalysis = `
+[FOCUSED ANALYSIS: 12V AGM & 48V MILD-HYBRID POWER SUPPLY]
+- Battery Terminal Rail: ${battery} V (Optimal operating state >13.8V while charging, >12.4V rest)
+- Energy Recuperation: Generator charges battery during coasting and regenerative braking.
+- Mild-Hybrid: 48V starter-generator supplies seamless automatic start/stop and e-boost torque assistance off the line.`;
+        } else if (q.includes('octane') || q.includes('knock') || q.includes('ron') || q.includes('aki') || q.includes('ethanol') || q.includes('gasoline')) {
+            focusedAnalysis = `
+[FOCUSED ANALYSIS: FUEL OCTANE, KNOCK PREVENTION & COMBUSTION]
+- Recommended Fuel: 98 RON (93 AKI) for maximum rated power and ignition timing advance.
+- Minimum Permissible: 95 RON (91 AKI) met with slight DME ignition retard under hot ambient conditions (${ambient}°C).
+- Ethanol Tolerance: Compatible with up to E10/E25 ethanol blends without fuel line or injector degradation.`;
+        } else if (q.includes('spec') || q.includes('oil') || q.includes('longlife') || q.includes('ll-01') || q.includes('ll-04') || q.includes('ll-17') || q.includes('interval') || q.includes('cbs')) {
+            focusedAnalysis = `
+[FOCUSED ANALYSIS: BMW LONGLIFE FACTORY OIL & SERVICE SPECIFICATIONS]
+- Engine Oil Temperature: ${oil}°C (${oilStatus})
+- Approved Specifications: BMW Longlife-01 FE (high HTHS petrol), Longlife-04 (low-SAPS diesel/petrol), Longlife-17 FE+ (0W-20 ultra-low friction).
+- Maintenance Cycle: BMW CBS allows up to 15,000 km, but for turbocharged performance engines (B48/B58/N63/S58), 8,000-10,000 km changes are strongly recommended for timing chain and turbo journal bearing longevity.`;
+        } else if (q.includes('charge air') || q.includes('intercooler') || q.includes('air flap') || q.includes('cat warm') || q.includes('exhaust flap') || q.includes('cold start')) {
+            focusedAnalysis = `
+[FOCUSED ANALYSIS: THERMAL AERO, INTERCOOLING & EXHAUST SYSTEM]
+- Thermal State: Oil ${oil}°C | Coolant ${coolant}°C | Ambient ${ambient}°C
+- Indirect Intercooling: Water-to-air charge coolers maintain air intake charge within 15°C of ambient.
+- Aero & Exhaust: Active kidney grille flaps open automatically when radiator cooling is needed; catalytic converter warm-up raises cold idle for ~45s with open wastegates to heat emissions systems rapidly.`;
         } else if (q.includes('fuel') || q.includes('range') || q.includes('route') || q.includes('trip') || q.includes('mountain') || q.includes('scenic') || q.includes('consumption')) {
             focusedAnalysis = `
 [FOCUSED ANALYSIS: RANGE, FUEL & CRUISE EFFICIENCY]

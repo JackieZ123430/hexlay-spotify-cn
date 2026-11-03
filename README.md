@@ -85,18 +85,24 @@ This repository is forked and built upon the foundational open-source BMW iDrive
 ---
 
 ### 3. M-Cinema (`m_cinema`)
-**In-car cinema and video receiver for passengers and parked entertainment.**
+**Ultrawide 21:9 Cockpit Theater & Seamless YouTube Smartphone Video Cast for BMW iDrive 7.**
 
-![M-Cinema](docs/screenshots/m_cinema.png)
+| YouTube Cockpit Player (21:9) | Mobile Cloud Cast & YouTube Search |
+| :---: | :---: |
+| ![M-Cinema](docs/screenshots/m_cinema.png) | ![M-Cinema Cast](docs/screenshots/m_cinema_cast.png) |
 
-* **Phone-to-Car Video Casting**:
-  - In-car background receiver server on port `8090`.
-  - Scan the cockpit QR code to cast YouTube, web videos, or local media directly to the central screen.
+* **Zero 127.0.0.1 / Localhost Cloud Relay**:
+  - Replaces fragile local IP / port binding with public cloud relay (`https://hexlay.github.io/idrive7-custom-apps/cinema.html?channel=<CHANNEL>`).
+  - Works seamlessly from any iPhone or Android phone over 4G, 5G, or car Wi-Fi hotspot without AP isolation or NAT blockage.
+* **YouTube Search & 1-Tap Instant Cast**:
+  - Search any YouTube video directly from the phone remote without complex dashboards.
+  - Multi-instance search fallback with live duration, creator, and thumbnail previews.
+  - 1-Tap Paste & Cast button automatically parses YouTube URLs, Shorts, and video IDs.
+* **Cockpit Thumbnail Artwork & 21:9 Ultrawide**:
+  - Automatically loads and decodes official high-resolution YouTube video thumbnail art into the cockpit screen.
+  - Cinema ultrawide aspect ratio fill, live ambilight edge glow, and rotary controller knob scrubbing.
 * **Intel Atom A3960 Thermal Protection**:
-  - Stream quality is clamped to **720p / 1080p** (rejects 4K/2K) to prevent GPU/CPU thermal throttling and overheating on the head unit processor.
-* **Cockpit HMI Controls**:
-  - Play, pause, seek, volume, and fullscreen modes.
-  - Multiline description text box with word wrapping.
+  - Capped to thermal-safe **720p 60** (cool & efficient) or **1080p 60** max limit, rejecting 4K/2K streams to protect the head unit processor from overheating.
 
 ---
 

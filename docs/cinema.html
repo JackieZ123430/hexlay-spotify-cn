@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#070b12">
+    <title>BMW iDrive 7 - YouTube Cast Remote</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+        body {
+            background: #070b12;
+            color: #f1f5f9;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            padding: 24px 16px 50px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 440px;
+        }
+
+        /* OEM Header */
+        .header {
+            text-align: center;
+            margin-bottom: 22px;
+        }
+        .badge {
+            display: inline-block;
+            background: #004e8c;
+            color: #00f0ff;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            padding: 4px 12px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+        h1 {
+            font-size: 24px;
+            font-weight: 800;
+            color: #ffffff;
+            margin-bottom: 6px;
+        }
+        p.subtitle {
+            font-size: 14px;
+            color: #94a3b8;
+        }
+
+        /* Pairing Code Banner */
+        .pair-code {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #101826;
+            border: 1px solid #1f2d42;
+            padding: 12px 16px;
+            border-radius: 12px;
+            font-size: 14px;
+            margin-bottom: 18px;
+            font-weight: 600;
+        }
+        .pair-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #cbd5e1;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #2af575;
+            border-radius: 50%;
+            box-shadow: 0 0 8px #2af575;
+        }
+        .pair-val {
+            color: #00f0ff;
+            font-family: monospace;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            background: #172437;
+            padding: 4px 8px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        /* Standard BMW Card */
+        .card {
+            background: #0e1522;
+            border: 1px solid #1e293b;
+            border-radius: 16px;
+            padding: 20px 18px;
+            margin-bottom: 18px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+        .card-title {
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: #94a3b8;
+            text-transform: uppercase;
+        }
+
+        /* Input styling */
+        .input-group {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        input[type="text"] {
+            flex: 1;
+            background: #060a10;
+            border: 1px solid #253347;
+            border-radius: 10px;
+            padding: 12px 14px;
+            color: #ffffff;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s ease;
+        }
+        input[type="text"]:focus {
+            border-color: #0066b1;
+        }
+
+        /* Buttons */
+        .btn-primary {
+            display: block;
+            width: 100%;
+            background: #0066b1;
+            color: #ffffff;
+            font-size: 15px;
+            font-weight: 700;
+            text-align: center;
+            padding: 14px 0;
+            border-radius: 12px;
+            cursor: pointer;
+            border: none;
+            transition: transform 0.1s ease, background 0.2s ease;
+            margin-bottom: 12px;
+        }
+        .btn-primary:active {
+            transform: scale(0.98);
+            background: #00508c;
+        }
+
+        .btn-sub {
+            padding: 12px 16px;
+            background: #142236;
+            color: #00f0ff;
+            border: 1px solid #1e3553;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .btn-sub:active {
+            background: #1c304d;
+        }
+
+        .btn-paste-bmw {
+            display: block;
+            width: 100%;
+            background: #142236;
+            color: #00f0ff;
+            border: 1px solid #0066b1;
+            font-size: 15px;
+            font-weight: 700;
+            text-align: center;
+            padding: 14px 0;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: transform 0.1s ease, background 0.2s ease;
+            margin-bottom: 18px;
+        }
+        .btn-paste-bmw:active {
+            transform: scale(0.98);
+            background: #1c304d;
+        }
+
+        /* Filter Chips */
+        .chips-row {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            padding-bottom: 4px;
+            margin-bottom: 14px;
+            scrollbar-width: none;
+        }
+        .chips-row::-webkit-scrollbar { display: none; }
+        .chip {
+            background: #101a28;
+            border: 1px solid #1e2e44;
+            color: #94a3b8;
+            padding: 6px 12px;
+            border-radius: 18px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .chip:active, .chip:hover {
+            color: #ffffff;
+            border-color: #0066b1;
+            background: #152438;
+        }
+
+        /* Results List */
+        .results-box {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-height: 420px;
+            overflow-y: auto;
+            padding-right: 2px;
+        }
+        .video-item {
+            display: flex;
+            gap: 12px;
+            background: #090e17;
+            border: 1px solid #182436;
+            border-radius: 10px;
+            padding: 10px;
+            cursor: pointer;
+            transition: border-color 0.15s ease;
+        }
+        .video-item:active {
+            border-color: #0066b1;
+        }
+        .item-thumb {
+            position: relative;
+            width: 110px;
+            min-width: 110px;
+            height: 64px;
+            background: #000000;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .item-thumb img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .item-duration {
+            position: absolute;
+            bottom: 3px;
+            right: 3px;
+            background: rgba(0, 0, 0, 0.85);
+            color: #ffffff;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        .item-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-width: 0;
+        }
+        .item-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #f1f5f9;
+            line-height: 1.3;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            margin-bottom: 4px;
+        }
+        .item-channel {
+            font-size: 11px;
+            color: #00a3e0;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .btn-cast-tag {
+            align-self: flex-start;
+            background: #142236;
+            color: #00f0ff;
+            border: 1px solid #1e3553;
+            border-radius: 6px;
+            padding: 3px 8px;
+            font-size: 11px;
+            font-weight: 700;
+            margin-top: 4px;
+        }
+
+        /* Remote Controls */
+        .controls-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .btn-ctrl {
+            padding: 12px;
+            background: #111a28;
+            border: 1px solid #1f2e44;
+            border-radius: 8px;
+            color: #e2e8f0;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            text-align: center;
+        }
+        .btn-ctrl:active {
+            background: #1a2a40;
+            border-color: #0066b1;
+        }
+        .btn-ctrl.wide {
+            grid-column: span 3;
+            background: #142236;
+            color: #00f0ff;
+            border-color: #1e3553;
+        }
+
+        /* Quality selector */
+        .quality-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .quality-btn {
+            padding: 10px;
+            background: #080c14;
+            border: 1px solid #1c2b3e;
+            color: #94a3b8;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            text-align: center;
+        }
+        .quality-btn.active {
+            background: #142438;
+            border-color: #0066b1;
+            color: #00f0ff;
+            font-weight: 700;
+        }
+
+        /* Now Playing Bar */
+        .np-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: #090e17;
+            border: 1px solid #1a2638;
+            border-radius: 10px;
+            padding: 10px;
+            margin-bottom: 12px;
+        }
+        .np-thumb {
+            width: 54px;
+            height: 36px;
+            border-radius: 4px;
+            object-fit: cover;
+            background: #000;
+        }
+        .np-info {
+            flex: 1;
+            min-width: 0;
+        }
+        .np-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: #ffffff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .np-channel {
+            font-size: 11px;
+            color: #00a3e0;
+        }
+
+        /* Toast Feedback */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #0066b1;
+            color: #ffffff;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 12px 20px;
+            border-radius: 24px;
+            box-shadow: 0 8px 30px rgba(0, 102, 177, 0.4);
+            display: none;
+            z-index: 1000;
+            text-align: center;
+            max-width: 90%;
+        }
+        .toast.error {
+            background: #c9182b;
+            box-shadow: 0 8px 30px rgba(201, 24, 43, 0.4);
+        }
+
+        /* Navigation Links */
+        .footer-nav {
+            text-align: center;
+            margin-top: 14px;
+            font-size: 12px;
+            color: #64748b;
+        }
+        .footer-nav a {
+            color: #00a3e0;
+            text-decoration: none;
+            margin: 0 6px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- OEM Header -->
+        <div class="header">
+            <div class="badge">BMW iDrive 7 Cockpit</div>
+            <h1>YouTube Cast Remote</h1>
+            <p class="subtitle">Search and stream videos directly to your vehicle's display</p>
+        </div>
+
+        <!-- Pairing Code Banner -->
+        <div class="pair-code">
+            <div class="pair-status">
+                <div class="status-dot"></div>
+                <span>Connected to Vehicle</span>
+            </div>
+            <div class="pair-val" id="codeDisplay" onclick="promptChannel()">PAIR: ...</div>
+        </div>
+
+        <!-- 1-Tap Paste Button -->
+        <button class="btn-paste-bmw" onclick="pasteAndCast()">
+            1-Tap Paste & Cast Link
+        </button>
+
+        <!-- YouTube Video Search Card -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">YouTube Search</span>
+                <span style="font-size: 11px; color: #00a3e0;">Direct Cast</span>
+            </div>
+
+            <div class="input-group">
+                <input type="text" id="searchInput" placeholder="Search videos (e.g. BMW M3 Review)" onkeydown="if(event.key==='Enter') executeSearch()">
+                <button class="btn-sub" onclick="executeSearch()">Search</button>
+            </div>
+
+            <div class="chips-row">
+                <div class="chip" onclick="quickSearch('BMW M3 Review')">BMW M3 G80</div>
+                <div class="chip" onclick="quickSearch('Nurburgring 4K Onboard')">Nürburgring</div>
+                <div class="chip" onclick="quickSearch('Carwow Drag Race')">Carwow</div>
+                <div class="chip" onclick="quickSearch('Top Gear BMW')">Top Gear</div>
+                <div class="chip" onclick="quickSearch('Synthwave Chill Drive')">Chill Drive</div>
+            </div>
+
+            <div id="resultsBox" class="results-box" style="display: none;"></div>
+            <div id="searchLoader" style="display: none; text-align: center; padding: 18px; color: #94a3b8; font-size: 13px;">
+                Searching YouTube...
+            </div>
+        </div>
+
+        <!-- Manual URL Input Card -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Direct YouTube Link</span>
+            </div>
+            <div class="input-group">
+                <input type="text" id="manualUrl" placeholder="https://youtu.be/... or Video ID">
+                <button class="btn-sub" onclick="castManual()">Cast</button>
+            </div>
+
+            <div class="quality-row">
+                <button id="q720" class="quality-btn active" onclick="setQuality('720p')">720p HD (Efficient)</button>
+                <button id="q1080" class="quality-btn" onclick="setQuality('1080p')">1080p Full HD</button>
+            </div>
+        </div>
+
+        <!-- Playback Remote Card -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Cockpit Playback</span>
+            </div>
+
+            <div class="np-bar" id="nowPlayingBox" style="display: none;">
+                <img id="npThumb" class="np-thumb" src="" alt="">
+                <div class="np-info">
+                    <div id="npTitle" class="np-title">Streaming to Cockpit</div>
+                    <div id="npChannel" class="np-channel">YouTube Receiver</div>
+                </div>
+            </div>
+
+            <div class="controls-grid">
+                <button class="btn-ctrl" onclick="sendControl('seek', -10)">-10s</button>
+                <button class="btn-ctrl" onclick="sendControl('toggle')">Play / Pause</button>
+                <button class="btn-ctrl" onclick="sendControl('seek', 10)">+10s</button>
+                <button class="btn-ctrl" onclick="sendControl('seek', -30)">-30s</button>
+                <button class="btn-ctrl" onclick="sendControl('seek', 30)">+30s</button>
+                <button class="btn-ctrl" onclick="syncStatus()">Sync</button>
+                <button class="btn-ctrl wide" onclick="sendControl('fullscreen')">21:9 Widescreen Toggle</button>
+            </div>
+        </div>
+
+        <!-- History Card -->
+        <div class="card" id="historyCard" style="display: none;">
+            <div class="card-header">
+                <span class="card-title">Recent Videos</span>
+            </div>
+            <div id="historyList" style="display: flex; flex-direction: column; gap: 6px;"></div>
+        </div>
+
+        <!-- Navigation Links -->
+        <div class="footer-nav">
+            <span>BMW Custom Apps: </span>
+            <a href="pair.html">Spotify</a> ·
+            <a href="copilot.html">M-Copilot AI</a>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="toast"></div>
+
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        let channel = params.get('channel') || localStorage.getItem('bmw_cinema_channel');
+
+        if (!channel) {
+            channel = 'bmw_cinema_' + Math.random().toString(36).substring(2, 10);
+        }
+        localStorage.setItem('bmw_cinema_channel', channel);
+
+        const shortCode = channel.replace('bmw_cinema_', '').toUpperCase();
+        document.getElementById('codeDisplay').textContent = shortCode;
+
+        function promptChannel() {
+            const current = channel.replace('bmw_cinema_', '');
+            const input = prompt('Enter your 8-character vehicle pairing code:', current);
+            if (input && input.trim()) {
+                const code = input.trim().toLowerCase();
+                channel = code.startsWith('bmw_cinema_') ? code : ('bmw_cinema_' + code);
+                localStorage.setItem('bmw_cinema_channel', channel);
+                document.getElementById('codeDisplay').textContent = channel.replace('bmw_cinema_', '').toUpperCase();
+                showToast('Vehicle channel updated: ' + channel.replace('bmw_cinema_', '').toUpperCase());
+            }
+        }
+
+        let selectedQuality = '720p';
+        function setQuality(q) {
+            selectedQuality = q;
+            const b720 = document.getElementById('q720');
+            const b1080 = document.getElementById('q1080');
+            if (q === '720p') {
+                b720.className = 'quality-btn active';
+                b1080.className = 'quality-btn';
+            } else {
+                b1080.className = 'quality-btn active';
+                b720.className = 'quality-btn';
+            }
+        }
+
+        function parseYouTubeId(url) {
+            if (!url) return null;
+            const trimmed = String(url).trim();
+            if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|&v=)([^#&?]*).*/;
+            const match = trimmed.match(regExp);
+            return (match && match[2].length === 11) ? match[2] : null;
+        }
+
+        async function sendToCar(payload) {
+            payload.id = 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+            payload.time = Date.now();
+
+            try {
+                const res = await fetch('https://ntfy.sh/' + channel, {
+                    method: 'POST',
+                    headers: { 'Title': 'BMW M-Cinema Cast' },
+                    body: JSON.stringify(payload)
+                });
+                return res.ok;
+            } catch (e) {
+                console.error('Relay error: ' + e);
+                return false;
+            }
+        }
+
+        async function pasteAndCast() {
+            try {
+                const text = await navigator.clipboard.readText();
+                if (!text || !text.trim()) {
+                    showToast('Clipboard is empty! Copy a YouTube link first.', true);
+                    return;
+                }
+                const input = text.trim();
+                document.getElementById('manualUrl').value = input;
+                await processAndCast(input);
+            } catch (e) {
+                const manual = document.getElementById('manualUrl').value.trim();
+                if (manual) {
+                    await processAndCast(manual);
+                } else {
+                    showToast('Paste your YouTube link below.', true);
+                }
+            }
+        }
+
+        async function castManual() {
+            const input = document.getElementById('manualUrl').value.trim();
+            if (!input) {
+                showToast('Please enter a YouTube link or ID', true);
+                return;
+            }
+            await processAndCast(input);
+        }
+
+        async function processAndCast(rawUrl) {
+            const ytId = parseYouTubeId(rawUrl);
+            if (!ytId) {
+                showToast('Invalid YouTube video link or ID', true);
+                return;
+            }
+
+            showToast('Loading video details...');
+
+            let title = `YouTube [${ytId}]`;
+            let channelName = 'YouTube Video';
+            const thumbnail = `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`;
+
+            try {
+                const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${ytId}&format=json`);
+                if (oembedRes.ok) {
+                    const data = await oembedRes.json();
+                    if (data.title) title = data.title;
+                    if (data.author_name) channelName = data.author_name;
+                }
+            } catch (e) {
+                try {
+                    const noembedRes = await fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${ytId}`);
+                    if (noembedRes.ok) {
+                        const data = await noembedRes.json();
+                        if (data.title) title = data.title;
+                        if (data.author_name) channelName = data.author_name;
+                    }
+                } catch (e2) {}
+            }
+
+            await castVideo({
+                ytId: ytId,
+                title: title,
+                channel: channelName,
+                duration: '00:00',
+                thumbnail: thumbnail,
+                url: `https://www.youtube.com/watch?v=${ytId}`
+            });
+        }
+
+        async function castVideo(video) {
+            showToast('Casting to vehicle display...');
+
+            const payload = {
+                action: 'cast',
+                ytId: video.ytId,
+                title: video.title,
+                channel: video.channel,
+                duration: video.duration || '00:00',
+                quality: selectedQuality,
+                thumbnail: video.thumbnail || `https://img.youtube.com/vi/${video.ytId}/hqdefault.jpg`,
+                url: video.url || `https://www.youtube.com/watch?v=${video.ytId}`
+            };
+
+            const ok = await sendToCar(payload);
+            if (ok) {
+                showToast(`Playing on vehicle display (${selectedQuality})`);
+                updateNowPlaying(video);
+                saveHistory(video);
+            } else {
+                showToast('Failed to connect to vehicle relay', true);
+            }
+        }
+
+        function updateNowPlaying(video) {
+            const box = document.getElementById('nowPlayingBox');
+            const thumb = document.getElementById('npThumb');
+            const title = document.getElementById('npTitle');
+            const channel = document.getElementById('npChannel');
+
+            box.style.display = 'flex';
+            thumb.src = video.thumbnail || `https://img.youtube.com/vi/${video.ytId}/hqdefault.jpg`;
+            title.textContent = video.title;
+            channel.textContent = video.channel;
+        }
+
+        async function sendControl(cmd, val) {
+            const ok = await sendToCar({
+                action: 'control',
+                cmd: cmd,
+                val: val
+            });
+            if (ok) {
+                showToast(`Sent ${cmd}`);
+            }
+        }
+
+        function syncStatus() {
+            showToast('Synchronized with vehicle');
+        }
+
+        // ==========================================
+        // YouTube Search (Multi-Instance Fallback)
+        // ==========================================
+        const INVIDIOUS_INSTANCES = [
+            'https://yt.chocolatemoo53.com',
+            'https://inv.tux.pizza',
+            'https://invidious.nerdvpn.de',
+            'https://invidious.projectsegfau.lt'
+        ];
+
+        function quickSearch(q) {
+            document.getElementById('searchInput').value = q;
+            executeSearch();
+        }
+
+        async function executeSearch() {
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) {
+                showToast('Please type a search query', true);
+                return;
+            }
+
+            const directId = parseYouTubeId(query);
+            if (directId) {
+                await processAndCast(query);
+                return;
+            }
+
+            const loader = document.getElementById('searchLoader');
+            const container = document.getElementById('resultsBox');
+
+            loader.style.display = 'block';
+            container.style.display = 'none';
+            container.innerHTML = '';
+
+            let videos = [];
+
+            for (const instance of INVIDIOUS_INSTANCES) {
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 4500);
+
+                    const res = await fetch(`${instance}/api/v1/search?q=${encodeURIComponent(query)}&type=video`, {
+                        signal: controller.signal
+                    });
+                    clearTimeout(timeoutId);
+
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (Array.isArray(data) && data.length > 0) {
+                            videos = data.filter(item => item.type === 'video' && item.videoId);
+                            if (videos.length > 0) break;
+                        }
+                    }
+                } catch (e) {}
+            }
+
+            loader.style.display = 'none';
+
+            if (!videos || videos.length === 0) {
+                container.style.display = 'block';
+                container.innerHTML = '<div style="color: #94a3b8; font-size: 13px; text-align: center; padding: 16px;">No results found. Try pasting a video link directly.</div>';
+                return;
+            }
+
+            renderSearchResults(videos.slice(0, 10));
+        }
+
+        function formatDuration(sec) {
+            if (!sec) return '0:00';
+            const m = Math.floor(sec / 60);
+            const s = sec % 60;
+            return `${m}:${s < 10 ? '0' : ''}${s}`;
+        }
+
+        function renderSearchResults(list) {
+            const container = document.getElementById('resultsBox');
+            container.style.display = 'flex';
+            container.innerHTML = '';
+
+            list.forEach(v => {
+                const item = document.createElement('div');
+                item.className = 'video-item';
+
+                const durationStr = v.lengthSeconds ? formatDuration(v.lengthSeconds) : '';
+                const thumbUrl = `https://img.youtube.com/vi/${v.videoId}/mqdefault.jpg`;
+
+                item.innerHTML = `
+                    <div class="item-thumb">
+                        <img src="${thumbUrl}" alt="" loading="lazy">
+                        ${durationStr ? `<div class="item-duration">${durationStr}</div>` : ''}
+                    </div>
+                    <div class="item-content">
+                        <div>
+                            <div class="item-title">${escapeHtml(v.title)}</div>
+                            <div class="item-channel">${escapeHtml(v.author || 'YouTube')}</div>
+                        </div>
+                        <div class="btn-cast-tag">Cast to Car</div>
+                    </div>
+                `;
+
+                item.onclick = () => {
+                    castVideo({
+                        ytId: v.videoId,
+                        title: v.title,
+                        channel: v.author || 'YouTube',
+                        duration: durationStr,
+                        thumbnail: `https://img.youtube.com/vi/${v.videoId}/hqdefault.jpg`,
+                        url: `https://www.youtube.com/watch?v=${v.videoId}`
+                    });
+                };
+
+                container.appendChild(item);
+            });
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/[&<>"']/g, m => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[m]);
+        }
+
+        // ==========================================
+        // History Management
+        // ==========================================
+        function saveHistory(video) {
+            let list = JSON.parse(localStorage.getItem('bmw_cinema_history') || '[]');
+            list = list.filter(item => item.ytId !== video.ytId);
+            list.unshift({
+                ytId: video.ytId,
+                title: video.title,
+                channel: video.channel,
+                duration: video.duration,
+                thumbnail: video.thumbnail
+            });
+            if (list.length > 6) list = list.slice(0, 6);
+            localStorage.setItem('bmw_cinema_history', JSON.stringify(list));
+            renderHistory();
+        }
+
+        function renderHistory() {
+            const list = JSON.parse(localStorage.getItem('bmw_cinema_history') || '[]');
+            const card = document.getElementById('historyCard');
+            const container = document.getElementById('historyList');
+
+            if (!list.length) {
+                card.style.display = 'none';
+                return;
+            }
+
+            card.style.display = 'block';
+            container.innerHTML = '';
+
+            list.forEach(item => {
+                const row = document.createElement('div');
+                row.style.display = 'flex';
+                row.style.alignItems = 'center';
+                row.style.justifyContent = 'space-between';
+                row.style.background = '#090e17';
+                row.style.border = '1px solid #182232';
+                row.style.padding = '8px 12px';
+                row.style.borderRadius = '8px';
+                row.style.fontSize = '12px';
+                row.style.color = '#cbd5e1';
+                row.style.cursor = 'pointer';
+
+                row.innerHTML = `
+                    <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80%;">${escapeHtml(item.title)}</span>
+                    <span style="color: #00a3e0; font-weight: 700; font-size: 11px;">CAST</span>
+                `;
+                row.onclick = () => {
+                    castVideo(item);
+                };
+                container.appendChild(row);
+            });
+        }
+
+        function showToast(msg, isError) {
+            const el = document.getElementById('toast');
+            el.textContent = msg;
+            el.className = 'toast' + (isError ? ' error' : '');
+            el.style.display = 'block';
+            setTimeout(() => {
+                el.style.display = 'none';
+            }, 3000);
+        }
+
+        renderHistory();
+    </script>
+</body>
+</html>

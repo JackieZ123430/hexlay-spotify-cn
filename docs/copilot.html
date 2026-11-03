@@ -3,14 +3,14 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>BMW iDrive 7 - M-Copilot AI Setup</title>
+    <title>BMW iDrive 7 - M-Copilot AI & Voice Assistant</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             background: #070b12;
             color: #f1f5f9;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            padding: 24px 16px 40px;
+            padding: 20px 16px 40px;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -18,9 +18,9 @@
         }
         .header {
             width: 100%;
-            max-width: 440px;
+            max-width: 460px;
             text-align: center;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
         }
         .badge {
             display: inline-block;
@@ -31,7 +31,7 @@
             letter-spacing: 1.5px;
             padding: 4px 12px;
             border-radius: 6px;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
             text-transform: uppercase;
         }
         h1 {
@@ -48,32 +48,11 @@
             background: #0e1522;
             border: 1px solid #1e293b;
             border-radius: 16px;
-            padding: 24px 20px;
+            padding: 22px 18px;
             width: 100%;
-            max-width: 440px;
+            max-width: 460px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-            margin-bottom: 20px;
-        }
-        .btn-connect {
-            display: block;
-            width: 100%;
-            background: #00a3e0;
-            color: #ffffff;
-            font-size: 16px;
-            font-weight: 700;
-            text-align: center;
-            padding: 16px 0;
-            border-radius: 30px;
-            text-decoration: none;
-            cursor: pointer;
-            border: none;
-            transition: transform 0.1s ease, background 0.2s ease;
-            margin-top: 20px;
-            margin-bottom: 8px;
-        }
-        .btn-connect:active {
-            transform: scale(0.98);
-            background: #0088ba;
+            margin-bottom: 18px;
         }
         .pair-code {
             display: flex;
@@ -82,63 +61,14 @@
             gap: 8px;
             background: #141f2e;
             border: 1px solid #23354d;
-            padding: 12px;
+            padding: 10px;
             border-radius: 10px;
-            font-size: 16px;
+            font-size: 15px;
             margin-bottom: 16px;
             color: #00f0ff;
             font-weight: 700;
             letter-spacing: 2px;
             font-family: monospace;
-        }
-        label {
-            display: block;
-            font-size: 13px;
-            color: #cbd5e1;
-            margin-bottom: 6px;
-            margin-top: 14px;
-            font-weight: 600;
-        }
-        input[type="text"], input[type="password"], select {
-            width: 100%;
-            background: #060a10;
-            border: 1px solid #253347;
-            border-radius: 8px;
-            padding: 12px;
-            color: #ffffff;
-            font-size: 14px;
-            outline: none;
-        }
-        input:focus, select:focus {
-            border-color: #00a3e0;
-        }
-        .helper-text {
-            font-size: 12px;
-            color: #94a3b8;
-            margin-top: 6px;
-            line-height: 1.4;
-        }
-        .helper-text a {
-            color: #2af575;
-            text-decoration: underline;
-        }
-        .success-box {
-            display: none;
-            text-align: center;
-            padding: 24px 0;
-        }
-        .icon-check {
-            width: 64px;
-            height: 64px;
-            background: #2af575;
-            color: #000;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 32px;
-            font-weight: bold;
-            margin: 0 auto 20px;
         }
         .tabs {
             display: flex;
@@ -156,21 +86,312 @@
             border-radius: 8px;
             cursor: pointer;
             color: #94a3b8;
+            transition: all 0.2s;
         }
         .tab.active {
             background: #004e8c;
             color: #00f0ff;
             border-color: #00a3e0;
         }
+        label {
+            display: block;
+            font-size: 13px;
+            color: #cbd5e1;
+            margin-bottom: 6px;
+            margin-top: 14px;
+            font-weight: 600;
+        }
+        input[type="text"], input[type="password"], select, textarea {
+            width: 100%;
+            background: #060a10;
+            border: 1px solid #253347;
+            border-radius: 8px;
+            padding: 12px;
+            color: #ffffff;
+            font-size: 14px;
+            outline: none;
+            box-sizing: border-box;
+        }
+        input:focus, select:focus, textarea:focus {
+            border-color: #00a3e0;
+        }
+        .helper-text {
+            font-size: 12px;
+            color: #94a3b8;
+            margin-top: 6px;
+            line-height: 1.4;
+        }
+        .helper-text a {
+            color: #2af575;
+            text-decoration: underline;
+        }
+        .btn-connect {
+            display: block;
+            width: 100%;
+            background: #00a3e0;
+            color: #ffffff;
+            font-size: 15px;
+            font-weight: 700;
+            text-align: center;
+            padding: 14px 0;
+            border-radius: 30px;
+            cursor: pointer;
+            border: none;
+            margin-top: 20px;
+            transition: all 0.2s;
+        }
+        .btn-connect:active {
+            transform: scale(0.98);
+            background: #0088ba;
+        }
+
+        /* ----- Voice Co-Driver Styles ----- */
+        .voice-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 8px 0 16px;
+        }
+        .mic-btn-wrapper {
+            position: relative;
+            margin: 18px 0 14px;
+        }
+        .mic-ripple {
+            position: absolute;
+            top: -12px;
+            left: -12px;
+            right: -12px;
+            bottom: -12px;
+            border-radius: 50%;
+            border: 2px solid #00f0ff;
+            opacity: 0;
+            pointer-events: none;
+        }
+        .mic-btn {
+            width: 96px;
+            height: 96px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #004e8c 0%, #002b54 100%);
+            border: 3px solid #00a3e0;
+            color: #00f0ff;
+            font-size: 34px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 0 25px rgba(0, 163, 224, 0.35);
+            transition: all 0.2s ease;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .mic-btn:active {
+            transform: scale(0.94);
+        }
+        .mic-btn.listening {
+            background: linear-gradient(135deg, #e1001a 0%, #8b0000 100%);
+            border-color: #ff334b;
+            color: #ffffff;
+            box-shadow: 0 0 35px rgba(225, 0, 26, 0.65);
+            animation: pulse-ring 1.5s infinite;
+        }
+        @keyframes pulse-ring {
+            0% { box-shadow: 0 0 0 0 rgba(225, 0, 26, 0.7); }
+            70% { box-shadow: 0 0 0 20px rgba(225, 0, 26, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(225, 0, 26, 0); }
+        }
+        .mic-status-label {
+            font-size: 14px;
+            font-weight: 700;
+            color: #00f0ff;
+            letter-spacing: 1px;
+            margin-bottom: 6px;
+            text-align: center;
+            text-transform: uppercase;
+        }
+        .mic-status-sub {
+            font-size: 12px;
+            color: #94a3b8;
+            margin-bottom: 14px;
+            text-align: center;
+        }
+        .transcript-box {
+            width: 100%;
+            background: #060a10;
+            border: 1px solid #23354d;
+            border-radius: 10px;
+            padding: 12px;
+            font-size: 14px;
+            color: #f8fafc;
+            min-height: 54px;
+            max-height: 120px;
+            overflow-y: auto;
+            margin-bottom: 12px;
+            line-height: 1.4;
+        }
+        .transcript-box.empty {
+            color: #64748b;
+            font-style: italic;
+        }
+        .btn-send-car {
+            width: 100%;
+            background: #00a3e0;
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: 700;
+            padding: 12px 0;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-send-car:active {
+            background: #0088ba;
+        }
+        .quick-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 14px;
+        }
+        .chip {
+            background: #141f2e;
+            border: 1px solid #253347;
+            color: #cbd5e1;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 6px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .chip:active, .chip:hover {
+            background: #004e8c;
+            color: #00f0ff;
+            border-color: #00a3e0;
+        }
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 14px;
+            padding-top: 12px;
+            border-top: 1px solid #1e293b;
+            font-size: 13px;
+            color: #cbd5e1;
+        }
+        .toggle-row input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: #00a3e0;
+            cursor: pointer;
+        }
+        .response-card {
+            background: #060a10;
+            border: 1px solid #00a3e0;
+            border-radius: 10px;
+            padding: 14px;
+            margin-top: 16px;
+            display: none;
+        }
+        .response-card h4 {
+            color: #00a3e0;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+        .response-body {
+            font-size: 13px;
+            color: #e2e8f0;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
+        .settings-link {
+            font-size: 12px;
+            color: #64748b;
+            text-align: center;
+            margin-top: 14px;
+            text-decoration: underline;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
     <div class="header">
         <div class="badge">BMW iDrive 7 Cockpit</div>
-        <h1>M-Copilot AI Setup</h1>
-        <p class="subtitle">Connect Google Gemini to your BMW Live Cockpit</p>
+        <h1>M-Copilot AI & Voice</h1>
+        <p class="subtitle">AI Performance Co-Driver with Live Telemetry Uplink</p>
     </div>
 
+    <!-- Active Voice Co-Driver & Remote Screen -->
+    <div class="card" id="cardVoice" style="display: none;">
+        <div class="pair-code">
+            <span style="font-size: 10px; color: #2af575;">● CAR ONLINE</span>
+            <span id="spanVoiceChannel">CHANNEL</span>
+        </div>
+
+        <div class="voice-container">
+            <div class="mic-status-label" id="micStatusLabel">Tap Microphone to Speak</div>
+            <div class="mic-status-sub" id="micStatusSub">Speech is transcribed and sent to your BMW Live Cockpit</div>
+
+            <div class="mic-btn-wrapper">
+                <div class="mic-btn" id="btnMic" onclick="toggleVoiceRecognition()">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                        <line x1="12" y1="19" x2="12" y2="23"></line>
+                        <line x1="8" y1="23" x2="16" y2="23"></line>
+                    </svg>
+                </div>
+            </div>
+
+            <label for="selectLang" style="margin-top: 4px; font-size: 12px; width: 100%;">Speech Language</label>
+            <select id="selectLang" onchange="onLangChange()">
+                <option value="en-US">English (United States)</option>
+                <option value="en-GB">English (United Kingdom)</option>
+                <option value="de-DE">Deutsch (Germany)</option>
+                <option value="ru-RU">Русский (Russian)</option>
+                <option value="zh-CN">中文 (Mandarin)</option>
+                <option value="fr-FR">Français (French)</option>
+                <option value="es-ES">Español (Spanish)</option>
+                <option value="it-IT">Italiano (Italian)</option>
+                <option value="ja-JP">日本語 (Japanese)</option>
+            </select>
+
+            <label style="width: 100%; margin-top: 10px;">Transcribed Question</label>
+            <textarea id="txtPrompt" class="transcript-box" placeholder="Your spoken question will appear here..."></textarea>
+
+            <button class="btn-send-car" id="btnSendPrompt" onclick="sendPromptToCar()">SEND TO BMW DISPLAY</button>
+        </div>
+
+        <label style="margin-top: 8px;">Quick Topic Chips</label>
+        <div class="quick-chips">
+            <div class="chip" onclick="quickSend('What are the launch control prerequisites and sequence for BMW G-Series ZF 8HP?')">🚀 Launch Protocol</div>
+            <div class="chip" onclick="quickSend('What are the turbo cooling and post-drive heat management guidelines for BMW turbocharged engines?')">🔥 Turbo Cooling</div>
+            <div class="chip" onclick="quickSend('Analyze current tire pressures, cold vs hot delta, and rubber temperature grip window.')">🛞 Tire Grip & PSI</div>
+            <div class="chip" onclick="quickSend('Analyze vehicle handling, chassis balance, and sport differential for aggressive mountain twisties.')">⛰️ Mountain Pass</div>
+            <div class="chip" onclick="quickSend('Analyze M Sport brake temperatures, pad bite, brake fluid boiling threshold, and thermal fade resistance.')">🛑 M Brakes & Fade</div>
+            <div class="chip" onclick="quickSend('What are the factory oil specifications, change intervals, and Longlife (LL-01 / LL-04 / LL-17FE+) service guidelines for BMW G-Series engines?')">🔧 Oil Specs (CBS)</div>
+            <div class="chip" onclick="quickSend('Run an OBD-II UDS diagnostic health check across DME, EGS transmission, DSC, and electrical sensors.')">⚠️ Fault Code Scan</div>
+            <div class="chip" onclick="quickSend('Analyze 12V AGM battery state of health, charging voltage, and 48V mild-hybrid regenerative braking.')">⚡ 12V / 48V Battery</div>
+        </div>
+
+        <!-- Real-time Co-Driver Response Card -->
+        <div class="response-card" id="cardResponse">
+            <h4 id="respHeader">M-Copilot Live Response</h4>
+            <div class="response-body" id="respBody">...</div>
+        </div>
+
+        <div class="toggle-row">
+            <span>🔊 Read response aloud via Car Bluetooth (TTS)</span>
+            <input type="checkbox" id="checkTts" checked>
+        </div>
+
+        <div class="settings-link" onclick="showPairingScreen()">Change API Key / Re-pair</div>
+    </div>
+
+    <!-- Initial Cloud Pairing & Configuration Screen -->
     <div class="card" id="cardPairing">
         <div class="pair-code">PAIRING CODE: <span id="spanCode">COP-CONNECT</span></div>
 
@@ -215,25 +436,120 @@
         <p id="errorMsg" style="color: #ff4d4d; font-size: 13px; text-align: center; margin-top: 10px; display: none;"></p>
     </div>
 
-    <!-- Success Screen -->
-    <div class="card success-box" id="cardSuccess">
-        <div class="icon-check">✓</div>
-        <h2 style="font-size: 20px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">CONNECTED TO BMW iDRIVE 7!</h2>
-        <p style="font-size: 14px; color: #94a3b8; line-height: 1.5; margin-bottom: 16px;">
-            Your AI credentials have been transferred securely to your car.<br>
-            Your M-Copilot screen is now live.
-        </p>
-        <div style="background: #141f2e; padding: 12px; border-radius: 8px; font-size: 13px; color: #2af575;">
-            ✓ Safe Read-Only CAN Telemetry Uplink Active
-        </div>
-    </div>
-
     <script>
         const urlParams = new URLSearchParams(window.location.search);
-        const channel = urlParams.get('channel') || 'bmw_copilot_default';
-        let currentTab = 'gemini';
+        const channel = urlParams.get('channel') || localStorage.getItem('copilot_channel') || 'bmw_copilot_default';
+        const shortCode = channel.replace('bmw_copilot_', '').toUpperCase();
 
-        document.getElementById('spanCode').innerText = channel.replace('bmw_copilot_', '').toUpperCase();
+        document.getElementById('spanCode').innerText = shortCode;
+        document.getElementById('spanVoiceChannel').innerText = 'RELAY: ' + shortCode;
+
+        let currentTab = 'gemini';
+        let isListening = false;
+        let recognition = null;
+        let lastAnswerId = null;
+        let pollTimer = null;
+        let wakeLock = null;
+
+        // Auto-request Screen Wake Lock so phone doesn't sleep while driving
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                }
+            } catch (e) {}
+        }
+        requestWakeLock();
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') requestWakeLock();
+        });
+
+        // Initialize Speech Recognition
+        const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRec) {
+            recognition = new SpeechRec();
+            recognition.continuous = false;
+            recognition.interimResults = true;
+            recognition.maxAlternatives = 1;
+            recognition.lang = document.getElementById('selectLang').value;
+
+            recognition.onstart = () => {
+                isListening = true;
+                const btn = document.getElementById('btnMic');
+                btn.classList.add('listening');
+                document.getElementById('micStatusLabel').innerText = 'LISTENING... SPEAK NOW';
+                document.getElementById('micStatusLabel').style.color = '#ff334b';
+                document.getElementById('micStatusSub').innerText = 'Speak in your selected language';
+            };
+
+            recognition.onresult = (e) => {
+                let interim = '';
+                let final = '';
+                for (let i = e.resultIndex; i < e.results.length; ++i) {
+                    if (e.results[i].isFinal) {
+                        final += e.results[i][0].transcript;
+                    } else {
+                        interim += e.results[i][0].transcript;
+                    }
+                }
+                const full = final || interim;
+                if (full) {
+                    document.getElementById('txtPrompt').value = full;
+                }
+            };
+
+            recognition.onerror = (e) => {
+                stopListeningUi();
+                if (e.error !== 'no-speech') {
+                    document.getElementById('micStatusSub').innerText = 'Mic notice: ' + e.error;
+                }
+            };
+
+            recognition.onend = () => {
+                stopListeningUi();
+                const text = document.getElementById('txtPrompt').value.trim();
+                if (text && text.length > 2) {
+                    sendPromptToCar();
+                }
+            };
+        } else {
+            document.getElementById('micStatusSub').innerText = 'Web Speech not supported in this browser. Use text box or quick chips below.';
+        }
+
+        function onLangChange() {
+            if (recognition) {
+                recognition.lang = document.getElementById('selectLang').value;
+            }
+        }
+
+        function stopListeningUi() {
+            isListening = false;
+            const btn = document.getElementById('btnMic');
+            btn.classList.remove('listening');
+            document.getElementById('micStatusLabel').innerText = 'Tap Microphone to Speak';
+            document.getElementById('micStatusLabel').style.color = '#00f0ff';
+            document.getElementById('micStatusSub').innerText = 'Speech is transcribed and sent to your BMW Live Cockpit';
+        }
+
+        function toggleVoiceRecognition() {
+            if (!recognition) {
+                alert('Speech recognition is not supported on this browser. You can type questions in the box below.');
+                return;
+            }
+            if (isListening) {
+                recognition.stop();
+                stopListeningUi();
+            } else {
+                try {
+                    document.getElementById('txtPrompt').value = '';
+                    recognition.lang = document.getElementById('selectLang').value;
+                    recognition.start();
+                } catch (e) {
+                    recognition.stop();
+                    stopListeningUi();
+                }
+            }
+        }
 
         function switchTab(t) {
             currentTab = t;
@@ -242,6 +558,18 @@
             document.getElementById('sectionGemini').style.display = (t === 'gemini') ? 'block' : 'none';
             document.getElementById('sectionCustom').style.display = (t === 'custom') ? 'block' : 'none';
             document.getElementById('errorMsg').style.display = 'none';
+        }
+
+        function showPairingScreen() {
+            document.getElementById('cardPairing').style.display = 'block';
+            document.getElementById('cardVoice').style.display = 'none';
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        }
+
+        function showVoiceScreen() {
+            document.getElementById('cardPairing').style.display = 'none';
+            document.getElementById('cardVoice').style.display = 'block';
+            startReplyPolling();
         }
 
         async function connectCopilot() {
@@ -284,8 +612,9 @@
                     body: JSON.stringify(payload)
                 });
                 if (res.ok) {
-                    document.getElementById('cardPairing').style.display = 'none';
-                    document.getElementById('cardSuccess').style.display = 'block';
+                    localStorage.setItem('copilot_channel', channel);
+                    localStorage.setItem('copilot_paired', 'true');
+                    showVoiceScreen();
                 } else {
                     err.innerText = 'Transmission error. Check phone internet connection.';
                     err.style.display = 'block';
@@ -294,6 +623,109 @@
                 err.innerText = 'Network error: ' + e.message;
                 err.style.display = 'block';
             }
+        }
+
+        async function sendPromptToCar() {
+            const txt = document.getElementById('txtPrompt').value.trim();
+            if (!txt) return;
+
+            const btn = document.getElementById('btnSendPrompt');
+            btn.innerText = 'SENDING TO BMW...';
+            btn.disabled = true;
+
+            const payload = {
+                type: 'voice_query',
+                query: txt,
+                title: 'Voice: ' + (txt.length > 25 ? txt.slice(0, 25) + '...' : txt),
+                lang: document.getElementById('selectLang').value,
+                time: Date.now()
+            };
+
+            try {
+                await fetch('https://ntfy.sh/' + channel, {
+                    method: 'POST',
+                    headers: { 'Title': 'BMW M-Copilot Voice' },
+                    body: JSON.stringify(payload)
+                });
+
+                document.getElementById('cardResponse').style.display = 'block';
+                document.getElementById('respHeader').innerText = 'Question Sent to BMW Display';
+                document.getElementById('respBody').innerText = `"${txt}"\n\nQuerying Co-Driver with live vehicle telemetry...`;
+            } catch (e) {
+                alert('Failed to send to car: ' + e.message);
+            } finally {
+                btn.innerText = 'SEND TO BMW DISPLAY';
+                btn.disabled = false;
+            }
+        }
+
+        function quickSend(query) {
+            document.getElementById('txtPrompt').value = query;
+            sendPromptToCar();
+        }
+
+        // Poll for AI responses from the car to display & speak aloud via Bluetooth TTS
+        function startReplyPolling() {
+            if (pollTimer) return;
+            const replyTopic = channel + '_reply';
+
+            pollTimer = setInterval(async () => {
+                try {
+                    let url = `https://ntfy.sh/${replyTopic}/json?poll=1`;
+                    if (lastAnswerId) {
+                        url += `&since=${encodeURIComponent(lastAnswerId)}`;
+                    } else {
+                        url += `&since=10s`;
+                    }
+                    const res = await fetch(url);
+                    if (!res.ok) return;
+                    const text = await res.text();
+                    if (!text.trim()) return;
+
+                    const lines = text.trim().split('\n');
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+                        try {
+                            const item = JSON.parse(line);
+                            if (item.id) lastAnswerId = item.id;
+                            if (item.event === 'message' && item.message) {
+                                const parsed = JSON.parse(item.message);
+                                if (parsed.type === 'copilot_response' && parsed.answer) {
+                                    onCarAnswerReceived(parsed.query, parsed.answer);
+                                }
+                            }
+                        } catch (e) {}
+                    }
+                } catch (e) {}
+            }, 2000);
+        }
+
+        function onCarAnswerReceived(query, answer) {
+            document.getElementById('cardResponse').style.display = 'block';
+            document.getElementById('respHeader').innerText = 'Answer from BMW Live Cockpit';
+            document.getElementById('respBody').innerText = answer;
+
+            // Optional Bluetooth Text-to-Speech (TTS)
+            if (document.getElementById('checkTts').checked && 'speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                // Strip markdown symbols and brackets for clean spoken voice
+                const spoken = answer
+                    .replace(/\[OK\]|\[\!\]|\[.*?\]/g, '')
+                    .replace(/[\*\#\-\_]/g, ' ')
+                    .replace(/\n+/g, '. ')
+                    .trim();
+                if (spoken) {
+                    const utter = new SpeechSynthesisUtterance(spoken);
+                    utter.lang = document.getElementById('selectLang').value || 'en-US';
+                    utter.rate = 1.05;
+                    window.speechSynthesis.speak(utter);
+                }
+            }
+        }
+
+        // Auto-load Voice Screen if channel already paired or saved
+        if (localStorage.getItem('copilot_paired') === 'true' || urlParams.get('channel')) {
+            showVoiceScreen();
         }
     </script>
 </body>

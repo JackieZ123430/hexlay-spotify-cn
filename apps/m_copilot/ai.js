@@ -89,22 +89,45 @@ class AiBridge {
     saveCredentials(payload) {
         if (!payload) return;
         if (payload.mode) this.config.mode = payload.mode;
+        if (payload.provider) this.config.provider = payload.provider;
+        if (payload.model) this.config.model = payload.model;
         if (payload.geminiApiKey) {
             this.config.geminiApiKey = payload.geminiApiKey;
             this.config.mode = 'gemini';
+            this.config.provider = 'gemini';
         }
-        if (payload.apiKey) this.config.apiKey = payload.apiKey;
+        if (payload.apiKey) {
+            this.config.apiKey = payload.apiKey;
+            const k = payload.apiKey.trim();
+            if (k.startsWith('AIzaSy') || k.startsWith('AQ.')) {
+                this.config.geminiApiKey = k;
+                this.config.mode = 'gemini';
+                this.config.provider = 'gemini';
+            } else if (k.startsWith('gsk_')) {
+                this.config.provider = 'groq';
+                this.config.mode = 'custom_api';
+            } else if (k.startsWith('sk-ant-')) {
+                this.config.provider = 'claude';
+                this.config.mode = 'claude';
+            } else if (k.startsWith('sk-or-')) {
+                this.config.provider = 'openrouter';
+                this.config.mode = 'custom_api';
+            } else if (!this.config.provider) {
+                this.config.provider = 'openai';
+                this.config.mode = 'custom_api';
+            }
+        }
         if (payload.sessionToken) this.config.sessionToken = payload.sessionToken;
         if (payload.persona) this.config.persona = payload.persona;
         this.config.paired = true;
         this.saveConfig();
-        this.log.info('AiBridge: Saved new credentials (mode=' + this.config.mode + ')');
+        this.log.info('AiBridge: Saved new credentials (mode=' + this.config.mode + ', provider=' + (this.config.provider || 'gemini') + ')');
     }
 
     isConfigured() {
         if (this.config.mode === 'gemini') return !!this.config.geminiApiKey;
+        if (this.config.mode === 'claude') return !!this.config.apiKey;
         if (this.config.mode === 'custom_api') return !!this.config.apiKey;
-        if (this.config.mode === 'subscription') return !!(this.config.sessionToken || this.config.paired);
         return !!(this.config.geminiApiKey || this.config.apiKey);
     }
 
@@ -301,13 +324,15 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
                    `To safely code vehicle parameters (such as Start/Stop memory, ambient lighting, or acoustic chimes), please switch to the dedicated QuickCode app.`;
         }
 
-        const mode = this.config.mode || 'gemini';
+        const provider = this.config.provider || (this.config.geminiApiKey ? 'gemini' : 'openai');
 
-        if (mode === 'gemini' && this.config.geminiApiKey) {
+        if (provider === 'gemini' || (this.config.mode === 'gemini' && this.config.geminiApiKey)) {
             return this.queryGemini(prompt, telemetry, persona);
         }
-
-        return this.queryOpenAICompatible(prompt, telemetry, persona);
+        if (provider === 'claude' || (this.config.apiKey && this.config.apiKey.startsWith('sk-ant-'))) {
+            return this.queryAnthropic(prompt, telemetry, persona);
+        }
+        return this.queryOpenAICompatible(prompt, telemetry, persona, provider);
     }
 
     async queryGemini(prompt, telemetry, persona) {
@@ -325,17 +350,17 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
                 }
             ],
             generationConfig: {
-                maxOutputTokens: 380,
-                temperature: 0.6
+                maxOutputTokens: 1000,
+                temperature: 0.6,
+                thinkingConfig: { thinkingBudget: 0 }
             }
         });
 
-        // Fast, high-availability Gemini models with automated fallback
+        // Best available models on Google AI Studio with high-speed fallback
         const candidateModels = [
-            'gemini-3.1-flash-lite',
             'gemini-3.5-flash',
-            'gemini-3.6-flash',
             'gemini-3.8-flash',
+            'gemini-3.1-flash-lite',
             'gemini-flash-latest'
         ];
 
@@ -351,7 +376,7 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
                             'Content-Type': 'application/json',
                             'Content-Length': Buffer.byteLength(body)
                         },
-                        timeout: 7000
+                        timeout: 9000
                     }, (res) => {
                         let data = '';
                         res.on('data', (chunk) => { data += chunk; });
@@ -393,19 +418,88 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
         return `[Gemini API Alert]\n${lastError || 'Failed to communicate with Google Gemini API.'}`;
     }
 
-    queryOpenAICompatible(prompt, telemetry, persona) {
+    queryAnthropic(prompt, telemetry, persona) {
+        return new Promise((resolve) => {
+            const systemPrompt = this.buildVehicleContext(persona, telemetry, prompt);
+            const token = this.config.apiKey;
+            const model = this.config.model || 'claude-3-5-haiku-20241022';
+
+            const body = JSON.stringify({
+                model: model,
+                max_tokens: 1000,
+                system: systemPrompt,
+                messages: [
+                    { role: 'user', content: `Based on my current vehicle telemetry, answer this:\n${prompt}` }
+                ]
+            });
+
+            const req = https.request('https://api.anthropic.com/v1/messages', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': token,
+                    'anthropic-version': '2023-06-01',
+                    'Content-Length': Buffer.byteLength(body)
+                },
+                timeout: 8000
+            }, (res) => {
+                let data = '';
+                res.on('data', (chunk) => { data += chunk; });
+                res.on('end', () => {
+                    try {
+                        const json = JSON.parse(data);
+                        if (json.content && json.content[0] && json.content[0].text) {
+                            resolve(json.content[0].text.trim());
+                        } else if (json.error) {
+                            resolve(`[Claude API Alert]\n${json.error.message || JSON.stringify(json.error)}`);
+                        } else {
+                            resolve(`[Claude Response]\n${data.slice(0, 250)}`);
+                        }
+                    } catch (e) {
+                        resolve(`Parse error: ${e.message}`);
+                    }
+                });
+            });
+
+            req.on('error', (err) => resolve(`Uplink error: ${err.message}`));
+            req.on('timeout', () => {
+                try { req.destroy(); } catch (e) {}
+                resolve('Claude query timed out. Please check phone hotspot connection.');
+            });
+            req.write(body);
+            req.end();
+        });
+    }
+
+    queryOpenAICompatible(prompt, telemetry, persona, provider) {
         return new Promise((resolve) => {
             const systemPrompt = this.buildVehicleContext(persona, telemetry, prompt);
             const token = this.config.sessionToken || this.config.apiKey;
-            const urlStr = this.config.relayUrl || 'https://api.openai.com/v1/chat/completions';
+
+            let urlStr = 'https://api.openai.com/v1/chat/completions';
+            let model = 'gpt-4o-mini';
+            const extraHeaders = {};
+
+            if (provider === 'groq' || (token && token.startsWith('gsk_'))) {
+                urlStr = 'https://api.groq.com/openai/v1/chat/completions';
+                model = 'llama-3.3-70b-versatile';
+            } else if (provider === 'openrouter' || (token && token.startsWith('sk-or-'))) {
+                urlStr = 'https://openrouter.ai/api/v1/chat/completions';
+                model = 'meta-llama/llama-3.3-70b-instruct';
+                extraHeaders['HTTP-Referer'] = 'https://hexlay.github.io/idrive7-custom-apps/';
+            } else if (this.config.relayUrl) {
+                urlStr = this.config.relayUrl;
+            }
+
+            if (this.config.model) model = this.config.model;
 
             const body = JSON.stringify({
-                model: this.config.model || 'gpt-4o-mini',
+                model: model,
                 messages: [
                     { role: 'system', content: systemPrompt },
-                    { role: 'user', content: prompt }
+                    { role: 'user', content: `Based on my current vehicle telemetry, answer this:\n${prompt}` }
                 ],
-                max_tokens: 380,
+                max_tokens: 1000,
                 temperature: 0.6
             });
 
@@ -421,11 +515,11 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
 
             const req = client.request(u, {
                 method: 'POST',
-                headers: {
+                headers: Object.assign({
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`,
                     'Content-Length': Buffer.byteLength(body)
-                },
+                }, extraHeaders),
                 timeout: 8000
             }, (res) => {
                 let data = '';
@@ -448,7 +542,7 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
 
             req.on('error', (err) => resolve(`Uplink error: ${err.message}`));
             req.on('timeout', () => {
-                req.destroy();
+                try { req.destroy(); } catch (e) {}
                 resolve('Request timed out. Please check phone hotspot connection.');
             });
             req.write(body);

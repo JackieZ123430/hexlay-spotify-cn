@@ -53,6 +53,7 @@ mgu.run({
         let isThinking = false;
         let thinkTimer = null;
         let lastRenderTime = 0;
+        let dialogueScroll = 0;
 
         let currentPrompt = PROMPTS[0].title;
         let currentResponse = 'M-Copilot ready. Select a quick telemetry chip or ask a vehicle question.';
@@ -163,8 +164,9 @@ mgu.run({
             }
 
             currentPrompt = title || 'Custom Query';
+            dialogueScroll = 0;
             setThinking(true);
-            currentResponse = 'Querying Google Gemini with live vehicle telemetry...';
+            currentResponse = 'Querying AI Co-Driver with live vehicle telemetry...';
 
             const persona = settings.persona || 'm_engineer';
 
@@ -194,15 +196,41 @@ mgu.run({
             }
         }
 
-        /* ---------- Helper: Text Wrapping ---------- */
-        function wrapLines(text, maxChars = 58) {
-            const rawLines = text.split('\n');
+        /* ---------- Helper: Text Formatting & Wrapping ---------- */
+        function wrapLines(text, maxChars = 62) {
+            if (!text) return [];
+            // Clean markdown syntax & sanitize characters into atlas-supported glyphs
+            const cleaned = text
+                .replace(/\*\*(.*?)\*\*/g, '$1')   // bold asterisks removed
+                .replace(/^[\*\-]\s+/gm, '- ')     // list bullet prefix to '- '
+                .replace(/[•\u2022]/g, '- ')       // bullet dot to '- '
+                .replace(/[≥]/g, '>=')
+                .replace(/[≤]/g, '<=')
+                .replace(/[✔]/g, '✓')
+                .replace(/[⚠️⚠]/g, '[!]')
+                .replace(/[“”]/g, '"')
+                .replace(/[‘’]/g, "'")
+                .replace(/\n{3,}/g, '\n\n');       // collapse excessive blank lines
+
+            const rawLines = cleaned.split('\n');
             const lines = [];
+            let lastEmpty = false;
+
             rawLines.forEach(rl => {
-                if (rl.length <= maxChars) {
-                    lines.push(rl);
+                const trimmed = rl.trim();
+                if (!trimmed) {
+                    if (!lastEmpty && lines.length > 0) {
+                        lines.push('');
+                        lastEmpty = true;
+                    }
+                    return;
+                }
+                lastEmpty = false;
+
+                if (trimmed.length <= maxChars) {
+                    lines.push(trimmed);
                 } else {
-                    const words = rl.split(' ');
+                    const words = trimmed.split(' ');
                     let cur = '';
                     words.forEach(w => {
                         if ((cur + ' ' + w).length <= maxChars) {
@@ -347,10 +375,14 @@ mgu.run({
 
             drawNeuralOrb(cv, 230, 180, 84, now);
 
-            // Status Badge (Interactive: tap to open re-pair if needed)
-            const isGemini = ai.config.mode === 'gemini';
-            const tierLabel = isGemini ? 'GOOGLE GEMINI FLASH (FREE)' : 'CUSTOM AI API';
-            const tierCol = isGemini ? '#2af575' : '#00a3e0';
+            // Status Badge (Interactive: displays connected provider & tap to re-pair)
+            const prov = (ai.config.provider || (ai.config.mode === 'gemini' ? 'gemini' : 'custom')).toLowerCase();
+            let tierLabel = 'GOOGLE GEMINI (FREE)';
+            let tierCol = '#2af575';
+            if (prov === 'groq') { tierLabel = 'GROQ LLAMA 3.3 (FAST)'; tierCol = '#ff6b35'; }
+            else if (prov === 'claude') { tierLabel = 'ANTHROPIC CLAUDE'; tierCol = '#d97706'; }
+            else if (prov === 'openai') { tierLabel = 'OPENAI GPT-4O'; tierCol = '#10a37f'; }
+            else if (prov === 'openrouter') { tierLabel = 'OPENROUTER AI'; tierCol = '#6366f1'; }
 
             cv.roundRect(80, 280, 300, 30, 8, withAlpha(tierCol, 0.15));
             cv.strokeRoundRect(80, 280, 300, 30, 8, 1, tierCol);
@@ -383,21 +415,52 @@ mgu.run({
             // Left decorative M stripe on response card
             cv.fillRect(rx + 2, ry + 12, 4, rh - 24, '#00a3e0');
 
-            // Render Response text with wrap
-            const lines = wrapLines(currentResponse, 58);
+            // Render Response text with wrap and scroll
+            const lines = wrapLines(currentResponse, 62);
             const maxVisibleLines = 11;
-            lines.slice(0, maxVisibleLines).forEach((line, idx) => {
+            const maxScroll = Math.max(0, lines.length - maxVisibleLines);
+            if (dialogueScroll > maxScroll) dialogueScroll = maxScroll;
+
+            const visible = lines.slice(dialogueScroll, dialogueScroll + maxVisibleLines);
+            visible.forEach((line, idx) => {
                 const ly = ry + 36 + idx * 26;
                 let col = '#e2e8f0';
                 let isBold = false;
 
                 if (line.startsWith('[OK]') || line.startsWith('✓') || line.includes('PASS') || line.includes('OPTIMAL')) col = '#2af575';
-                else if (line.startsWith('[!]') || line.startsWith('⚠') || line.includes('CAUTION') || line.includes('FAIL') || line.includes('Warning')) col = '#ffb703';
-                else if (line.startsWith('[') && line.endsWith(']')) { col = '#00a3e0'; isBold = true; }
-                else if (line.startsWith('1.') || line.startsWith('2.') || line.startsWith('3.')) col = '#ffffff';
+                else if (line.startsWith('[!]') || line.includes('CAUTION') || line.includes('FAIL') || line.includes('Warning')) col = '#ffb703';
+                else if ((line.startsWith('[') && line.endsWith(']')) || (line.startsWith('- ') && line.includes(':'))) {
+                    isBold = true;
+                    col = '#ffffff';
+                } else if (/^\d+\./.test(line)) col = '#ffffff';
 
-                cv.text(line, rx + 24, ly, 17, col, { font: isBold ? 'bold' : 'normal' });
+                cv.text(line, rx + 24, ly, 16, col, { font: isBold ? 'bold' : 'normal' });
             });
+
+            // Scrollbar & Page indicator when content exceeds card
+            if (lines.length > maxVisibleLines) {
+                const sbX = rx + rw - 14, sbY = ry + 20, sbH = rh - 40;
+                cv.roundRect(sbX, sbY, 4, sbH, 2, withAlpha(t.panelEdge, 0.4));
+                const thumbH = Math.max(24, Math.floor((maxVisibleLines / lines.length) * sbH));
+                const thumbY = sbY + Math.floor((dialogueScroll / maxScroll) * (sbH - thumbH));
+                cv.roundRect(sbX, thumbY, 4, thumbH, 2, '#00a3e0');
+
+                // Page badge
+                const curPage = Math.floor(dialogueScroll / maxVisibleLines) + 1;
+                const totPages = Math.ceil(lines.length / maxVisibleLines);
+                cv.text(`PAGE ${curPage}/${totPages}`, rx + rw - 24, ry + rh - 12, 12, t.dim, { align: 'right', font: 'num' });
+
+                // Touch targets to scroll
+                cv.target(rx, ry, rw, rh / 2, () => {
+                    dialogueScroll = Math.max(0, dialogueScroll - 4);
+                    render(true);
+                }, 'card_scroll_up', 4);
+
+                cv.target(rx, ry + rh / 2, rw, rh / 2, () => {
+                    dialogueScroll = Math.min(maxScroll, dialogueScroll + 4);
+                    render(true);
+                }, 'card_scroll_down', 4);
+            }
 
             // Panel 3 (Right): Quick Prompt Chips
             G.panel(cv, t, 1200, 52, 360, 410, 'Co-Driver Quick Chips');
@@ -440,10 +503,11 @@ mgu.run({
             }
 
             // G-Series Live Cockpit frame tabs along the top: clean single title + live status badges
+            const provName = (ai.config.provider || (ai.config.mode === 'gemini' ? 'gemini' : 'custom')).toUpperCase();
             G.frame(cv, t, PAGES, 0, [
                 { text: telemetry.driveMode },
                 { text: 'READ-ONLY SAFE', color: '#2af575' },
-                { text: ai.isConfigured() ? 'GEMINI ONLINE' : 'SETUP REQUIRED', color: ai.isConfigured() ? '#00a3e0' : '#ffb703' }
+                { text: ai.isConfigured() ? `${provName} ONLINE` : 'SETUP REQUIRED', color: ai.isConfigured() ? '#00a3e0' : '#ffb703' }
             ]);
 
             // Global Notification banner

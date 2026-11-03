@@ -37,28 +37,8 @@
       "title": "M-Copilot",
       "buttons": [
         ["BTN_PROMPT", "Ask Copilot"],
-        ["BTN_REPAIR", "Pair Phone"],
-        ["BTN_SETTINGS", "Settings"]
+        ["BTN_REPAIR", "Pair Phone"]
       ]
     }
-  ],
-  "settings": [
-    {"key": "persona", "label": "Co-Driver Persona", "type": "choice", "default": "m_engineer",
-     "options": [
-       ["m_engineer", "BMW M Track Engineer (Dynamic & Technical)"],
-       ["concierge", "BMW Executive Concierge (Refined & Polite)"],
-       ["mechanic", "N63TU3 Master Tech (Diagnostics & Maintenance)"]
-     ]},
-    {"key": "theme", "label": "Colour theme", "type": "choice", "default": "m_tricolour",
-     "options": [
-       ["m_tricolour", "M Tricolour"],
-       ["m_cyan", "M Neon Cyan"],
-       ["ice", "Ice White"],
-       ["amber", "Night Amber"]
-     ]},
-    {"key": "layout", "label": "Screen layout", "type": "choice", "default": "full",
-     "options": [["full", "Full screen"], ["standard", "Standard"]]},
-    {"key": "renderer", "label": "Renderer", "type": "choice", "default": "auto",
-     "options": [["auto", "GPU (Adaptive Pacing)"], ["software", "Software"]]}
   ]
 }

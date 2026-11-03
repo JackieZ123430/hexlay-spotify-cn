@@ -36,7 +36,7 @@ const PROMPTS = [
     { title: 'Tire Grip & PSI', query: 'Analyze current tire pressures and rubber temperature grip window.' },
     { title: 'ECU Health & DTC', query: 'Run full OBD-II UDS scan for active or shadow fault codes.' },
     { title: 'Mountain Pass', query: 'Analyze vehicle handling, chassis balance, and sport differential for aggressive mountain twisties.' },
-    { title: 'BMW Specs & Oil', query: 'What are the factory oil specifications, change intervals, and service guidelines for BMW N63TU3 / G-Series?' }
+    { title: 'BMW Specs & Oil', query: 'What are the factory oil specifications, change intervals, and Longlife (LL-01 / LL-04 / LL-17FE+) service guidelines for BMW G-Series engines?' }
 ];
 
 mgu.run({

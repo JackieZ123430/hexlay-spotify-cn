@@ -189,7 +189,7 @@ class AiBridge {
         const q = (query || '').toLowerCase();
 
         // 1. Core Vehicle Information
-        const carModel = 'BMW M850i xDrive (G15) N63B44TU3 4.4L TwinPower Turbo V8 (523 HP / 750 Nm, ZF 8HP76)';
+        const carModel = 'BMW G-Series (iDrive 7)';
         const speed = Math.round(telemetry.speed || 0);
         const speedMph = Math.round(speed * 0.621371);
         const rpm = Math.round(telemetry.rpm || 650);
@@ -237,7 +237,7 @@ class AiBridge {
 - Engine Oil Temp: ${oil}°C (Norm: 90-110°C, Peak Safe: 120°C) -> Status: ${oilStatus}
 - Coolant Temp: ${coolant}°C (Norm: 85-102°C)
 - Ambient Temperature: ${ambient}°C
-- Guidelines: If oil >110°C after hard driving, idle engine or cruise gently at <2000 RPM for 1-2 mins to circulate coolant through the twin turbochargers. The N63 auxiliary electric coolant pump will run automatically post-shutdown if thermal dissipation is required.`;
+- Guidelines: If oil >110°C after hard driving, idle engine or cruise gently at <2000 RPM for 1-2 mins to circulate coolant through the turbochargers. The auxiliary electric coolant pump will run automatically post-shutdown if thermal dissipation is required.`;
         } else if (q.includes('tire') || q.includes('psi') || q.includes('pressure') || q.includes('grip') || q.includes('handling') || q.includes('corner') || q.includes('drift')) {
             focusedAnalysis = `
 [FOCUSED ANALYSIS: CHASSIS & TPMS TIRE GRIP WINDOW]
@@ -259,15 +259,8 @@ class AiBridge {
 - Powertrain efficiency optimized for highway cruising and mountain ascents.`;
         }
 
-        // Persona Voice Definition
-        let personaIntro = 'You are the BMW Intelligent Co-Driver for this G-Series vehicle.';
-        if (p === 'm_engineer') {
-            personaIntro = 'You are the BMW M Performance Chief Track Engineer. Your style is technical, precise, telemetry-driven, and focused on dynamic vehicle physics.';
-        } else if (p === 'concierge') {
-            personaIntro = 'You are the BMW Executive Concierge. Your style is refined, polite, luxury-focused, and seamlessly helpful.';
-        } else if (p === 'mechanic') {
-            personaIntro = 'You are a Senior BMW Master Certified Powertrain Technician with encyclopedic knowledge of N63TU3, B58, and S58 engines, ZF transmissions, and CBS service.';
-        }
+        // Universal BMW Intelligent Co-Driver Voice Definition
+        const personaIntro = 'You are the BMW Intelligent Co-Driver for BMW iDrive 7 (G-Series) vehicles. You provide precise, technical, concise vehicle assistance, adapting your tone naturally to the question—whether it relates to dynamic performance, thermal and chassis management, diagnostics, maintenance, or general vehicle questions.';
 
         return `${personaIntro}
 

@@ -20,7 +20,7 @@ const { CloudPairManager } = require('./cloud_pair');
 const qrcodegen = require('./qrcodegen');
 
 const W = 1600, H = 520;
-const PAGES = ['Playlists', 'Library', 'Queue', 'Connect'];
+const PAGES = ['Playlists', 'Liked Songs', 'Queue', 'Connect'];
 
 // Format milliseconds as MM:SS
 function fmtTime(ms) {
@@ -29,6 +29,35 @@ function fmtTime(ms) {
     const m = Math.floor(s / 60);
     const rem = s % 60;
     return m + ':' + (rem < 10 ? '0' : '') + rem;
+}
+
+// String truncation with clean ellipsis
+function trunc(str, maxLen) {
+    if (!str || typeof str !== 'string') return '';
+    return str.length > maxLen ? str.slice(0, maxLen - 1) + '..' : str;
+}
+
+// Sleek iDrive vertical scrollbar
+function drawScrollbar(cv, t, x, y, h, total, visibleCount, scrollOffset, onScrollUp, onScrollDown) {
+    if (total <= visibleCount) return;
+    const barW = 5;
+    // Track background
+    cv.roundRect(x, y, barW, h, 2.5, withAlpha(t.panelEdge, 0.4));
+    // Thumb calculation
+    const maxScroll = Math.max(1, total - visibleCount);
+    const thumbH = Math.max(30, Math.round((visibleCount / total) * h));
+    const travel = h - thumbH;
+    const thumbY = y + Math.round((Math.min(scrollOffset, maxScroll) / maxScroll) * travel);
+    // Thumb fill
+    cv.roundRect(x, thumbY, barW, thumbH, 2.5, withAlpha(t.accent, 0.7));
+
+    // Touch targets: tapping upper half scrolls up, lower half scrolls down
+    if (onScrollUp) {
+        cv.target(x - 12, y, 30, Math.floor(h / 2), onScrollUp, 'sb_up_' + x, 8);
+    }
+    if (onScrollDown) {
+        cv.target(x - 12, y + Math.floor(h / 2), 30, Math.ceil(h / 2), onScrollDown, 'sb_down_' + x, 8);
+    }
 }
 
 // Mini animated equalizer icon for list rows (4 bars)
@@ -169,27 +198,16 @@ mgu.run({
             const plTitle = 'Your Playlists (' + (selectedPlaylistIdx + 1) + '/' + playlists.length + ')';
             G.panel(cv, t, 40, 52, 500, 410, plTitle);
 
-            // Up / Down scroll buttons in header if more than 5 playlists
-            if (playlists.length > VISIBLE_PL) {
-                if (playlistScroll > 0) {
-                    cv.roundRect(438, 64, 30, 26, 6, withAlpha(t.accent, 0.25));
-                    cv.text('^', 453, 83, 18, t.accent, { align: 'center', font: 'bold' });
-                    cv.target(438, 64, 30, 26, () => {
-                        playlistScroll = Math.max(0, playlistScroll - 1);
-                        selectedPlaylistIdx = Math.max(0, selectedPlaylistIdx - 1);
-                        spotify.selectPlaylist(playlists[selectedPlaylistIdx]);
-                    }, 'pl_scroll_up', 10);
-                }
-                if (playlistScroll + VISIBLE_PL < playlists.length) {
-                    cv.roundRect(476, 64, 30, 26, 6, withAlpha(t.accent, 0.25));
-                    cv.text('v', 491, 83, 16, t.accent, { align: 'center', font: 'bold' });
-                    cv.target(476, 64, 30, 26, () => {
-                        playlistScroll = Math.min(playlists.length - VISIBLE_PL, playlistScroll + 1);
-                        selectedPlaylistIdx = Math.min(playlists.length - 1, selectedPlaylistIdx + 1);
-                        spotify.selectPlaylist(playlists[selectedPlaylistIdx]);
-                    }, 'pl_scroll_down', 10);
-                }
-            }
+            // Left Pane Scrollbar (replaces old ^/v buttons)
+            drawScrollbar(cv, t, 524, 110, 330, playlists.length, VISIBLE_PL, playlistScroll, () => {
+                playlistScroll = Math.max(0, playlistScroll - 1);
+                selectedPlaylistIdx = Math.max(0, selectedPlaylistIdx - 1);
+                spotify.selectPlaylist(playlists[selectedPlaylistIdx]);
+            }, () => {
+                playlistScroll = Math.min(Math.max(0, playlists.length - VISIBLE_PL), playlistScroll + 1);
+                selectedPlaylistIdx = Math.min(playlists.length - 1, selectedPlaylistIdx + 1);
+                spotify.selectPlaylist(playlists[selectedPlaylistIdx]);
+            });
 
             const visiblePlaylists = playlists.slice(playlistScroll, playlistScroll + VISIBLE_PL);
             visiblePlaylists.forEach((pl, vIdx) => {
@@ -198,19 +216,19 @@ mgu.run({
                 const isSel = realIdx === selectedPlaylistIdx;
                 const isPlPlaying = spotify.isPlaying && spotify.currentPlaylist && spotify.currentPlaylist.id === pl.id;
 
-                cv.roundRect(56, py, 468, 59, 10, isSel ? withAlpha(t.accent, 0.22) : t.track);
-                if (isSel) cv.strokeRoundRect(56, py, 468, 59, 10, 2, t.accent);
+                cv.roundRect(56, py, 458, 59, 10, isSel ? withAlpha(t.accent, 0.22) : t.track);
+                if (isSel) cv.strokeRoundRect(56, py, 458, 59, 10, 2, t.accent);
 
                 // Accent tag
                 cv.roundRect(62, py + 8, 5, 43, 2.5, isPlPlaying ? t.accent : (pl.accent || t.accent));
-                cv.text(pl.name.slice(0, 24), 82, py + 29, 22, isSel ? t.text : '#e0e0e0', { font: 'bold' });
-                cv.text((pl.trackCount || 0) + ' songs  -  ' + (pl.description ? pl.description.slice(0, 30) : 'Playlist'), 82, py + 48, 16, t.dim);
+                cv.text(trunc(pl.name, 22), 82, py + 29, 22, isSel ? t.text : '#e0e0e0', { font: 'bold' });
+                cv.text((pl.trackCount || 0) + ' songs  -  ' + trunc(pl.description || 'Playlist', 26), 82, py + 48, 16, t.dim);
 
                 if (isPlPlaying) {
-                    drawMiniEqualizer(cv, 485, py + 29, t.accent, true, spectrumSeed);
+                    drawMiniEqualizer(cv, 480, py + 29, t.accent, true, spectrumSeed);
                 }
 
-                cv.target(56, py, 468, 59, () => {
+                cv.target(56, py, 458, 59, () => {
                     selectedPlaylistIdx = realIdx;
                     trackScroll = 0;
                     spotify.selectPlaylist(pl);
@@ -222,7 +240,7 @@ mgu.run({
             const isThisPlPlaying = spotify.currentPlaylist && spotify.currentPlaylist.id === curPl.id;
             const trackTotal = curPl.trackCount || (curPl.tracks ? curPl.tracks.length : 0);
 
-            G.panel(cv, t, 560, 52, 1000, 410, curPl.name + ' (' + trackTotal + ' tracks)');
+            G.panel(cv, t, 560, 52, 1000, 410, trunc(curPl.name, 36) + ' (' + trackTotal + ' tracks)');
 
             if (!curPl.tracks || curPl.tracks.length === 0) {
                 cv.roundRect(576, 160, 968, 140, 12, t.track);
@@ -230,6 +248,14 @@ mgu.run({
                 cv.text('Fetching track list from Spotify cloud...', 1060, 260, 16, t.dim, { align: 'center' });
             } else {
                 const VISIBLE_TRK = 7;
+
+                // Right Pane Tracks Scrollbar
+                drawScrollbar(cv, t, 1538, 110, 338, curPl.tracks.length, VISIBLE_TRK, trackScroll, () => {
+                    trackScroll = Math.max(0, trackScroll - VISIBLE_TRK);
+                }, () => {
+                    trackScroll = Math.min(Math.max(0, curPl.tracks.length - VISIBLE_TRK), trackScroll + VISIBLE_TRK);
+                });
+
                 const visibleTracks = curPl.tracks.slice(trackScroll, trackScroll + VISIBLE_TRK);
 
                 visibleTracks.forEach((trk, vIdx) => {
@@ -238,31 +264,34 @@ mgu.run({
                     const isPlayingThis = isThisPlPlaying && spotify.currentTrack && spotify.currentTrack.id === trk.id;
 
                     if (isPlayingThis) {
-                        cv.roundRect(576, ty, 968, 44, 8, withAlpha(t.accent, 0.22));
-                        cv.strokeRoundRect(576, ty, 968, 44, 8, 1.5, t.accent);
+                        cv.roundRect(576, ty, 946, 44, 8, withAlpha(t.accent, 0.22));
+                        cv.strokeRoundRect(576, ty, 946, 44, 8, 1.5, t.accent);
                         drawMiniEqualizer(cv, 598, ty + 22, t.accent, spotify.isPlaying, spectrumSeed);
                     } else {
-                        cv.roundRect(576, ty, 968, 44, 8, t.track);
+                        cv.roundRect(576, ty, 946, 44, 8, t.track);
                         cv.text(String(realIdx + 1), 598, ty + 27, 16, t.dim, { align: 'center', font: 'num' });
                     }
 
-                    cv.text(trk.title.slice(0, 36), 626, ty + 28, 20, isPlayingThis ? t.accent : t.text, { font: 'bold' });
-                    cv.text(trk.artist + (trk.album ? '  -  ' + trk.album : ''), 920, ty + 28, 17, t.dim);
-                    cv.text(fmtTime(trk.durationMs), 1470, ty + 28, 16, t.dim, { align: 'right', font: 'num' });
+                    // Strict column bounds prevent overlap:
+                    // Title ends before 910; Artist starts at 920 and ends before 1420; Duration right-aligned
+                    cv.text(trunc(trk.title, 24), 626, ty + 28, 20, isPlayingThis ? t.accent : t.text, { font: 'bold' });
+                    const metaText = trk.artist + (trk.album ? '  -  ' + trk.album : '');
+                    cv.text(trunc(metaText, 38), 920, ty + 28, 17, t.dim);
+                    cv.text(fmtTime(trk.durationMs), isPlayingThis ? 1440 : 1490, ty + 28, 16, t.dim, { align: 'right', font: 'num' });
 
                     if (isPlayingThis) {
-                        cv.roundRect(1485, ty + 8, 50, 28, 6, t.accent);
-                        cv.text('PLAYING', 1510, ty + 25, 11, '#000000', { align: 'center', font: 'bold' });
+                        cv.roundRect(1450, ty + 8, 54, 28, 6, t.accent);
+                        cv.text('PLAYING', 1477, ty + 25, 11, '#000000', { align: 'center', font: 'bold' });
                     }
 
-                    cv.target(576, ty, 968, 44, () => {
+                    cv.target(576, ty, 946, 44, () => {
                         spotify.playTrack(curPl, realIdx);
                     }, 'trk_' + realIdx, 8);
                 });
             }
         }
 
-        /* ---------- Page 1: Library (Liked Songs) ---------- */
+        /* ---------- Page 1: Liked Songs ---------- */
         function drawLibrary(cv, t) {
             const isOnline = settings.get('demo') !== 'on';
             if (isOnline && (!spotify.token || !spotify.paired)) {
@@ -282,23 +311,12 @@ mgu.run({
 
             G.panel(cv, t, 40, 52, 1520, 410, title);
 
-            // Up / Down scroll buttons in header if more than 7 tracks
-            if (liked.length > VISIBLE_LIKED) {
-                if (likedScroll > 0) {
-                    cv.roundRect(1440, 64, 34, 26, 6, withAlpha(t.accent, 0.25));
-                    cv.text('^', 1457, 83, 18, t.accent, { align: 'center', font: 'bold' });
-                    cv.target(1440, 64, 34, 26, () => {
-                        likedScroll = Math.max(0, likedScroll - VISIBLE_LIKED);
-                    }, 'liked_up', 10);
-                }
-                if (likedScroll + VISIBLE_LIKED < liked.length) {
-                    cv.roundRect(1482, 64, 34, 26, 6, withAlpha(t.accent, 0.25));
-                    cv.text('v', 1499, 83, 16, t.accent, { align: 'center', font: 'bold' });
-                    cv.target(1482, 64, 34, 26, () => {
-                        likedScroll = Math.min(liked.length - VISIBLE_LIKED, likedScroll + VISIBLE_LIKED);
-                    }, 'liked_down', 10);
-                }
-            }
+            // Liked Songs Scrollbar (replaces old ^/v buttons)
+            drawScrollbar(cv, t, 1538, 110, 338, liked.length, VISIBLE_LIKED, likedScroll, () => {
+                likedScroll = Math.max(0, likedScroll - VISIBLE_LIKED);
+            }, () => {
+                likedScroll = Math.min(Math.max(0, liked.length - VISIBLE_LIKED), likedScroll + VISIBLE_LIKED);
+            });
 
             if (!liked || liked.length === 0) {
                 cv.roundRect(70, 150, 1460, 160, 12, t.track);
@@ -314,27 +332,28 @@ mgu.run({
                 const isPlayingThis = spotify.isPlaying && spotify.currentTrack && spotify.currentTrack.id === trk.id;
 
                 if (isPlayingThis) {
-                    cv.roundRect(56, ty, 1488, 44, 8, withAlpha(t.accent, 0.22));
-                    cv.strokeRoundRect(56, ty, 1488, 44, 1.5, t.accent);
+                    cv.roundRect(56, ty, 1466, 44, 8, withAlpha(t.accent, 0.22));
+                    cv.strokeRoundRect(56, ty, 1466, 44, 1.5, t.accent);
                     drawMiniEqualizer(cv, 80, ty + 22, t.accent, spotify.isPlaying, spectrumSeed);
                 } else {
-                    cv.roundRect(56, ty, 1488, 44, 8, t.track);
+                    cv.roundRect(56, ty, 1466, 44, 8, t.track);
                     cv.text(String(realIdx + 1), 80, ty + 27, 16, t.dim, { align: 'center', font: 'num' });
                 }
 
                 // Heart tag
                 cv.text('*', 115, ty + 29, 20, '#1ed760', { align: 'center', font: 'bold' });
 
-                cv.text(trk.title.slice(0, 48), 145, ty + 28, 20, isPlayingThis ? t.accent : t.text, { font: 'bold' });
-                cv.text(trk.artist + (trk.album ? '  -  ' + trk.album : ''), 720, ty + 28, 17, t.dim);
-                cv.text(fmtTime(trk.durationMs), 1445, ty + 28, 16, t.dim, { align: 'right', font: 'num' });
+                cv.text(trunc(trk.title, 34), 145, ty + 28, 20, isPlayingThis ? t.accent : t.text, { font: 'bold' });
+                const metaText = trk.artist + (trk.album ? '  -  ' + trk.album : '');
+                cv.text(trunc(metaText, 46), 680, ty + 28, 17, t.dim);
+                cv.text(fmtTime(trk.durationMs), isPlayingThis ? 1410 : 1450, ty + 28, 16, t.dim, { align: 'right', font: 'num' });
 
                 if (isPlayingThis) {
-                    cv.roundRect(1470, ty + 8, 60, 28, 6, t.accent);
-                    cv.text('PLAYING', 1500, ty + 25, 11, '#000000', { align: 'center', font: 'bold' });
+                    cv.roundRect(1420, ty + 8, 54, 28, 6, t.accent);
+                    cv.text('PLAYING', 1447, ty + 25, 11, '#000000', { align: 'center', font: 'bold' });
                 }
 
-                cv.target(56, ty, 1488, 44, () => {
+                cv.target(56, ty, 1466, 44, () => {
                     spotify.playLikedSong(realIdx);
                 }, 'liked_' + realIdx, 8);
             });
@@ -359,8 +378,9 @@ mgu.run({
             if (curTrk) {
                 drawMiniEqualizer(cv, 95, 152, t.accent, spotify.isPlaying, spectrumSeed);
                 cv.text('NOW PLAYING', 125, 136, 13, t.accent, { font: 'bold', spacing: 1 });
-                cv.text(curTrk.title.slice(0, 45), 125, 165, 23, t.text, { font: 'bold' });
-                cv.text(curTrk.artist + (curTrk.album ? '  -  ' + curTrk.album : ''), 680, 164, 18, t.dim);
+                cv.text(trunc(curTrk.title, 34), 125, 165, 23, t.text, { font: 'bold' });
+                const curMeta = curTrk.artist + (curTrk.album ? '  -  ' + curTrk.album : '');
+                cv.text(trunc(curMeta, 46), 680, 164, 18, t.dim);
                 cv.text(fmtTime(spotify.progressMs) + ' / ' + fmtTime(curTrk.durationMs), 1500, 164, 16, t.accent, { align: 'right', font: 'num' });
 
                 // Live progress bar along the bottom of card
@@ -403,8 +423,9 @@ mgu.run({
                 const qy = 236 + idx * 52;
                 cv.roundRect(60, qy, 1480, 46, 8, t.track);
                 cv.text(String(idx + 1), 85, qy + 28, 16, t.dim, { align: 'center', font: 'num' });
-                cv.text(trk.title.slice(0, 45), 125, qy + 28, 20, t.text, { font: 'bold' });
-                cv.text(trk.artist + (trk.album ? '  -  ' + trk.album : ''), 700, qy + 28, 17, t.dim);
+                cv.text(trunc(trk.title, 34), 125, qy + 28, 20, t.text, { font: 'bold' });
+                const metaText = trk.artist + (trk.album ? '  -  ' + trk.album : '');
+                cv.text(trunc(metaText, 46), 680, qy + 28, 17, t.dim);
                 cv.text(fmtTime(trk.durationMs), 1500, qy + 28, 16, t.dim, { align: 'right', font: 'num' });
             });
         }

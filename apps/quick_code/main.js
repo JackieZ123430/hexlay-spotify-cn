@@ -254,6 +254,53 @@ mgu.run({
             }, 'btn_apply_amb', 12);
         }
 
+        /* ---------- BMW iDrive 7 OEM Toggle Switch ---------- */
+        function drawBmwToggle(cv, x, y, active, canCode, lockColor) {
+            const w = 104, h = 46, r = 23;
+            const thumbR = 18;
+
+            if (!canCode) {
+                // Interlocked / Locked State (e.g. Engine Running)
+                cv.roundRect(x, y, w, h, r, '#0a0e14');
+                cv.strokeRoundRect(x, y, w, h, r, 1.5, withAlpha(lockColor || '#ffb703', 0.65));
+                cv.text('LOCKED', x + w / 2, y + 28, 12, lockColor || '#ffb703', { align: 'center', font: 'bold', spacing: 1 });
+                const tx = x + (active ? w - r : r), ty = y + r;
+                cv.circle(tx, ty, thumbR, '#080c12');
+                cv.circle(tx, ty, thumbR - 1.5, '#1e293b');
+                return;
+            }
+
+            if (active) {
+                // Active State: Vivid BMW Blue & M-Performance Cyan
+                cv.roundRect(x, y, w, h, r, '#004e8c');
+                cv.strokeRoundRect(x, y, w, h, r, 1.5, '#00a3e0');
+
+                // "ON" label on the left in crisp white
+                cv.text('ON', x + 28, y + 28, 14, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+
+                // Tactile Machined Aluminum Thumb on the right
+                const tx = x + w - r, ty = y + r;
+                cv.circle(tx, ty, thumbR, '#002e54');
+                cv.circle(tx, ty, thumbR - 1.5, '#f8fafc');
+                // Central vertical grip notch (BMW M-Cyan bar)
+                cv.roundRect(tx - 2, ty - 7, 4, 14, 2, '#00a3e0');
+            } else {
+                // Inactive State: Dark Graphite & Slate
+                cv.roundRect(x, y, w, h, r, '#0c121a');
+                cv.strokeRoundRect(x, y, w, h, r, 1.5, '#1e2a3a');
+
+                // "OFF" label on the right in dim slate
+                cv.text('OFF', x + w - 28, y + 28, 13, '#64748b', { align: 'center', font: 'bold', spacing: 1 });
+
+                // Tactile Matte Aluminum Thumb on the left
+                const tx = x + r, ty = y + r;
+                cv.circle(tx, ty, thumbR, '#090e15');
+                cv.circle(tx, ty, thumbR - 1.5, '#384656');
+                // Central vertical grip notch
+                cv.roundRect(tx - 2, ty - 7, 4, 14, 2, '#1e293b');
+            }
+        }
+
         /* ---------- Page: Comfort & Engine Toggles ---------- */
         function drawComfort(cv, t) {
             G.panel(cv, t, 40, 52, 1520, 410, 'Comfort & ECU Parameters');
@@ -304,20 +351,28 @@ mgu.run({
                 const safeCheck = safety.checkCodingSafety(item.key);
                 const canCode = safeCheck.allowed;
 
-                cv.roundRect(tx, ty, 715, 135, 12, item.active ? withAlpha(t.accent, 0.18) : t.track);
-                cv.strokeRoundRect(tx, ty, 715, 135, 12, 1.5, canCode ? (item.active ? t.accent : t.panelEdge) : withAlpha(safeCheck.badgeColor, 0.6));
+                // Card container with authentic BMW cockpit styling
+                const cardBg = item.active ? '#0c1522' : '#0b0f16';
+                const cardEdge = canCode ? (item.active ? '#0077c8' : '#1c2432') : withAlpha(safeCheck.badgeColor, 0.5);
+                cv.roundRect(tx, ty, 715, 135, 12, cardBg);
+                cv.strokeRoundRect(tx, ty, 715, 135, 12, 1.5, cardEdge);
 
-                cv.text(item.title, tx + 28, ty + 38, 24, item.active ? t.text : '#dddddd', { font: 'bold' });
-                cv.text(item.desc, tx + 28, ty + 68, 17, t.dim);
+                cv.text(item.title, tx + 28, ty + 38, 24, item.active ? '#ffffff' : '#cbd5e1', { font: 'bold' });
+                cv.text(item.desc, tx + 28, ty + 68, 16, t.dim);
 
-                const pillCol = canCode ? (item.active ? '#1db954' : t.dim) : safeCheck.badgeColor;
+                // Status Pill
+                const pillBg = canCode ? (item.active ? '#0a2e1d' : '#141c26') : '#241215';
+                const pillBorder = canCode ? (item.active ? '#10b981' : '#283548') : safeCheck.badgeColor;
+                const pillTextCol = canCode ? (item.active ? '#2af575' : '#8a99ad') : safeCheck.badgeColor;
                 const pillLabel = canCode ? item.stateLabel : ('[LOCKED] ' + safeCheck.status);
-                cv.roundRect(tx + 28, ty + 88, 240, 32, 6, withAlpha(pillCol, 0.25));
-                cv.text(pillLabel, tx + 148, ty + 109, 15, pillCol, { align: 'center', font: 'bold', spacing: 1 });
 
-                const swX = tx + 570, swY = ty + 40, swW = 115, swH = 50;
-                cv.roundRect(swX, swY, swW, swH, 25, canCode ? (item.active ? t.accent : '#20262c') : '#181f28');
-                cv.circle(item.active ? swX + swW - 25 : swX + 25, swY + 25, 18, canCode ? '#ffffff' : '#64748b');
+                cv.roundRect(tx + 28, ty + 88, 240, 32, 6, pillBg);
+                cv.strokeRoundRect(tx + 28, ty + 88, 240, 32, 6, 1, pillBorder);
+                cv.text(pillLabel, tx + 148, ty + 109, 14, pillTextCol, { align: 'center', font: 'bold', spacing: 1 });
+
+                // BMW iDrive 7 Toggle Switch
+                const swX = tx + 575, swY = ty + 44;
+                drawBmwToggle(cv, swX, swY, item.active, canCode, safeCheck.badgeColor);
 
                 cv.target(tx, ty, 715, 135, () => {
                     const check = safety.checkCodingSafety(item.key);
@@ -395,20 +450,28 @@ mgu.run({
                 const safeCheck = safety.checkCodingSafety(item.key);
                 const canCode = safeCheck.allowed;
 
-                cv.roundRect(64, dy, 1472, 115, 12, item.active ? withAlpha(t.accent, 0.18) : t.track);
-                cv.strokeRoundRect(64, dy, 1472, 115, 12, 1.5, canCode ? (item.active ? t.accent : t.panelEdge) : withAlpha(safeCheck.badgeColor, 0.6));
+                // Card container with authentic BMW cockpit styling
+                const cardBg = item.active ? '#0c1522' : '#0b0f16';
+                const cardEdge = canCode ? (item.active ? '#0077c8' : '#1c2432') : withAlpha(safeCheck.badgeColor, 0.5);
+                cv.roundRect(64, dy, 1472, 115, 12, cardBg);
+                cv.strokeRoundRect(64, dy, 1472, 115, 12, 1.5, cardEdge);
 
-                cv.text(item.title, 96, dy + 38, 24, item.active ? t.text : '#dddddd', { font: 'bold' });
-                cv.text(item.desc, 96, dy + 66, 17, t.dim);
+                cv.text(item.title, 96, dy + 38, 24, item.active ? '#ffffff' : '#cbd5e1', { font: 'bold' });
+                cv.text(item.desc, 96, dy + 66, 16, t.dim);
 
-                const pillCol = canCode ? (item.active ? '#1db954' : t.dim) : safeCheck.badgeColor;
+                // Status Pill
+                const pillBg = canCode ? (item.active ? '#0a2e1d' : '#141c26') : '#241215';
+                const pillBorder = canCode ? (item.active ? '#10b981' : '#283548') : safeCheck.badgeColor;
+                const pillTextCol = canCode ? (item.active ? '#2af575' : '#8a99ad') : safeCheck.badgeColor;
                 const pillLabel = canCode ? item.status : ('[LOCKED] ' + safeCheck.status);
-                cv.roundRect(96, dy + 82, 320, 26, 6, withAlpha(pillCol, 0.25));
-                cv.text(pillLabel, 256, dy + 100, 15, pillCol, { align: 'center', font: 'bold', spacing: 1 });
 
-                const swX = 1390, swY = dy + 35, swW = 115, swH = 50;
-                cv.roundRect(swX, swY, swW, swH, 25, canCode ? (item.active ? t.accent : '#20262c') : '#181f28');
-                cv.circle(item.active ? swX + swW - 25 : swX + 25, swY + 25, 18, canCode ? '#ffffff' : '#64748b');
+                cv.roundRect(96, dy + 82, 320, 26, 6, pillBg);
+                cv.strokeRoundRect(96, dy + 82, 320, 26, 6, 1, pillBorder);
+                cv.text(pillLabel, 256, dy + 100, 14, pillTextCol, { align: 'center', font: 'bold', spacing: 1 });
+
+                // BMW iDrive 7 Toggle Switch
+                const swX = 1390, swY = dy + 34;
+                drawBmwToggle(cv, swX, swY, item.active, canCode, safeCheck.badgeColor);
 
                 cv.target(64, dy, 1472, 115, () => {
                     const check = safety.checkCodingSafety(item.key);

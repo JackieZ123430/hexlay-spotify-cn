@@ -44,8 +44,8 @@ class VehicleSafety {
         this.vehicleState = {
             rpm: 0,
             speed: 0,
-            diagnosticMode: false,
-            simulatedDiagMode: true, // Default true in demo/bench for out-of-box convenience
+            diagnosticMode: true, // Default to ready in demo/bench; locked when engine runs
+            simulatedDiagMode: true,
             isDemo: false
         };
     }

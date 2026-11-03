@@ -1,40 +1,46 @@
 'use strict';
 /**
  * M-Cinema - Ultrawide Parked Cinema & Cockpit Theater for BMW iDrive 7.
- * Runs natively on the vehicle's GPU at 60 fps.
+ * Focused 100% on allowing the user to seamlessly stream their own content.
  *
- * Features:
- *   - 21:9 Cinema Ultrawide & 16:9 Letterbox video playback
- *   - Active Cockpit Ambilight Glow reacting to video palette
- *   - Parked Vehicle Motion Safety Interlock
- *   - Physical iDrive Controller & Touchscreen support
+ * Pages:
+ *   0: Theater Player - 21:9 Cinema Ultrawide player with live ambilight glow
+ *   1: Cast & Connect - Smartphone QR code for instant 1-tap YouTube/Web casting
  */
 const mgu = require('./kit/mgu');
 const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
-const { CATEGORIES } = require('./channels');
 const { CastServer } = require('./server');
 const qrcodegen = require('./qrcodegen');
 
 const W = 1600, H = 520;
-const PAGES = ['Now Playing', 'Channels & Feeds', 'Cast & Stream'];
+const PAGES = ['Theater Player', 'Cast & Connect'];
 
 mgu.run({
     async start(ctx) {
         const { ui, settings, log, signals } = ctx;
 
         let page = 0;
-        let catIdx = 0;
-        let itemIdx = 0;
         let isPlaying = true;
-        let playProgress = 0.35; // 35% through video
+        let playProgress = 0.25;
         let isFullscreen = false;
         let vehicleSpeed = 0;
         let statusMsg = null;
         let statusTime = 0;
-        let activeCastVideo = null;
 
-        // Try reading vehicle speed
+        // Active video cast by user
+        let activeCastVideo = {
+            title: 'Ready for Cast Stream',
+            channel: 'M-Cinema Receiver',
+            duration: '00:00',
+            quality: '1080p 60',
+            glow: '#00a3e0',
+            views: 'Waiting for Phone',
+            desc: 'Scan QR code in Cast & Connect tab with your phone to stream any YouTube link.',
+            url: null
+        };
+
+        // Monitor vehicle speed for safety
         try {
             const Car = require('./kit/car');
             const car = new Car(ctx, ['speed']);
@@ -45,26 +51,20 @@ mgu.run({
             log.warn('M-Cinema: Speed monitor fallback: ' + e.message);
         }
 
-        function currentVideo() {
-            if (activeCastVideo) return activeCastVideo;
-            const cat = CATEGORIES[catIdx] || CATEGORIES[0];
-            return cat.items[itemIdx] || cat.items[0];
-        }
-
         function notify(msg) {
             statusMsg = msg;
             statusTime = Date.now();
             log.info('M-Cinema: ' + msg);
         }
 
-        // Initialize Cast Server for smartphone YouTube streaming
+        // Initialize Cast Server for smartphone streaming
         const castServer = new CastServer({
             onCast(video) {
                 activeCastVideo = video;
-                page = 0; // jump to Now Playing player
+                page = 0; // jump directly to Theater Player
                 isPlaying = true;
                 playProgress = 0;
-                notify('Casting: ' + video.title);
+                notify('Streaming: ' + video.title);
                 render().catch(() => {});
             },
             onControl(action, val) {
@@ -89,9 +89,9 @@ mgu.run({
             }
         }
 
-        /* ---------- Page 0: Now Playing Cinema Player ---------- */
+        /* ---------- Page 0: Theater Player ---------- */
         function drawPlayer(cv, t, now) {
-            const video = currentVideo();
+            const video = activeCastVideo;
             const glowCol = video.glow || '#00a3e0';
             const enableAmbilight = settings.ambilight !== 'off';
             const isParked = vehicleSpeed === 0;
@@ -105,11 +105,11 @@ mgu.run({
             }
 
             // Left / Main Player Viewport (1040 x 410)
-            G.panel(cv, t, 40, 52, 1040, 410, 'Cockpit Cinema: ' + video.quality);
+            G.panel(cv, t, 40, 52, 1040, 410, 'Cockpit Theater: ' + video.quality);
 
             const vx = 64, vy = 114, vw = 992, vh = 280;
 
-            // Cockpit Ambilight Glow around the viewport
+            // Cockpit Ambilight Glow around viewport
             if (enableAmbilight && !motionLocked) {
                 const pulse = (Math.sin(now / 500) + 1) * 0.5;
                 const glowA = 0.18 + pulse * 0.12;
@@ -125,7 +125,6 @@ mgu.run({
             cv.roundRect(vx, sy, Math.floor(sw * playProgress), 8, 4, glowCol);
             cv.circle(vx + Math.floor(sw * playProgress), sy + 4, 8, '#ffffff');
 
-            // Scrubber touch target
             cv.target(vx, sy - 10, sw, 28, (x) => {
                 const rel = Math.max(0, Math.min(1, (x - vx) / sw));
                 playProgress = rel;
@@ -133,18 +132,18 @@ mgu.run({
             }, 'scrub', 8);
 
             // Timecode & Badges below scrubber
-            cv.text('03:42 / ' + video.duration, vx, 442, 16, t.dim, { font: 'num' });
+            cv.text('02:15 / ' + (video.duration || 'Live'), vx, 442, 16, t.dim, { font: 'num' });
             cv.text(video.quality, vx + 180, 442, 14, glowCol, { font: 'bold' });
             cv.text(isPlaying ? 'PLAYING' : 'PAUSED', vx + sw - 120, 442, 16, isPlaying ? '#2af575' : '#ffb703', { font: 'bold', align: 'right' });
 
-            // Right Panel (460px): Video Details & Quick Controls
-            G.panel(cv, t, 1100, 52, 460, 410, 'Video Details');
+            // Right Panel (460px): Stream Details & Quick Controls
+            G.panel(cv, t, 1100, 52, 460, 410, 'Stream Details');
 
             cv.text(video.title, 1124, 130, 20, '#ffffff', { font: 'bold' });
             cv.text(video.channel, 1124, 162, 17, glowCol, { font: 'bold' });
-            cv.text(`${video.views} views | ${CATEGORIES[catIdx].name}`, 1124, 188, 15, t.dim);
+            cv.text(video.views, 1124, 188, 15, t.dim);
 
-            // Description box
+            // Description / URL box
             cv.roundRect(1124, 210, 412, 100, 10, '#090e16');
             cv.strokeRoundRect(1124, 210, 412, 100, 10, 1, t.panelEdge);
             cv.text(video.desc, 1140, 242, 16, '#94a3b8');
@@ -169,49 +168,44 @@ mgu.run({
                 notify(isFullscreen ? 'Cinema Fullscreen Active' : 'Standard View');
             }, 'btn_fs_toggle', 10);
 
-            // Next Video button
+            // Switch to Cast QR button
             cv.roundRect(1124, 392, 412, 46, 10, '#162233');
-            cv.text('NEXT VIDEO >>', 1124 + 206, 421, 17, '#00a3e0', { align: 'center', font: 'bold' });
+            cv.text('CAST NEW VIDEO (QR) >>', 1124 + 206, 421, 17, '#00a3e0', { align: 'center', font: 'bold' });
             cv.target(1124, 392, 412, 46, () => {
-                const cat = CATEGORIES[catIdx];
-                itemIdx = (itemIdx + 1) % cat.items.length;
-                playProgress = 0;
-            }, 'btn_next_vid', 10);
+                page = 1;
+            }, 'btn_go_cast', 10);
         }
 
         /* ---------- Video Screen Canvas Renderer ---------- */
         function drawVideoScreen(cv, x, y, w, h, video, isFs, now, motionLocked) {
-            // Screen Background
             cv.roundRect(x, y, w, h, isFs ? 0 : 12, '#06090e');
             if (!isFs) cv.strokeRoundRect(x, y, w, h, 12, 1.5, '#1e293b');
 
             if (motionLocked) {
-                // Safety Interlock Warning
                 cv.roundRect(x + 40, y + 40, w - 80, h - 80, 16, '#0f172a');
                 cv.strokeRoundRect(x + 40, y + 40, w - 80, h - 80, 16, 2, '#ffb703');
-                cv.text('⚠ VIDEO PAUSED WHILE DRIVING', x + w / 2, y + h / 2 - 20, 24, '#ffb703', { align: 'center', font: 'bold' });
+                cv.text('WARNING: VIDEO PAUSED WHILE DRIVING', x + w / 2, y + h / 2 - 20, 24, '#ffb703', { align: 'center', font: 'bold' });
                 cv.text('Safety interlock active at ' + vehicleSpeed + ' km/h', x + w / 2, y + h / 2 + 16, 17, '#cbd5e1', { align: 'center' });
                 cv.text('Use QuickCode to enable Video In Motion, or park vehicle.', x + w / 2, y + h / 2 + 45, 15, '#94a3b8', { align: 'center' });
                 return;
             }
 
-            // Cinematic Virtual Frame: Draw high-speed motion artwork / scene preview
             const glowCol = video.glow || '#00a3e0';
             const cx = x + w / 2;
             const cy = y + h / 2;
 
-            // Horizon & Asphalt perspective lines
+            // Perspective cinema horizon & stage lines
             cv.fillRect(x + 10, cy, w - 20, Math.floor(h / 2) - 10, '#0a0f18');
             cv.line(cx, cy, x + 60, y + h - 15, 2, withAlpha(glowCol, 0.4));
             cv.line(cx, cy, x + w - 60, y + h - 15, 2, withAlpha(glowCol, 0.4));
             cv.line(cx, cy, cx, y + h - 15, 3, '#ffffff');
 
-            // Digital HUD overlay on video
-            cv.roundRect(x + 30, y + 25, 220, 36, 6, withAlpha('#000000', 0.65));
-            cv.text('BMW M TELEMETRY', x + 44, y + 48, 14, glowCol, { font: 'bold', spacing: 1 });
-            cv.text('278 KM/H | 6,400 RPM', x + 44, y + 74, 15, '#ffffff', { font: 'num' });
+            // Video Stream Status Pill
+            cv.roundRect(x + 30, y + 25, 240, 36, 6, withAlpha('#000000', 0.7));
+            cv.text('YOUTUBE ULTRA-WIDE STREAM', x + 44, y + 48, 14, glowCol, { font: 'bold', spacing: 1 });
+            cv.text('1080P 60FPS | 21:9 CINEMA', x + 44, y + 74, 15, '#ffffff', { font: 'num' });
 
-            // Big Center Play Triangle (if paused)
+            // Center Play Triangle (if paused)
             if (!isPlaying) {
                 cv.circle(cx, cy, 44, withAlpha('#000000', 0.7));
                 cv.circle(cx, cy, 44, glowCol);
@@ -225,67 +219,7 @@ mgu.run({
             }, 'vid_screen', 10);
         }
 
-        /* ---------- Page 1: Channels & Category Grid ---------- */
-        function drawChannels(cv, t) {
-            // Category selector tabs (left)
-            G.panel(cv, t, 40, 52, 420, 410, 'Cinema Channels');
-
-            CATEGORIES.forEach((cat, idx) => {
-                const cy = 114 + idx * 72;
-                const isSel = idx === catIdx;
-
-                cv.roundRect(64, cy, 372, 60, 10, isSel ? withAlpha('#00a3e0', 0.25) : t.track);
-                cv.strokeRoundRect(64, cy, 372, 60, 10, isSel ? 2 : 1, isSel ? '#00a3e0' : t.panelEdge);
-
-                cv.circle(92, cy + 30, 8, isSel ? '#00a3e0' : t.dim);
-                cv.text(cat.name, 114, cy + 36, 18, isSel ? '#ffffff' : '#cbd5e1', { font: isSel ? 'bold' : 'normal' });
-
-                cv.target(64, cy, 372, 60, () => {
-                    catIdx = idx;
-                    itemIdx = 0;
-                }, 'cat_' + idx, 10);
-            });
-
-            // Video Cards (right)
-            const activeCat = CATEGORIES[catIdx];
-            G.panel(cv, t, 480, 52, 1080, 410, activeCat.name + ' (' + activeCat.items.length + ' Videos)');
-
-            activeCat.items.forEach((item, idx) => {
-                const iy = 114 + idx * 98;
-                const isCur = idx === itemIdx;
-
-                cv.roundRect(504, iy, 1032, 86, 12, isCur ? withAlpha(item.glow, 0.2) : '#090e16');
-                cv.strokeRoundRect(504, iy, 1032, 86, 12, isCur ? 2 : 1, isCur ? item.glow : t.panelEdge);
-
-                // Video Thumbnail Placeholder
-                cv.roundRect(520, iy + 10, 116, 66, 8, '#131b26');
-                cv.strokeRoundRect(520, iy + 10, 116, 66, 8, 1, item.glow);
-                cv.quad([[570, iy + 33], [586, iy + 43], [570, iy + 53], [570, iy + 53]], item.glow);
-
-                // Duration tag on thumb
-                cv.roundRect(582, iy + 52, 50, 20, 4, '#000000');
-                cv.text(item.duration, 607, iy + 66, 12, '#ffffff', { align: 'center', font: 'num' });
-
-                // Titles & Metadata
-                cv.text(item.title, 656, iy + 34, 19, '#ffffff', { font: 'bold' });
-                cv.text(`${item.channel} | ${item.views} views | ${item.quality}`, 656, iy + 62, 15, item.glow);
-
-                // Play Now button
-                const playX = 1420, playY = iy + 22, playW = 100, playH = 42;
-                cv.roundRect(playX, playY, playW, playH, 8, isCur ? item.glow : '#1a2432');
-                cv.text(isCur ? 'WATCH' : 'PLAY', playX + playW / 2, playY + 27, 16, isCur ? '#000000' : '#ffffff', { align: 'center', font: 'bold' });
-
-                cv.target(504, iy, 1032, 86, () => {
-                    itemIdx = idx;
-                    page = 0; // jump to player
-                    isPlaying = true;
-                    playProgress = 0;
-                    notify('Now Playing: ' + item.title);
-                }, 'item_' + idx, 12);
-            });
-        }
-
-        /* ---------- Page 2: Cast & Direct Stream ---------- */
+        /* ---------- Page 1: Cast & Connect (Phone QR Remote) ---------- */
         function drawCast(cv, t) {
             // Left Panel: Smartphone QR Code
             G.panel(cv, t, 40, 52, 740, 410, 'Scan Phone to Cast YouTube');
@@ -313,7 +247,7 @@ mgu.run({
                 cv.text('SCAN PHONE TO CAST', sx, sy + 18, 19, '#ffffff', { font: 'bold' });
                 cv.text('1. Connect phone to car Wi-Fi hotspot', sx, sy + 48, 15, '#cbd5e1');
                 cv.text('2. In YouTube app, tap Share -> Copy Link', sx, sy + 74, 15, '#cbd5e1');
-                cv.text('3. Paste in Remote & tap "Cast to BMW"', sx, sy + 100, 15, '#2af575', { font: 'bold' });
+                cv.text('3. Tap "1-TAP PASTE & CAST" on phone', sx, sy + 100, 15, '#2af575', { font: 'bold' });
                 cv.text('4. Full 21:9 Ultrawide streaming begins!', sx, sy + 126, 15, '#00a3e0');
 
                 cv.roundRect(sx, sy + 152, 420, 36, 8, '#0b131f');
@@ -328,14 +262,14 @@ mgu.run({
             cv.roundRect(844, 114, 692, 90, 10, '#090e16');
             cv.strokeRoundRect(844, 114, 692, 90, 10, 1, '#00a3e0');
             cv.text('CAST RECEIVER ACTIVE (:8090)', 870, 145, 18, '#00a3e0', { font: 'bold' });
-            cv.text('Accepts any YouTube watch link, youtu.be, HLS streams, or MP4', 870, 172, 15, '#94a3b8');
+            cv.text('Accepts any YouTube link, youtu.be, HLS streams, or MP4', 870, 172, 15, '#94a3b8');
 
             const isParked = vehicleSpeed === 0;
             cv.roundRect(844, 218, 692, 90, 10, '#090e16');
             cv.strokeRoundRect(844, 218, 692, 90, 10, 1, isParked ? '#2af575' : '#ffb703');
 
             cv.text('VEHICLE STATUS: ' + (isParked ? 'PARKED (0 KM/H)' : 'IN MOTION (' + vehicleSpeed + ' KM/H)'), 870, 248, 18, isParked ? '#2af575' : '#ffb703', { font: 'bold' });
-            cv.text(isParked ? '✓ Safe for full cockpit video and audio playback' : '⚠ Motion lockout active without Video in Motion coding', 870, 275, 15, '#cbd5e1');
+            cv.text(isParked ? '✓ Safe for full cockpit video and audio playback' : 'WARNING: Motion lockout active without Video in Motion coding', 870, 275, 15, '#cbd5e1');
 
             // QuickCode VIM Integration banner
             cv.roundRect(844, 322, 692, 110, 10, '#0c1626');
@@ -355,13 +289,12 @@ mgu.run({
             // If not in fullscreen, draw top header tabs and active page
             if (!isFullscreen) {
                 if (page === 0) drawPlayer(cv, t, now);
-                else if (page === 1) drawChannels(cv, t);
-                else if (page === 2) drawCast(cv, t);
+                else if (page === 1) drawCast(cv, t);
 
-                // G20/G15 Live Cockpit frame tabs along the top
+                // G-Series Live Cockpit frame tabs along the top
                 G.frame(cv, t, PAGES, page, [
                     { text: 'M-CINEMA' },
-                    { text: currentVideo().quality },
+                    { text: activeCastVideo.quality },
                     { text: isPlaying ? 'PLAYING' : 'PAUSED' }
                 ]);
             } else {
@@ -402,7 +335,6 @@ mgu.run({
         // Controller rotary knob & tilt
         ctx.controller.grab(true);
         ctx.controller.onInput((ev) => {
-            // Knob turn
             if (ev.knobTicks) {
                 playProgress = Math.max(0, Math.min(1, playProgress + ev.knobTicks * 0.02));
                 render().catch(() => {});

@@ -1,8 +1,8 @@
 'use strict';
 /**
- * Lightweight In-Car Cast Server for M-Cinema.
+ * In-Car Cast Server for M-Cinema.
  * Runs on the BMW head unit to allow phones connected via Wi-Fi hotspot
- * to cast any YouTube video or web stream directly to the iDrive 7 display.
+ * to seamlessly cast YouTube, web videos, or local phone files to the iDrive 7 display.
  */
 const http = require('http');
 const os = require('os');
@@ -69,17 +69,20 @@ class CastServer {
                     try {
                         const data = JSON.parse(body || '{}');
                         const ytId = parseYouTubeId(data.url) || data.id;
-                        const title = data.title || (ytId ? `YouTube Video [${ytId}]` : 'Custom Cast Stream');
+                        let title = data.title;
+                        if (!title) {
+                            title = ytId ? `YouTube [${ytId}]` : (data.url ? 'Web Stream' : 'Phone Cast Video');
+                        }
 
                         if (this.cb.onCast) {
                             this.cb.onCast({
                                 title: title,
-                                channel: data.channel || 'YouTube Cast',
-                                duration: data.duration || 'Stream',
+                                channel: data.channel || (ytId ? 'YouTube Stream' : 'Phone Mirror'),
+                                duration: data.duration || 'Live Stream',
                                 quality: '1080p 60',
-                                glow: '#ff0000',
-                                views: 'Live Cast',
-                                desc: data.url || `YouTube ID: ${ytId}`,
+                                glow: ytId ? '#ff0000' : '#00a3e0',
+                                views: 'Personal Cast',
+                                desc: data.url || `Video ID: ${ytId || 'Local Media'}`,
                                 ytId: ytId,
                                 url: data.url
                             });
@@ -140,25 +143,40 @@ class CastServer {
   <title>BMW M-Cinema Cast Remote</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-    body { background: #070b11; color: #ffffff; padding: 20px; display: flex; flex-direction: column; align-items: center; }
-    .card { background: #0f1622; border: 1px solid #1e293b; border-radius: 16px; padding: 24px; width: 100%; max-width: 440px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-    .title { font-size: 20px; font-weight: 800; letter-spacing: 1px; color: #ffffff; }
+    body { background: #070b11; color: #ffffff; padding: 16px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+    .card { background: #0f1724; border: 1px solid #1e293b; border-radius: 20px; padding: 24px; width: 100%; max-width: 440px; box-shadow: 0 12px 40px rgba(0,0,0,0.6); }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
+    .title { font-size: 20px; font-weight: 800; letter-spacing: 1.5px; color: #ffffff; }
     .badge { background: rgba(0, 163, 224, 0.2); color: #00a3e0; border: 1px solid #00a3e0; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; }
-    .input-group { margin-bottom: 18px; }
+    
+    .btn-paste-cast { width: 100%; padding: 18px; background: linear-gradient(135deg, #00a3e0, #163a8a); color: #fff; border: none; border-radius: 14px; font-size: 16px; font-weight: 800; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; box-shadow: 0 6px 20px rgba(0, 163, 224, 0.45); margin-bottom: 18px; }
+    .btn-paste-cast:active { transform: scale(0.98); }
+    
+    .divider { display: flex; align-items: center; text-align: center; color: #64748b; font-size: 12px; font-weight: 700; margin: 16px 0; }
+    .divider::before, .divider::after { content: ''; flex: 1; border-bottom: 1px solid #1e293b; }
+    .divider:not(:empty)::before { margin-right: .5em; }
+    .divider:not(:empty)::after { margin-left: .5em; }
+
+    .input-group { margin-bottom: 14px; }
     label { display: block; font-size: 13px; color: #94a3b8; margin-bottom: 8px; font-weight: 600; }
-    input[type="text"] { width: 100%; padding: 14px 16px; background: #070b11; border: 1px solid #2a384c; border-radius: 10px; color: #fff; font-size: 15px; outline: none; }
+    input[type="text"] { width: 100%; padding: 14px 16px; background: #070b11; border: 1px solid #2a384c; border-radius: 12px; color: #fff; font-size: 15px; outline: none; }
     input[type="text"]:focus { border-color: #00a3e0; box-shadow: 0 0 0 2px rgba(0, 163, 224, 0.25); }
-    .btn-cast { width: 100%; padding: 16px; background: linear-gradient(135deg, #00a3e0, #163a8a); color: #fff; border: none; border-radius: 12px; font-size: 16px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 4px 14px rgba(0, 163, 224, 0.4); }
-    .btn-cast:active { transform: scale(0.98); }
+    
+    .btn-secondary { width: 100%; padding: 14px; background: #162233; color: #cbd5e1; border: 1px solid #2a384c; border-radius: 12px; font-size: 14px; font-weight: 700; cursor: pointer; }
+    .btn-secondary:active { background: #223147; }
+    
     .controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 24px; padding-top: 20px; border-top: 1px solid #1e293b; }
-    .btn-ctrl { padding: 12px; background: #16202e; border: 1px solid #2a384c; border-radius: 10px; color: #cbd5e1; font-size: 14px; font-weight: 600; cursor: pointer; }
-    .btn-ctrl:active { background: #223147; }
-    .quick-list { margin-top: 24px; }
-    .quick-title { font-size: 13px; color: #64748b; font-weight: 700; margin-bottom: 10px; text-transform: uppercase; }
-    .quick-btn { width: 100%; text-align: left; padding: 12px 14px; background: #121a28; border: 1px solid #1e293b; border-radius: 8px; color: #e2e8f0; font-size: 13px; font-weight: 600; margin-bottom: 8px; cursor: pointer; }
-    .status-box { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 13px; display: none; }
+    .btn-ctrl { padding: 14px; background: #131d2a; border: 1px solid #2a384c; border-radius: 12px; color: #e2e8f0; font-size: 14px; font-weight: 700; cursor: pointer; }
+    .btn-ctrl:active { background: #1f2d40; }
+    
+    .status-box { margin-top: 14px; padding: 12px 16px; border-radius: 10px; font-size: 14px; font-weight: 600; text-align: center; display: none; }
     .status-success { background: rgba(42, 245, 117, 0.15); border: 1px solid #2af575; color: #2af575; }
+    .status-err { background: rgba(225, 0, 26, 0.15); border: 1px solid #e1001a; color: #e1001a; }
+    
+    .history { margin-top: 24px; }
+    .history-title { font-size: 12px; color: #64748b; font-weight: 700; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; }
+    .history-item { width: 100%; text-align: left; padding: 12px 14px; background: #0c121d; border: 1px solid #1a2638; border-radius: 10px; color: #94a3b8; font-size: 13px; font-weight: 600; margin-bottom: 8px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .history-item:hover { color: #fff; border-color: #00a3e0; }
   </style>
 </head>
 <body>
@@ -168,33 +186,64 @@ class CastServer {
       <div class="badge">CAST REMOTE</div>
     </div>
 
+    <!-- 1-Tap Paste and Cast Button -->
+    <button class="btn-paste-cast" onclick="pasteAndCast()">
+      <span>📋 1-TAP PASTE & CAST</span>
+    </button>
+
+    <div class="divider">OR ENTER LINK MANUALLY</div>
+
     <div class="input-group">
-      <label>PASTE YOUTUBE VIDEO LINK</label>
-      <input type="text" id="ytUrl" placeholder="https://youtu.be/... or watch?v=...">
+      <input type="text" id="ytUrl" placeholder="Paste YouTube / Web Video link">
     </div>
 
-    <button class="btn-cast" onclick="castVideo()">▶ CAST TO BMW DISPLAY</button>
+    <button class="btn-secondary" onclick="castManual()">▶ CAST TO BMW DISPLAY</button>
     <div id="status" class="status-box"></div>
 
     <div class="controls">
       <button class="btn-ctrl" onclick="sendControl('seek', -10)">⏪ -10s</button>
       <button class="btn-ctrl" onclick="sendControl('toggle')">⏯ PLAY/PAUSE</button>
       <button class="btn-ctrl" onclick="sendControl('seek', 10)">⏩ +10s</button>
-      <button class="btn-ctrl" style="grid-column: span 3;" onclick="sendControl('fullscreen')">⛶ FULLSCREEN (21:9)</button>
+      <button class="btn-ctrl" style="grid-column: span 3; background: #18283d; border-color: #00a3e0; color: #00a3e0;" onclick="sendControl('fullscreen')">⛶ CINEMA FULLSCREEN (21:9)</button>
     </div>
 
-    <div class="quick-list">
-      <div class="quick-title">Quick Automotive Feeds</div>
-      <button class="quick-btn" onclick="castPreset('https://youtu.be/M4_GT3_NURB', 'BMW M4 GT3 - 24h Nurburgring Pole Lap')">🏁 BMW M4 GT3 24h Nurburgring Lap</button>
-      <button class="quick-btn" onclick="castPreset('https://youtu.be/M850_TOP_SPEED', 'BMW M850i - 320 km/h Autobahn GPS')">🚀 BMW M850i 320 km/h Autobahn Run</button>
-      <button class="quick-btn" onclick="castPreset('https://youtu.be/CARWOW_M8_911', 'BMW M8 vs Porsche 911 Turbo S Drag')">🔥 Carwow Drag Race: M8 vs 911 Turbo</button>
+    <div class="history" id="historyBox" style="display: none;">
+      <div class="history-title">Recently Cast Videos</div>
+      <div id="historyList"></div>
     </div>
   </div>
 
   <script>
-    async function castVideo() {
+    async function pasteAndCast() {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (!text) {
+          showStatus('Clipboard is empty! Copy a YouTube link first.', 'status-err');
+          return;
+        }
+        document.getElementById('ytUrl').value = text;
+        await sendCast(text);
+      } catch (e) {
+        // Fallback if clipboard permission denied
+        const val = document.getElementById('ytUrl').value.trim();
+        if (val) {
+          await sendCast(val);
+        } else {
+          showStatus('Tap the box below and paste your link.', 'status-err');
+        }
+      }
+    }
+
+    function castManual() {
       const url = document.getElementById('ytUrl').value.trim();
-      if (!url) return;
+      if (!url) {
+        showStatus('Please paste a link first!', 'status-err');
+        return;
+      }
+      sendCast(url);
+    }
+
+    async function sendCast(url) {
       showStatus('Casting to BMW display...', 'status-success');
       try {
         const res = await fetch('/api/cast', {
@@ -203,19 +252,15 @@ class CastServer {
           body: JSON.stringify({ url: url })
         });
         const data = await res.json();
-        if (data.ok) showStatus('✓ Playing on BMW 21:9 Screen!', 'status-success');
+        if (data.ok) {
+          showStatus('✓ Playing on BMW 21:9 Ultrawide!', 'status-success');
+          saveHistory(url, data.title);
+        } else {
+          showStatus('Error: ' + (data.error || 'Failed to cast'), 'status-err');
+        }
       } catch (e) {
-        showStatus('Error: ' + e.message, 'status-box');
+        showStatus('Connection error: ' + e.message, 'status-err');
       }
-    }
-
-    function castPreset(url, title) {
-      document.getElementById('ytUrl').value = url;
-      fetch('/api/cast', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, title })
-      }).then(() => showStatus('✓ Casting ' + title, 'status-success'));
     }
 
     function sendControl(action, val) {
@@ -231,8 +276,38 @@ class CastServer {
       el.textContent = msg;
       el.className = 'status-box ' + cls;
       el.style.display = 'block';
-      setTimeout(() => el.style.display = 'none', 4000);
+      setTimeout(() => el.style.display = 'none', 4500);
     }
+
+    function saveHistory(url, title) {
+      let list = JSON.parse(localStorage.getItem('mcinema_history') || '[]');
+      list = list.filter(item => item.url !== url);
+      list.unshift({ url, title });
+      if (list.length > 5) list = list.slice(0, 5);
+      localStorage.setItem('mcinema_history', JSON.stringify(list));
+      renderHistory();
+    }
+
+    function renderHistory() {
+      const list = JSON.parse(localStorage.getItem('mcinema_history') || '[]');
+      const box = document.getElementById('historyBox');
+      const container = document.getElementById('historyList');
+      if (!list.length) { box.style.display = 'none'; return; }
+      box.style.display = 'block';
+      container.innerHTML = '';
+      list.forEach(item => {
+        const btn = document.createElement('button');
+        btn.className = 'history-item';
+        btn.textContent = '▶ ' + item.title;
+        btn.onclick = () => {
+          document.getElementById('ytUrl').value = item.url;
+          sendCast(item.url);
+        };
+        container.appendChild(btn);
+      });
+    }
+
+    renderHistory();
   </script>
 </body>
 </html>`;

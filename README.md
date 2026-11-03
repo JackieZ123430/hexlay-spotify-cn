@@ -15,13 +15,13 @@
 
 ## Credits & Acknowledgements
 
-This app suite is built on the pioneering reverse-engineering and open-source foundation created by **Robert Nisipeanu**:
+This repository is forked and built upon the foundational open-source BMW iDrive 7 platform:
 
-* [**idrive7-apps**](https://github.com/robertnisipeanu/idrive7-apps) — The foundational runtime, native OpenGL ES GPU rendering daemon, SOME/IP vehicle telemetry bridges, and TASU UDS diagnostic engine for BMW iDrive 7.
-* [**mgu-store**](https://github.com/robertnisipeanu/mgu-store) — The in-car app store and package manager for BMW iDrive 7.
+* [**cauliflowermossgrape/idrive7-apps**](https://github.com/cauliflowermossgrape/idrive7-apps) — The foundational runtime, native OpenGL ES GPU rendering daemon, SOME/IP vehicle telemetry bridges, and TASU UDS diagnostic engine for BMW iDrive 7.
+* [**mgu-store**](https://github.com/robertnisipeanu/mgu-store) — The in-car app store and package manager for BMW iDrive 7 by Robert Nisipeanu.
 
 > [!NOTE]
-> For core SDK extraction, toolchain documentation, low-level SOME/IP signal catalogs, and C/OpenGL renderer internals, please refer directly to the source repository at [**robertnisipeanu/idrive7-apps**](https://github.com/robertnisipeanu/idrive7-apps).
+> For core SDK extraction, toolchain documentation, low-level SOME/IP signal catalogs, and C/OpenGL renderer internals, please refer directly to the source repository at [**cauliflowermossgrape/idrive7-apps**](https://github.com/cauliflowermossgrape/idrive7-apps).
 
 ---
 
@@ -127,7 +127,7 @@ For everything else, including:
 * **OBD-ENET / SSH Deployment Scripts**
 * **Creating New Applications**
 
-👉 **Please visit the upstream repository: [robertnisipeanu/idrive7-apps](https://github.com/robertnisipeanu/idrive7-apps)** and the [**MGU Store Guide**](https://github.com/robertnisipeanu/mgu-store).
+👉 **Please visit the source repository: [cauliflowermossgrape/idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps)** and the [**MGU Store Guide**](https://github.com/robertnisipeanu/mgu-store).
 
 ---
 

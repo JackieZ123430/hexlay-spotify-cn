@@ -23,6 +23,8 @@ function decodeHtmlEntities(str) {
         .replace(/&gt;/g, '>');
 }
 
+const DEMO_ART = 'https://i.scdn.co/image/ab67616d00001e02ba5db46f4b838ef6027e6f96';
+
 const DEMO_PLAYLISTS = [
     {
         id: 'pl_m_driving',
@@ -32,13 +34,13 @@ const DEMO_PLAYLISTS = [
         accent: '#e1001a',
         uri: 'spotify:playlist:demo_m',
         tracks: [
-            { id: 't1', title: 'Midnight City', artist: 'M83', album: 'Hurry Up, We\'re Dreaming', durationMs: 243000, uri: 'spotify:track:t1' },
-            { id: 't2', title: 'Turbo Killer', artist: 'Carpenter Brut', album: 'Trilogy', durationMs: 208000, uri: 'spotify:track:t2' },
-            { id: 't3', title: 'Nightcall', artist: 'Kavinsky', album: 'Drive OST', durationMs: 259000, uri: 'spotify:track:t3' },
-            { id: 't4', title: 'Blinding Lights', artist: 'The Weeknd', album: 'After Hours', durationMs: 200000, uri: 'spotify:track:t4' },
-            { id: 't5', title: 'Resonance', artist: 'HOME', album: 'Odyssey', durationMs: 212000, uri: 'spotify:track:t5' },
-            { id: 't6', title: 'Starboy', artist: 'The Weeknd, Daft Punk', album: 'Starboy', durationMs: 230000, uri: 'spotify:track:t6' },
-            { id: 't7', title: 'Days of Thunder', artist: 'The Midnight', album: 'Days of Thunder', durationMs: 278000, uri: 'spotify:track:t7' },
+            { id: 't1', title: 'Midnight City', artist: 'M83', album: 'Hurry Up, We\'re Dreaming', durationMs: 243000, uri: 'spotify:track:t1', albumArt: DEMO_ART },
+            { id: 't2', title: 'Turbo Killer', artist: 'Carpenter Brut', album: 'Trilogy', durationMs: 208000, uri: 'spotify:track:t2', albumArt: DEMO_ART },
+            { id: 't3', title: 'Nightcall', artist: 'Kavinsky', album: 'Drive OST', durationMs: 259000, uri: 'spotify:track:t3', albumArt: DEMO_ART },
+            { id: 't4', title: 'Blinding Lights', artist: 'The Weeknd', album: 'After Hours', durationMs: 200000, uri: 'spotify:track:t4', albumArt: DEMO_ART },
+            { id: 't5', title: 'Resonance', artist: 'HOME', album: 'Odyssey', durationMs: 212000, uri: 'spotify:track:t5', albumArt: DEMO_ART },
+            { id: 't6', title: 'Starboy', artist: 'The Weeknd, Daft Punk', album: 'Starboy', durationMs: 230000, uri: 'spotify:track:t6', albumArt: DEMO_ART },
+            { id: 't7', title: 'Days of Thunder', artist: 'The Midnight', album: 'Days of Thunder', durationMs: 278000, uri: 'spotify:track:t7', albumArt: DEMO_ART },
         ]
     },
     {
@@ -131,6 +133,8 @@ class SpotifyClient {
         this.shuffle = false;
         this.repeat = 'off';
         this.volume = 80;
+        this.isCurrentLiked = false;
+        this._lastCheckedTrackId = null;
 
         this._loadAuth();
         if (this.token) {
@@ -402,14 +406,21 @@ class SpotifyClient {
                     this.activeDevice = data.device.name + ' (' + data.device.type + ')';
                     this.volume = data.device.volume_percent;
                 }
+                const albumImages = (data.item.album && data.item.album.images) || [];
+                const bestArt = albumImages.find((img) => img.width >= 200 && img.width <= 400) || albumImages[0];
                 this.currentTrack = {
                     id: data.item.id,
-                    title: data.item.name,
-                    artist: (data.item.artists || []).map((a) => a.name).join(', '),
-                    album: data.item.album ? data.item.album.name : '',
+                    title: decodeHtmlEntities(data.item.name),
+                    artist: decodeHtmlEntities((data.item.artists || []).map((a) => a.name).join(', ')),
+                    album: decodeHtmlEntities(data.item.album ? data.item.album.name : ''),
+                    albumArt: bestArt ? bestArt.url : '',
                     durationMs: data.item.duration_ms,
                     uri: data.item.uri,
                 };
+                if (data.item.id && data.item.id !== this._lastCheckedTrackId) {
+                    this._lastCheckedTrackId = data.item.id;
+                    this.checkTrackLiked(data.item.id);
+                }
             }
         } catch (e) {
             // Player might be idle/empty
@@ -457,11 +468,14 @@ class SpotifyClient {
                     .map((item) => {
                         const t = item.item || item.track;
                         if (!t || !t.id) return null;
+                        const albumImages = (t.album && t.album.images) || [];
+                        const bestArt = albumImages.find((img) => img.width >= 200 && img.width <= 400) || albumImages[0];
                         return {
                             id: t.id,
                             title: decodeHtmlEntities(t.name),
                             artist: decodeHtmlEntities((t.artists || []).map((a) => a.name).join(', ')),
                             album: decodeHtmlEntities(t.album ? t.album.name : ''),
+                            albumArt: bestArt ? bestArt.url : '',
                             durationMs: t.duration_ms,
                             uri: t.uri
                         };
@@ -514,14 +528,20 @@ class SpotifyClient {
                 this.likedTotal = res.total || res.items.length;
                 this.likedSongs = res.items
                     .filter((item) => item.track && item.track.id)
-                    .map((item) => ({
-                        id: item.track.id,
-                        title: decodeHtmlEntities(item.track.name),
-                        artist: decodeHtmlEntities((item.track.artists || []).map((a) => a.name).join(', ')),
-                        album: decodeHtmlEntities(item.track.album ? item.track.album.name : ''),
-                        durationMs: item.track.duration_ms,
-                        uri: item.track.uri
-                    }));
+                    .map((item) => {
+                        const t = item.track;
+                        const albumImages = (t.album && t.album.images) || [];
+                        const bestArt = albumImages.find((img) => img.width >= 200 && img.width <= 400) || albumImages[0];
+                        return {
+                            id: t.id,
+                            title: decodeHtmlEntities(t.name),
+                            artist: decodeHtmlEntities((t.artists || []).map((a) => a.name).join(', ')),
+                            album: decodeHtmlEntities(t.album ? t.album.name : ''),
+                            albumArt: bestArt ? bestArt.url : '',
+                            durationMs: t.duration_ms,
+                            uri: t.uri
+                        };
+                    });
             }
         } catch (e) {
             this.log.warn('Fetch liked songs error: ' + e.message);
@@ -535,14 +555,19 @@ class SpotifyClient {
             if (res && res.queue) {
                 this.remoteQueue = res.queue
                     .filter((t) => t && t.id)
-                    .map((t) => ({
-                        id: t.id,
-                        title: decodeHtmlEntities(t.name),
-                        artist: decodeHtmlEntities((t.artists || []).map((a) => a.name).join(', ')),
-                        album: decodeHtmlEntities(t.album ? t.album.name : ''),
-                        durationMs: t.duration_ms,
-                        uri: t.uri
-                    }));
+                    .map((t) => {
+                        const albumImages = (t.album && t.album.images) || [];
+                        const bestArt = albumImages.find((img) => img.width >= 200 && img.width <= 400) || albumImages[0];
+                        return {
+                            id: t.id,
+                            title: decodeHtmlEntities(t.name),
+                            artist: decodeHtmlEntities((t.artists || []).map((a) => a.name).join(', ')),
+                            album: decodeHtmlEntities(t.album ? t.album.name : ''),
+                            albumArt: bestArt ? bestArt.url : '',
+                            durationMs: t.duration_ms,
+                            uri: t.uri
+                        };
+                    });
             }
         } catch (e) {
             //
@@ -669,6 +694,30 @@ class SpotifyClient {
         this.repeat = next;
         if (this.isOnline) {
             this._request('PUT', '/v1/me/player/repeat?state=' + this.repeat).catch(() => {});
+        }
+    }
+
+    async checkTrackLiked(trackId) {
+        if (!this.token || !trackId) return;
+        try {
+            const res = await this._request('GET', `/v1/me/tracks/contains?ids=${trackId}`);
+            if (Array.isArray(res)) {
+                this.isCurrentLiked = !!res[0];
+            }
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    async toggleLikeCurrent() {
+        if (!this.currentTrack || !this.currentTrack.id) return;
+        const id = this.currentTrack.id;
+        this.isCurrentLiked = !this.isCurrentLiked;
+        if (this.isOnline) {
+            const method = this.isCurrentLiked ? 'PUT' : 'DELETE';
+            this._request(method, `/v1/me/tracks?ids=${id}`).then(() => {
+                this.fetchLikedSongs();
+            }).catch(() => {});
         }
     }
 

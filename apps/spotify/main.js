@@ -17,6 +17,7 @@ const G = require('./kit/gauges');
 const { SpotifyClient } = require('./api');
 const { SpotifyAuthServer } = require('./auth_server');
 const { CloudPairManager } = require('./cloud_pair');
+const { AlbumArtManager, ART_IMG_ID } = require('./art');
 const qrcodegen = require('./qrcodegen');
 
 const W = 1600, H = 520;
@@ -80,10 +81,111 @@ function drawMiniEqualizer(cv, cx, cy, col, isPlaying, seed) {
     }
 }
 
+// Helper to draw anti-aliased triangles across Recorder and Canvas
+function drawTriangle(cv, p0, p1, p2, col) {
+    if (cv.triangle) {
+        cv.triangle([p0, p1, p2], col);
+    } else {
+        cv.quad([p0, p1, p2, p2], col);
+    }
+}
+
+// Vector transport icon drawing helpers
+function drawPlayIcon(cv, cx, cy, sz, col) {
+    const hw = sz * 0.46, hh = sz * 0.52;
+    drawTriangle(cv,
+        [cx - hw * 0.7, cy - hh],
+        [cx + hw * 1.15, cy],
+        [cx - hw * 0.7, cy + hh],
+        col
+    );
+}
+
+function drawPauseIcon(cv, cx, cy, sz, col) {
+    const barW = Math.max(3, Math.round(sz * 0.26));
+    const barH = Math.round(sz * 0.95);
+    const gap = Math.max(3, Math.round(sz * 0.28));
+    cv.roundRect(cx - gap / 2 - barW, cy - barH / 2, barW, barH, Math.min(barW / 2, 2), col);
+    cv.roundRect(cx + gap / 2, cy - barH / 2, barW, barH, Math.min(barW / 2, 2), col);
+}
+
+function drawNextIcon(cv, cx, cy, sz, col) {
+    const tw = sz * 0.52, th = sz * 0.46;
+    const barW = Math.max(3, Math.round(sz * 0.18));
+    const gap = Math.max(3, Math.round(sz * 0.14));
+    const totalW = tw + gap + barW;
+    const left = cx - totalW / 2;
+    drawTriangle(cv,
+        [left, cy - th],
+        [left + tw, cy],
+        [left, cy + th],
+        col
+    );
+    cv.roundRect(left + tw + gap, cy - th, barW, th * 2, Math.min(barW / 2, 2), col);
+}
+
+function drawPrevIcon(cv, cx, cy, sz, col) {
+    const tw = sz * 0.52, th = sz * 0.46;
+    const barW = Math.max(3, Math.round(sz * 0.18));
+    const gap = Math.max(3, Math.round(sz * 0.14));
+    const totalW = tw + gap + barW;
+    const left = cx - totalW / 2;
+    cv.roundRect(left, cy - th, barW, th * 2, Math.min(barW / 2, 2), col);
+    drawTriangle(cv,
+        [left + barW + gap + tw, cy - th],
+        [left + barW + gap, cy],
+        [left + barW + gap + tw, cy + th],
+        col
+    );
+}
+
+function drawShuffleIcon(cv, cx, cy, sz, col) {
+    const w = sz * 0.8, h = sz * 0.5;
+    const x0 = cx - w / 2, x1 = cx + w / 2;
+    const y0 = cy - h / 2, y1 = cy + h / 2;
+    cv.line(x0, y0, cx - w * 0.1, y0, 2, col);
+    cv.line(cx - w * 0.1, y0, cx + w * 0.1, y1, 2, col);
+    cv.line(cx + w * 0.1, y1, x1, y1, 2, col);
+
+    cv.line(x0, y1, cx - w * 0.1, y1, 2, col);
+    cv.line(cx - w * 0.1, y1, cx + w * 0.1, y0, 2, col);
+    cv.line(cx + w * 0.1, y0, x1, y0, 2, col);
+
+    drawTriangle(cv, [x1 - 4, y0 - 4], [x1 + 4, y0], [x1 - 4, y0 + 4], col);
+    drawTriangle(cv, [x1 - 4, y1 - 4], [x1 + 4, y1], [x1 - 4, y1 + 4], col);
+}
+
+function drawRepeatIcon(cv, cx, cy, sz, col, mode) {
+    const w = sz * 0.8, h = sz * 0.55;
+    const x0 = cx - w / 2, x1 = cx + w / 2;
+    const y0 = cy - h / 2, y1 = cy + h / 2;
+    cv.line(x0 + 4, y0, x1 - 2, y0, 2, col);
+    cv.line(x1, y0 + 3, x1, y1 - 3, 2, col);
+    cv.line(x1 - 4, y1, x0 + 2, y1, 2, col);
+    cv.line(x0, y1 - 3, x0, y0 + 3, 2, col);
+    drawTriangle(cv, [x1 - 3, y0 - 4], [x1 + 4, y0], [x1 - 3, y0 + 4], col);
+    if (mode === 'track') {
+        cv.text('1', cx, cy + 5, 11, col, { align: 'center', font: 'bold' });
+    }
+}
+
+function drawHeartIcon(cv, cx, cy, sz, col, filled) {
+    const r = sz * 0.3;
+    cv.circle(cx - r, cy - r * 0.5, r, col);
+    cv.circle(cx + r, cy - r * 0.5, r, col);
+    drawTriangle(cv,
+        [cx - r * 2, cy - r * 0.3],
+        [cx + r * 2, cy - r * 0.3],
+        [cx, cy + sz * 0.6],
+        col
+    );
+}
+
 mgu.run({
     async start(ctx) {
         const { ui, settings, log, dataDir } = ctx;
         const spotify = new SpotifyClient(ctx);
+        const artManager = new AlbumArtManager(log, () => render());
         const authServer = new SpotifyAuthServer(ctx, spotify);
         authServer.start();
 
@@ -162,7 +264,7 @@ mgu.run({
             cv.strokeRoundRect(80, 110, 1440, 310, 16, 2, '#1ed760');
 
             cv.circle(180, 240, 44, withAlpha('#1ed760', 0.2));
-            cv.text('>', 180, 255, 42, '#1ed760', { align: 'center', font: 'bold' });
+            drawPlayIcon(cv, 183, 240, 32, '#1ed760');
 
             cv.text('SPOTIFY LOGIN REQUIRED', 260, 180, 26, '#ffffff', { font: 'bold', spacing: 1 });
             cv.text('Online Mode is active. Please pair your personal Spotify account to browse your library and control playback.', 260, 218, 17, '#cbd5e1');
@@ -187,9 +289,15 @@ mgu.run({
             cv.strokeRoundRect(dockX, dockY, dockW, dockH, 12, 1, isPlaying ? withAlpha(t.accent, 0.4) : withAlpha(t.panelEdge, 0.8));
 
             // Mini artwork / Equalizer box
-            cv.roundRect(dockX + 10, dockY + 8, 48, 48, 8, withAlpha(t.accent, 0.15));
-            cv.strokeRoundRect(dockX + 10, dockY + 8, 48, 48, 8, 1, withAlpha(t.accent, 0.3));
-            drawMiniEqualizer(cv, dockX + 34, dockY + 32, isPlaying ? t.accent : t.dim, isPlaying, spectrumSeed);
+            const miniX = dockX + 10, miniY = dockY + 8, miniSz = 48;
+            cv.roundRect(miniX, miniY, miniSz, miniSz, 8, withAlpha(t.panelEdge, 0.9));
+            if (artManager.hasArt) {
+                cv.image(ART_IMG_ID, miniX, miniY, miniSz, miniSz);
+                cv.strokeRoundRect(miniX, miniY, miniSz, miniSz, 8, 1, withAlpha(t.accent, 0.35));
+            } else {
+                cv.strokeRoundRect(miniX, miniY, miniSz, miniSz, 8, 1, withAlpha(t.accent, 0.3));
+                drawMiniEqualizer(cv, miniX + 24, miniY + 24, isPlaying ? t.accent : t.dim, isPlaying, spectrumSeed);
+            }
 
             // Track metadata
             if (curTrk) {
@@ -204,6 +312,7 @@ mgu.run({
             // Tapping left half opens full Now Playing screen
             cv.target(dockX, dockY, 680, dockH, () => {
                 page = 2; // Switch to Now Playing screen
+                render();
             }, 'dock_open_np', 10);
 
             // Center: Elapsed / Duration timestamp
@@ -215,25 +324,32 @@ mgu.run({
             // 1. Prev
             const prevX = 1140, prevY = dockY + 11, prevW = 54, prevH = 42;
             cv.roundRect(prevX, prevY, prevW, prevH, 8, withAlpha(t.panelEdge, 0.7));
-            cv.text('|<<', prevX + prevW / 2, prevY + 27, 16, t.text, { align: 'center', font: 'bold' });
+            drawPrevIcon(cv, prevX + prevW / 2, prevY + prevH / 2, 16, t.text);
             cv.target(prevX, prevY, prevW, prevH, () => {
                 spotify.prevTrack();
+                render();
             }, 'dock_prev', 12);
 
             // 2. Play / Pause
             const playX = 1206, playY = dockY + 8, playW = 72, playH = 48;
             cv.roundRect(playX, playY, playW, playH, 24, t.accent);
-            cv.text(isPlaying ? '||' : '>', playX + playW / 2, playY + 31, 20, '#000000', { align: 'center', font: 'bold' });
+            if (isPlaying) {
+                drawPauseIcon(cv, playX + playW / 2, playY + playH / 2, 18, '#000000');
+            } else {
+                drawPlayIcon(cv, playX + playW / 2, playY + playH / 2, 18, '#000000');
+            }
             cv.target(playX, playY, playW, playH, () => {
                 spotify.togglePlay();
+                render();
             }, 'dock_play', 15);
 
             // 3. Next
             const nextX = 1290, nextY = dockY + 11, nextW = 54, nextH = 42;
             cv.roundRect(nextX, nextY, nextW, nextH, 8, withAlpha(t.panelEdge, 0.7));
-            cv.text('>>|', nextX + nextW / 2, nextY + 27, 16, t.text, { align: 'center', font: 'bold' });
+            drawNextIcon(cv, nextX + nextW / 2, nextY + nextH / 2, 16, t.text);
             cv.target(nextX, nextY, nextW, nextH, () => {
                 spotify.nextTrack();
+                render();
             }, 'dock_next', 12);
 
             // 4. "NOW PLAYING >" button
@@ -243,6 +359,7 @@ mgu.run({
             cv.text('NOW PLAYING >', npX + npW / 2, npY + 26, 13, t.accent, { align: 'center', font: 'bold', spacing: 0.5 });
             cv.target(npX, npY, npW, npH, () => {
                 page = 2; // Switch to Now Playing screen
+                render();
             }, 'dock_btn_np', 12);
 
             // Thin progress line along the bottom edge of dock
@@ -465,18 +582,24 @@ mgu.run({
                 // Vinyl / Album Art Box
                 const artX = 70, artY = 112, artSz = 220;
                 cv.roundRect(artX, artY, artSz, artSz, 14, '#0c1015');
-                cv.strokeRoundRect(artX, artY, artSz, artSz, 14, 1.5, isPlaying ? withAlpha(t.accent, 0.4) : withAlpha(t.panelEdge, 0.8));
 
-                // Vinyl disc representation
-                const cx = artX + artSz / 2, cy = artY + artSz / 2;
-                cv.circle(cx, cy, 96, '#07090c');
-                cv.circle(cx, cy, 78, '#12161c');
-                cv.circle(cx, cy, 58, '#0a0d12');
-                cv.circle(cx, cy, 38, isPlaying ? withAlpha(t.accent, 0.3) : withAlpha(t.panelEdge, 0.5));
-                cv.circle(cx, cy, 14, isPlaying ? t.accent : t.dim);
+                if (artManager.hasArt) {
+                    cv.image(ART_IMG_ID, artX, artY, artSz, artSz);
+                    cv.strokeRoundRect(artX, artY, artSz, artSz, 14, 1.5, isPlaying ? withAlpha(t.accent, 0.4) : withAlpha(t.panelEdge, 0.8));
+                } else {
+                    cv.strokeRoundRect(artX, artY, artSz, artSz, 14, 1.5, isPlaying ? withAlpha(t.accent, 0.4) : withAlpha(t.panelEdge, 0.8));
 
-                // Multi-bar animated visualizer in center
-                drawMiniEqualizer(cv, cx, cy, '#ffffff', isPlaying, spectrumSeed);
+                    // Vinyl disc representation
+                    const cx = artX + artSz / 2, cy = artY + artSz / 2;
+                    cv.circle(cx, cy, 96, '#07090c');
+                    cv.circle(cx, cy, 78, '#12161c');
+                    cv.circle(cx, cy, 58, '#0a0d12');
+                    cv.circle(cx, cy, 38, isPlaying ? withAlpha(t.accent, 0.3) : withAlpha(t.panelEdge, 0.5));
+                    cv.circle(cx, cy, 14, isPlaying ? t.accent : t.dim);
+
+                    // Multi-bar animated visualizer in center
+                    drawMiniEqualizer(cv, cx, cy, '#ffffff', isPlaying, spectrumSeed);
+                }
 
                 // Right of Album Art: Track Info
                 const metaX = 315;
@@ -512,29 +635,72 @@ mgu.run({
                 cv.text(fmtTime(curTrk.durationMs), progX + progW, progY + 24, 15, t.dim, { align: 'right', font: 'num' });
 
                 // Transport Controls
-                // 1. Prev
-                const bPrevX = 220, bPrevY = 416, bPrevW = 90, bPrevH = 46;
+                const cy = 439;
+
+                // 1. Shuffle
+                const isShuf = !!spotify.shuffle;
+                const bShufX = 140, bShufY = 416, bShufW = 60, bShufH = 46;
+                cv.roundRect(bShufX, bShufY, bShufW, bShufH, 10, isShuf ? withAlpha(t.accent, 0.25) : withAlpha(t.panelEdge, 0.7));
+                if (isShuf) cv.strokeRoundRect(bShufX, bShufY, bShufW, bShufH, 10, 1.5, t.accent);
+                drawShuffleIcon(cv, bShufX + bShufW / 2, cy, 20, isShuf ? t.accent : t.dim);
+                cv.target(bShufX, bShufY, bShufW, bShufH, () => {
+                    spotify.toggleShuffle();
+                    render();
+                }, 'np_shuffle', 10);
+
+                // 2. Prev
+                const bPrevX = 216, bPrevY = 416, bPrevW = 76, bPrevH = 46;
                 cv.roundRect(bPrevX, bPrevY, bPrevW, bPrevH, 10, withAlpha(t.panelEdge, 0.7));
-                cv.text('|<<', bPrevX + bPrevW / 2, bPrevY + 29, 18, t.text, { align: 'center', font: 'bold' });
+                drawPrevIcon(cv, bPrevX + bPrevW / 2, cy, 22, t.text);
                 cv.target(bPrevX, bPrevY, bPrevW, bPrevH, () => {
                     spotify.prevTrack();
+                    render();
                 }, 'np_prev', 12);
 
-                // 2. Play / Pause (Big Accent Button)
-                const bPlayX = 350, bPlayY = 410, bPlayW = 140, bPlayH = 58;
+                // 3. Play / Pause (Big Accent Button)
+                const bPlayX = 308, bPlayY = 410, bPlayW = 120, bPlayH = 58;
                 cv.roundRect(bPlayX, bPlayY, bPlayW, bPlayH, 29, t.accent);
-                cv.text(isPlaying ? 'PAUSE' : 'PLAY', bPlayX + bPlayW / 2, bPlayY + 36, 18, '#000000', { align: 'center', font: 'bold', spacing: 1 });
+                if (isPlaying) {
+                    drawPauseIcon(cv, bPlayX + bPlayW / 2, cy, 26, '#000000');
+                } else {
+                    drawPlayIcon(cv, bPlayX + bPlayW / 2, cy, 26, '#000000');
+                }
                 cv.target(bPlayX, bPlayY, bPlayW, bPlayH, () => {
                     spotify.togglePlay();
+                    render();
                 }, 'np_play', 15);
 
-                // 3. Next
-                const bNextX = 530, bNextY = 416, bNextW = 90, bNextH = 46;
+                // 4. Next
+                const bNextX = 444, bNextY = 416, bNextW = 76, bNextH = 46;
                 cv.roundRect(bNextX, bNextY, bNextW, bNextH, 10, withAlpha(t.panelEdge, 0.7));
-                cv.text('>>|', bNextX + bNextW / 2, bNextY + 29, 18, t.text, { align: 'center', font: 'bold' });
+                drawNextIcon(cv, bNextX + bNextW / 2, cy, 22, t.text);
                 cv.target(bNextX, bNextY, bNextW, bNextH, () => {
                     spotify.nextTrack();
+                    render();
                 }, 'np_next', 12);
+
+                // 5. Repeat
+                const repMode = spotify.repeat;
+                const isRep = repMode && repMode !== 'off';
+                const bRepX = 536, bRepY = 416, bRepW = 60, bRepH = 46;
+                cv.roundRect(bRepX, bRepY, bRepW, bRepH, 10, isRep ? withAlpha(t.accent, 0.25) : withAlpha(t.panelEdge, 0.7));
+                if (isRep) cv.strokeRoundRect(bRepX, bRepY, bRepW, bRepH, 10, 1.5, t.accent);
+                drawRepeatIcon(cv, bRepX + bRepW / 2, cy, 20, isRep ? t.accent : t.dim, repMode);
+                cv.target(bRepX, bRepY, bRepW, bRepH, () => {
+                    spotify.toggleRepeat();
+                    render();
+                }, 'np_repeat', 10);
+
+                // 6. Like (Heart)
+                const isLiked = !!spotify.isCurrentLiked;
+                const bLikeX = 612, bLikeY = 416, bLikeW = 60, bLikeH = 46;
+                cv.roundRect(bLikeX, bLikeY, bLikeW, bLikeH, 10, isLiked ? withAlpha(t.accent, 0.25) : withAlpha(t.panelEdge, 0.7));
+                if (isLiked) cv.strokeRoundRect(bLikeX, bLikeY, bLikeW, bLikeH, 10, 1.5, t.accent);
+                drawHeartIcon(cv, bLikeX + bLikeW / 2, cy - 2, 16, isLiked ? t.accent : t.dim, isLiked);
+                cv.target(bLikeX, bLikeY, bLikeW, bLikeH, () => {
+                    spotify.toggleLikeCurrent();
+                    render();
+                }, 'np_like', 10);
             }
 
             // Right Pane: Up Next in Queue (w: 660, h: 456)
@@ -686,6 +852,10 @@ mgu.run({
         async function render() {
             spotify.tick();
             spectrumSeed += 0.08;
+
+            if (spotify.currentTrack && spotify.currentTrack.albumArt) {
+                artManager.load(spotify.currentTrack.albumArt);
+            }
 
             const t = ctx.theme();
             const cv = ctx.canvas(W, H).clear(t.bg);

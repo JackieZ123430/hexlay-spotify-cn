@@ -22,7 +22,12 @@
     },
     "de.bmw.infotainment.drivingexcitement.FES": {
       "statusSwitchDriveDynamicSport2": "rs",
-      "statusVehicleDynamicEngine": "rs"
+      "statusVehicleDynamicEngine": "rs",
+      "statusActualValueTorque2": "rs"
+    },
+    "de.bmw.infrastructure.VehicleInformation": {
+      "statusGearboxDrive": "rs",
+      "DataPowerTrain2": "rs"
     }
   },
   "screens": [
@@ -32,18 +37,16 @@
       "title": "M-Copilot",
       "buttons": [
         ["BTN_PROMPT", "Ask Copilot"],
-        ["BTN_PAGE", "Subscription QR"],
+        ["BTN_PAGE", "Next Page"],
         ["BTN_SETTINGS", "Settings"]
       ]
     }
   ],
   "settings": [
-    {"key": "tier", "label": "AI Service Model", "type": "choice", "default": "subscription",
+    {"key": "tier", "label": "AI Service Model", "type": "choice", "default": "gemini",
      "options": [
-       ["subscription", "Subscription Connect (ChatGPT/Gemini Adv)"],
-       ["gemini_free", "Google Gemini Free Tier ($0/mo)"],
-       ["custom_api", "Custom API Key (OpenAI / Claude / Groq)"],
-       ["offline_expert", "Offline ECU Expert (No Internet)"]
+       ["gemini", "Google Gemini 1.5/2.0 Flash (Online Cloud)"],
+       ["custom_api", "Custom Cloud API (OpenAI / Claude / Groq)"]
      ]},
     {"key": "persona", "label": "Co-Driver Persona", "type": "choice", "default": "m_engineer",
      "options": [
@@ -61,6 +64,6 @@
     {"key": "layout", "label": "Screen layout", "type": "choice", "default": "full",
      "options": [["full", "Full screen"], ["standard", "Standard"]]},
     {"key": "renderer", "label": "Renderer", "type": "choice", "default": "auto",
-     "options": [["auto", "GPU 60 fps (default)"], ["software", "Software"]]}
+     "options": [["auto", "GPU (Adaptive Pacing)"], ["software", "Software"]]}
   ]
 }

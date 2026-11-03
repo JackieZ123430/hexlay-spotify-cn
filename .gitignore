@@ -37,6 +37,12 @@ apps/spotify/spotify_auth.json
 copilot_auth.json
 apps/m_copilot/copilot_auth.json
 *_auth.json
+quick_code_backups.json
+apps/quick_code/quick_code_backups.json
+quick_code_state.json
+apps/quick_code/quick_code_state.json
+*_state.json
+*_backups.json
 /work/
 /captures/
 /backups/

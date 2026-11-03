@@ -1,7 +1,7 @@
 {
   "id": "m_copilot",
   "title": "M-Copilot",
-  "description": "AI Performance Co-Driver & Intelligent Vehicle Assistant for BMW iDrive 7",
+  "description": "Universal AI Performance Co-Driver & Assistant for BMW G-Series (iDrive 7)",
   "version": "1.0.0",
   "vendor": "custom",
   "loggingId": "OAMC",
@@ -31,8 +31,8 @@
       "kind": "canvas",
       "title": "M-Copilot",
       "buttons": [
-        ["BTN_PROMPT", "Ask M-Copilot"],
-        ["BTN_TELEMETRY", "Telemetry Scan"],
+        ["BTN_PROMPT", "Ask Copilot"],
+        ["BTN_PAGE", "Subscription QR"],
         ["BTN_SETTINGS", "Settings"]
       ]
     }

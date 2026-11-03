@@ -30,7 +30,7 @@ const AMBIENT_PRESETS = [
 const SOUND_THEMES = [
     { id: 'rr', name: 'Rolls-Royce Phantom', desc: 'Gentle orchestral harp & luxury chimes' },
     { id: 'm', name: 'BMW M Performance', desc: 'Aggressive high-tempo sport acoustic alerts' },
-    { id: 'oem', name: 'BMW Modern (G20/G15)', desc: 'Standard factory iDrive 7 chimes' },
+    { id: 'oem', name: 'BMW Modern (G-Series)', desc: 'Standard factory iDrive 7 chimes (G20/G30/G15/G05)' },
     { id: 'i', name: 'BMW i-Series Electric', desc: 'Futuristic electronic harmonic tones' },
 ];
 
@@ -279,9 +279,10 @@ mgu.run({
                 cv.text(statusMsg, W / 2, H - 46, 20, withAlpha('#ffffff', alpha), { align: 'center', font: 'bold', spacing: 1 });
             }
 
-            // G20 Live Cockpit frame tabs along the top
+            // G-Series Live Cockpit frame tabs along the top
             G.frame(cv, t, PAGES, page, [
                 { text: 'QUICKCODE' },
+                { text: 'BMW G-SERIES' },
                 { text: 'BDC: ONLINE' }
             ]);
 

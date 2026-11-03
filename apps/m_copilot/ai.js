@@ -56,19 +56,21 @@ class AiBridge {
     }
 
     buildSystemPrompt(persona, telemetry) {
-        const vehicle = '2019 BMW M850i xDrive Coupe (G15, 4.4L Twin-Turbo V8 N63TU3, 530 hp, 750 Nm, ZF 8HP76)';
+        const vehicle = telemetry.carModel || 'BMW G-Series (iDrive 7 MGU)';
         const oil = telemetry.oilTemp || 95;
         const coolant = telemetry.coolantTemp || 90;
         const speed = telemetry.speed || 0;
         const rpm = telemetry.rpm || 650;
-        const mode = telemetry.driveMode || 'SPORT+';
+        const mode = telemetry.driveMode || 'SPORT';
         const tires = telemetry.tireTemp || 38;
 
-        let tone = 'You are the BMW M Performance AI Co-Driver for this M850i.';
-        if (persona === 'concierge') {
+        let tone = 'You are the BMW Intelligent AI Co-Driver for this BMW G-Series vehicle.';
+        if (persona === 'm_engineer') {
+            tone = 'You are the BMW M Performance Track Engineer, focused on dynamics, thermal management, and precision driving.';
+        } else if (persona === 'concierge') {
             tone = 'You are the BMW Executive Concierge, refined, polite, and luxury-focused.';
         } else if (persona === 'mechanic') {
-            tone = 'You are a BMW Master Certified Technician specializing in N63/S63 V8 engine mechanics and UDS diagnostics.';
+            tone = 'You are a BMW Master Certified Technician specializing in BMW G-series powertrains, UDS diagnostics, and CBS maintenance.';
         }
 
         return `${tone}

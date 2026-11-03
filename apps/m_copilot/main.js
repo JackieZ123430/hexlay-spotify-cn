@@ -16,15 +16,15 @@ const { AiBridge } = require('./ai');
 const qrcodegen = require('./qrcodegen');
 
 const W = 1600, H = 520;
-const PAGES = ['M-Copilot AI', 'Telemetry Vitals', 'Subscription Connect'];
+const PAGES = ['M-Copilot AI', 'Subscription Connect'];
 
 const PROMPTS = [
-    { title: 'Launch Readiness', query: 'Is the car ready for Launch Control? Check oil temp and tires.' },
-    { title: 'Turbo Cooling', query: 'Check N63TU3 hot-v turbo temperature and cooling pump status.' },
+    { title: 'Launch Protocol', query: 'What are the launch control prerequisites and sequence for BMW G-Series ZF 8HP?' },
+    { title: 'Turbo Cooling', query: 'What are the turbo cooling and post-drive heat management guidelines for BMW turbocharged engines?' },
     { title: 'Tire Grip & PSI', query: 'Analyze current tire pressures and rubber temperature grip window.' },
     { title: 'ECU Health & DTC', query: 'Run full OBD-II UDS scan for active or shadow fault codes.' },
     { title: 'Scenic Mountain Route', query: 'Suggest the best twisty mountain pass route near Georgia.' },
-    { title: 'N63TU3 Specs & Fluids', query: 'What are the official oil specs, capacity, and spark plugs for N63TU3?' }
+    { title: 'BMW Specs & Service', query: 'What are the standard oil specifications, change intervals, and service guidelines for BMW G-Series?' }
 ];
 
 mgu.run({
@@ -262,76 +262,7 @@ mgu.run({
             });
         }
 
-        /* ---------- Page 1: Telemetry Vitals ---------- */
-        function drawTelemetry(cv, t) {
-            G.panel(cv, t, 40, 52, 480, 410, 'Powertrain Thermal Vitals');
-
-            // Oil Temp Gauge
-            cv.text('ENGINE OIL TEMPERATURE', 64, 120, 16, t.dim, { font: 'bold' });
-            cv.text(`${telemetry.oilTemp}°C`, 64, 155, 36, telemetry.oilTemp >= 80 ? '#2af575' : '#ffb703', { font: 'bold' });
-            cv.text('Optimal window: 90°C - 110°C', 200, 150, 16, t.dim);
-            cv.roundRect(64, 170, 430, 14, 7, t.track);
-            const oilFill = Math.min(430, Math.max(0, (telemetry.oilTemp / 140) * 430));
-            cv.roundRect(64, 170, oilFill, 14, 7, '#00a3e0');
-
-            // Coolant Temp Gauge
-            cv.text('DUAL CIRCUIT COOLANT', 64, 230, 16, t.dim, { font: 'bold' });
-            cv.text(`${telemetry.coolantTemp}°C`, 64, 265, 36, '#2af575', { font: 'bold' });
-            cv.text('Charge-air & Engine circuits', 200, 260, 16, t.dim);
-            cv.roundRect(64, 280, 430, 14, 7, t.track);
-            const coolFill = Math.min(430, Math.max(0, (telemetry.coolantTemp / 120) * 430));
-            cv.roundRect(64, 280, coolFill, 14, 7, '#163a8a');
-
-            // Turbo Boost Gauge
-            cv.text('N63 HOT-V MANIFOLD BOOST', 64, 340, 16, t.dim, { font: 'bold' });
-            cv.text(`${telemetry.boost} BAR`, 64, 375, 36, '#e1001a', { font: 'bold' });
-            cv.text('Peak 1.35 bar in SPORT+', 220, 370, 16, t.dim);
-            cv.roundRect(64, 390, 430, 14, 7, t.track);
-            const boostFill = Math.min(430, Math.max(0, (telemetry.boost / 1.5) * 430));
-            cv.roundRect(64, 390, boostFill, 14, 7, '#e1001a');
-
-            // Panel 2: Tire Pressures & Temps
-            G.panel(cv, t, 540, 52, 540, 410, 'Tire Telemetry & Grip');
-
-            const cx = 810, cy = 250;
-            // Car chassis silhouette
-            cv.roundRect(cx - 50, cy - 100, 100, 200, 26, '#0f1722');
-            cv.strokeRoundRect(cx - 50, cy - 100, 100, 200, 26, 2, t.panelEdge);
-
-            // 4 Tires
-            function drawTire(tx, ty, psi, temp, label) {
-                cv.roundRect(tx - 24, ty - 34, 48, 68, 10, '#1a2636');
-                cv.strokeRoundRect(tx - 24, ty - 34, 48, 68, 10, 1.5, temp >= 30 ? '#2af575' : '#00a3e0');
-                cv.text(label, tx, ty - 42, 14, t.dim, { align: 'center', font: 'bold' });
-                cv.text(`${psi.toFixed(1)}`, tx, ty + 2, 17, '#ffffff', { align: 'center', font: 'bold' });
-                cv.text(`${temp}°C`, tx, ty + 20, 14, temp >= 30 ? '#2af575' : '#00a3e0', { align: 'center' });
-            }
-
-            drawTire(cx - 100, cy - 65, telemetry.tireFlPsi, telemetry.tireTemp, 'FRONT L');
-            drawTire(cx + 100, cy - 65, telemetry.tireFrPsi, telemetry.tireTemp, 'FRONT R');
-            drawTire(cx - 100, cy + 75, telemetry.tireRlPsi, telemetry.tireTemp + 2, 'REAR L');
-            drawTire(cx + 100, cy + 75, telemetry.tireRrPsi, telemetry.tireTemp + 2, 'REAR R');
-
-            // Panel 3: G-Force Meter & Drive Mode
-            G.panel(cv, t, 1100, 52, 460, 410, 'Dynamics & G-Meter');
-            const gx = 1330, gy = 230, gr = 90;
-            cv.circle(gx, gy, gr, '#090e15');
-            cv.circle(gx, gy, gr * 0.66, t.track);
-            cv.circle(gx, gy, gr * 0.33, t.track);
-            cv.line(gx - gr, gy, gx + gr, gy, 1, t.dim);
-            cv.line(gx, gy - gr, gx, gy + gr, 1, t.dim);
-
-            // G-ball
-            const bx = gx + Math.floor(telemetry.lateralG * 60);
-            const by = gy - Math.floor(telemetry.longitudinalG * 60);
-            cv.circle(bx, by, 12, '#e1001a');
-            cv.circle(bx, by, 5, '#ffffff');
-
-            cv.text(`LATERAL: ${telemetry.lateralG.toFixed(2)} G`, 1330, 360, 18, '#ffffff', { align: 'center', font: 'num' });
-            cv.text(`DRIVE MODE: ${telemetry.driveMode}`, 1330, 395, 18, '#00a3e0', { align: 'center', font: 'bold' });
-        }
-
-        /* ---------- Page 2: Subscription Connect & Phone Pairing ---------- */
+        /* ---------- Page 1: Subscription Connect & Phone Pairing ---------- */
         function drawConnect(cv, t) {
             G.panel(cv, t, 40, 52, 600, 410, 'Pair Subscription / Phone');
 
@@ -358,7 +289,7 @@ mgu.run({
                 cv.text('Gemini Advanced, or Claude Pro', 330, 206, 16, t.dim);
                 cv.text('No per-token billing needed!', 330, 230, 16, '#2af575', { font: 'bold' });
 
-                cv.text('Pairing Code: M850-COPILOT', 330, 280, 20, '#00a3e0', { font: 'num' });
+                cv.text('Pairing Code: BMW-COPILOT', 330, 280, 20, '#00a3e0', { font: 'num' });
             }
 
             // Right Panel: Available Modes Explanation
@@ -377,7 +308,7 @@ mgu.run({
                 },
                 {
                     title: '3. Offline ECU Expert Engine (No Internet Required)',
-                    desc: 'Built-in G15 / M850i / N63TU3 expert rule engine. Answers launch control, thermal specs,\nOBD-II DTC definitions, and mountain pass routes instantaneously.',
+                    desc: 'Built-in BMW G-Series expert rule engine. Answers launch control, thermal care,\nOBD-II DTC definitions, and mountain pass routes instantaneously.',
                     color: '#ffb703'
                 }
             ];
@@ -401,16 +332,15 @@ mgu.run({
             const t = ctx.theme();
             const cv = ctx.canvas(W, H).clear(t.bg);
 
-            // Render Active Page
+            // Render Active Page (0: AI Assistant, 1: Subscription Connect)
             if (page === 0) drawMainCopilot(cv, t, now);
-            else if (page === 1) drawTelemetry(cv, t);
-            else if (page === 2) drawConnect(cv, t);
+            else if (page === 1) drawConnect(cv, t);
 
-            // G20/G15 Live Cockpit frame tabs along the top
+            // G-Series Live Cockpit frame tabs along the top
             G.frame(cv, t, PAGES, page, [
                 { text: 'M-COPILOT AI' },
-                { text: telemetry.driveMode },
-                { text: `${telemetry.oilTemp}°C OIL` }
+                { text: 'BMW G-SERIES' },
+                { text: telemetry.driveMode }
             ]);
 
             // Global Notification banner
@@ -428,7 +358,7 @@ mgu.run({
             return render();
         });
 
-        ui.onClick('BTN_TELEMETRY', () => {
+        ui.onClick('BTN_PAGE', () => {
             page = (page + 1) % PAGES.length;
             return render();
         });

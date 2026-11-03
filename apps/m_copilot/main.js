@@ -246,45 +246,46 @@ mgu.run({
             return lines;
         }
 
-        /* ---------- Neural Orb Drawing ---------- */
+        /* ---------- Neural Orb Drawing (Restrained OEM Aesthetics) ---------- */
         function drawNeuralOrb(cv, cx, cy, radius, now) {
-            const pulse = (Math.sin(now / 350) + 1) * 0.5;
-            const fastPulse = isThinking ? (Math.sin(now / 120) + 1) * 0.5 : pulse;
+            // Calm, understated background bezel
+            cv.circle(cx, cy, radius, '#08101a');
+            cv.strokeRoundRect(cx - radius, cy - radius, radius * 2, radius * 2, radius, 1.5, '#1e293b');
 
-            // Outer glow circle
-            cv.circle(cx, cy, radius + 10, withAlpha('#00a3e0', 0.15 + fastPulse * 0.15));
-            cv.circle(cx, cy, radius, '#08121f');
-            cv.strokeRoundRect(cx - radius, cy - radius, radius * 2, radius * 2, radius, 1.5, '#1b2a3d');
+            // Fixed BMW M Tricolour gauge bezel accent (Stationary, OEM-styled gauge bezel)
+            cv.arc(cx, cy, radius - 8, radius - 4, 210, 330, '#00a3e0', { round: true }); // M Light Blue
+            cv.arc(cx, cy, radius - 16, radius - 12, 215, 325, '#163a8a', { round: true }); // M Dark Blue
+            cv.arc(cx, cy, radius - 24, radius - 20, 220, 320, '#e1001a', { round: true }); // M Red
 
-            // Rotating BMW M Tricolour Arcs
-            const angle1 = (now / 20) % 360;
-            const angle2 = (-now / 25) % 360;
-            const angle3 = (now / 35) % 360;
+            // Inner AI Core
+            const isThinkingActive = isThinking;
+            const breath = isThinkingActive ? (Math.sin(now / 300) + 1) * 0.5 : 0;
+            const coreRad = 32 + (isThinkingActive ? breath * 4 : 0);
 
-            cv.arc(cx, cy, radius - 8, radius - 3, angle1, angle1 + 140, '#00a3e0', { round: true }); // M Light Blue
-            cv.arc(cx, cy, radius - 18, radius - 14, angle2, angle2 + 160, '#163a8a', { round: true }); // M Dark Blue
-            cv.arc(cx, cy, radius - 28, radius - 24, angle3, angle3 + 120, '#e1001a', { round: true }); // M Red
+            if (isThinkingActive) {
+                cv.circle(cx, cy, coreRad + 8, withAlpha('#00a3e0', 0.15 + breath * 0.2));
+            }
 
-            // Inner Core
-            const coreRad = 36 + (isThinking ? fastPulse * 8 : pulse * 4);
-            cv.circle(cx, cy, coreRad, withAlpha('#00a3e0', 0.25));
-            cv.circle(cx, cy, 24, '#ffffff');
+            cv.circle(cx, cy, 32, '#0f172a');
+            cv.strokeRoundRect(cx - 32, cy - 32, 64, 64, 32, 1.5, isThinkingActive ? '#00a3e0' : '#334155');
 
-            // Soundwave / Frequency equalizer bars inside orb
-            const bars = 7;
+            // Minimalist AI Voice Waveform (Static when idle, gentle wave when thinking)
+            const bars = 5;
             const barW = 4;
             const barSpacing = 8;
             const totalW = bars * barSpacing;
             const startX = cx - Math.floor(totalW / 2);
+            const baseHeights = [8, 14, 22, 14, 8];
 
             for (let i = 0; i < bars; i++) {
-                const hFactor = isThinking
-                    ? Math.abs(Math.sin((now / 150) + i * 0.8))
-                    : (0.3 + 0.3 * Math.sin((now / 400) + i * 0.5));
-                const bH = Math.max(6, Math.floor(hFactor * 32));
+                let bH = baseHeights[i];
+                if (isThinkingActive) {
+                    const wave = Math.abs(Math.sin((now / 180) + i * 0.9));
+                    bH = Math.max(6, Math.floor(wave * 26));
+                }
                 const bx = startX + i * barSpacing;
                 const by = cy - Math.floor(bH / 2);
-                cv.roundRect(bx, by, barW, bH, 2, i % 2 === 0 ? '#00a3e0' : '#e1001a');
+                cv.roundRect(bx, by, barW, bH, 2, i === 2 ? '#00a3e0' : '#e2e8f0');
             }
         }
 
@@ -373,36 +374,26 @@ mgu.run({
             // Panel 1 (Left): AI Neural Core
             G.panel(cv, t, 40, 52, 380, 410, 'M Neural Core');
 
-            drawNeuralOrb(cv, 230, 180, 84, now);
+            drawNeuralOrb(cv, 230, 180, 76, now);
 
-            // Status Badge (Interactive: displays connected provider & tap to re-pair)
-            const prov = (ai.config.provider || (ai.config.mode === 'gemini' ? 'gemini' : 'custom')).toLowerCase();
-            let tierLabel = 'GOOGLE GEMINI (FREE)';
-            let tierCol = '#2af575';
-            if (prov === 'groq') { tierLabel = 'GROQ LLAMA 3.3 (FAST)'; tierCol = '#ff6b35'; }
-            else if (prov === 'claude') { tierLabel = 'ANTHROPIC CLAUDE'; tierCol = '#d97706'; }
-            else if (prov === 'openai') { tierLabel = 'OPENAI GPT-4O'; tierCol = '#10a37f'; }
-            else if (prov === 'openrouter') { tierLabel = 'OPENROUTER AI'; tierCol = '#6366f1'; }
-
-            cv.roundRect(80, 280, 300, 30, 8, withAlpha(tierCol, 0.15));
-            cv.strokeRoundRect(80, 280, 300, 30, 8, 1, tierCol);
-            cv.text(tierLabel, 230, 300, 14, tierCol, { align: 'center', font: 'bold' });
-            cv.target(80, 280, 300, 30, () => {
-                showPairing = true;
-                render(true);
-            }, 'btn_relink', 8);
-
-            // Read-Only Safety confirmation badge & Telemetry quick pill
-            cv.text('READ-ONLY PASSIVE MONITOR', 230, 332, 13, '#2af575', { align: 'center', font: 'bold' });
-            cv.text(`${telemetry.oilTemp}°C OIL | ${telemetry.boost} BAR | ${telemetry.driveMode}`, 230, 355, 14, t.dim, { align: 'center', font: 'num' });
+            // Live Engine Vitals (real vehicle signals)
+            cv.text(`${telemetry.oilTemp}°C OIL  ·  ${telemetry.coolantTemp}°C COOLANT`, 230, 286, 14, t.dim, { align: 'center', font: 'num' });
+            cv.text(`${telemetry.batteryVoltage}V BATT  ·  ${telemetry.boost} BAR BOOST`, 230, 310, 13, t.dim, { align: 'center', font: 'num' });
 
             // Ask button
-            const askW = 300, askH = 46, askX = 80, askY = 384;
-            cv.roundRect(askX, askY, askW, askH, 10, isThinking ? '#2c3e50' : '#00a3e0');
-            cv.text(isThinking ? 'THINKING...' : 'ASK M-COPILOT', askX + askW / 2, askY + 29, 18, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+            const askW = 300, askH = 48, askX = 80, askY = 344;
+            cv.roundRect(askX, askY, askW, askH, 10, isThinking ? '#1e293b' : '#00a3e0');
+            cv.text(isThinking ? 'THINKING...' : 'ASK M-COPILOT', askX + askW / 2, askY + 30, 17, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
             cv.target(askX, askY, askW, askH, () => {
                 askCopilot(PROMPTS[0].query, PROMPTS[0].title);
             }, 'btn_ask', 10);
+
+            // Tap to Re-pair Phone link at bottom
+            cv.text('Tap to Re-pair Phone', 230, 420, 12, withAlpha(t.dim, 0.7), { align: 'center', font: 'label' });
+            cv.target(80, 406, 300, 24, () => {
+                showPairing = true;
+                render(true);
+            }, 'btn_relink', 8);
 
             // Panel 2 (Center): Conversation Stream
             G.panel(cv, t, 440, 52, 740, 410, 'Dialogue: ' + currentPrompt);
@@ -505,7 +496,6 @@ mgu.run({
             // G-Series Live Cockpit frame tabs along the top: clean single title + live status badges
             const provName = (ai.config.provider || (ai.config.mode === 'gemini' ? 'gemini' : 'custom')).toUpperCase();
             G.frame(cv, t, PAGES, 0, [
-                { text: telemetry.driveMode },
                 { text: 'READ-ONLY SAFE', color: '#2af575' },
                 { text: ai.isConfigured() ? `${provName} ONLINE` : 'SETUP REQUIRED', color: ai.isConfigured() ? '#00a3e0' : '#ffb703' }
             ]);

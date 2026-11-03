@@ -108,11 +108,11 @@ This repository is forked and built upon the foundational open-source BMW iDrive
 The recommended way to install and update these applications is through [**MGU Store**](https://github.com/robertnisipeanu/mgu-store):
 
 1. On your iDrive central display, open **MGU Store > Sources > Add source**.
-2. Enter this repository:
+2. Enter this repository directly:
    ```text
-   <your-github-username>/idrive7-custom-apps
+   hexlay/idrive7-custom-apps
    ```
-3. Tap **OK**. The Store reads `mgu-repo.json` and lists all apps in this suite.
+3. Tap **OK**. MGU Store fetches `mgu-repo.json` and immediately displays all apps.
 4. Tap any app to install!
 
 ---

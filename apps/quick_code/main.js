@@ -396,16 +396,41 @@ mgu.run({
                 const safeCheck = safety.checkCodingSafety('sound_chimes');
                 const canCode = safeCheck.allowed;
 
-                cv.roundRect(64, sy, 1472, 68, 12, isCur ? withAlpha(t.accent, 0.22) : t.track);
-                cv.strokeRoundRect(64, sy, 1472, 68, 12, isCur ? 2 : 1, isCur ? t.accent : t.panelEdge);
+                // Authentic BMW iDrive 7 selection list styling
+                const rowBg = isCur ? '#0c1522' : '#0b0f16';
+                const rowEdge = canCode ? (isCur ? '#0077c8' : '#1c2432') : withAlpha(safeCheck.badgeColor, 0.45);
+                cv.roundRect(64, sy, 1472, 68, 12, rowBg);
+                cv.strokeRoundRect(64, sy, 1472, 68, 12, isCur ? 1.5 : 1, rowEdge);
 
-                cv.circle(96, sy + 34, 12, isCur ? '#1db954' : t.tick);
-                cv.text(theme.name, 130, sy + 32, 24, isCur ? t.text : '#dddddd', { font: 'bold' });
-                cv.text(theme.desc, 130, sy + 54, 18, t.dim);
+                // BMW Radio Selection Indicator
+                if (isCur) {
+                    cv.circle(96, sy + 34, 12, '#005ea6');
+                    cv.circle(96, sy + 34, 7, '#00a3e0');
+                } else {
+                    cv.circle(96, sy + 34, 10, '#1c2533');
+                    cv.circle(96, sy + 34, 8, '#0b0f16');
+                }
 
-                cv.roundRect(1380, sy + 15, 130, 38, 8, isCur ? t.accent : withAlpha(t.tick, 0.5));
-                const badgeText = canCode ? (isCur ? 'ACTIVE' : 'SELECT') : '[LOCKED]';
-                cv.text(badgeText, 1445, sy + 39, 15, canCode ? '#ffffff' : safeCheck.badgeColor, { align: 'center', font: 'bold', spacing: 1 });
+                cv.text(theme.name, 130, sy + 32, 24, isCur ? '#ffffff' : '#cbd5e1', { font: 'bold' });
+                cv.text(theme.desc, 130, sy + 54, 17, isCur ? '#94a3b8' : '#64748b');
+
+                // Right Action / Status Pill
+                const btnX = 1370, btnY = sy + 15, btnW = 140, btnH = 38;
+                if (!canCode) {
+                    cv.roundRect(btnX, btnY, btnW, btnH, 8, '#241215');
+                    cv.strokeRoundRect(btnX, btnY, btnW, btnH, 8, 1, safeCheck.badgeColor);
+                    cv.text('[LOCKED]', btnX + btnW / 2, btnY + 24, 14, safeCheck.badgeColor, { align: 'center', font: 'bold', spacing: 1 });
+                } else if (isCur) {
+                    // Active BMW Blue & M-Cyan Pill with high contrast text
+                    cv.roundRect(btnX, btnY, btnW, btnH, 8, '#004e8c');
+                    cv.strokeRoundRect(btnX, btnY, btnW, btnH, 8, 1.5, '#00a3e0');
+                    cv.text('ACTIVE', btnX + btnW / 2, btnY + 24, 15, '#ffffff', { align: 'center', font: 'bold', spacing: 1.2 });
+                } else {
+                    // Select Button
+                    cv.roundRect(btnX, btnY, btnW, btnH, 8, '#141c26');
+                    cv.strokeRoundRect(btnX, btnY, btnW, btnH, 8, 1, '#2a384c');
+                    cv.text('SELECT', btnX + btnW / 2, btnY + 24, 14, '#94a3b8', { align: 'center', font: 'bold', spacing: 1 });
+                }
 
                 cv.target(64, sy, 1472, 68, () => {
                     const check = safety.checkCodingSafety('sound_chimes');

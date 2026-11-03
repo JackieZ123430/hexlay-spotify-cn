@@ -14,6 +14,7 @@ const mgu = require('./kit/mgu');
 const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
 const { SpotifyClient } = require('./api');
+const { SpotifyAuthServer } = require('./auth_server');
 const qrcodegen = require('./qrcodegen');
 
 const W = 1600, H = 520;
@@ -50,8 +51,10 @@ function drawMiniEqualizer(cv, cx, cy, col, isPlaying, seed) {
 
 mgu.run({
     async start(ctx) {
-        const { ui, settings, log } = ctx;
+        const { ui, settings, log, dataDir } = ctx;
         const spotify = new SpotifyClient(ctx);
+        const authServer = new SpotifyAuthServer(ctx, spotify);
+        authServer.start();
 
         let page = 0;
         let selectedPlaylistIdx = 0;
@@ -59,12 +62,14 @@ mgu.run({
 
         /* ---------- QR Code Generation ---------- */
         let cachedQr = null;
+        let cachedQrUrl = null;
         function getQrMatrix() {
-            if (cachedQr) return cachedQr;
+            const url = authServer.getLoginUrl();
+            if (cachedQr && cachedQrUrl === url) return cachedQr;
             try {
-                const url = 'https://accounts.spotify.com/authorize?client_id=' + spotify.clientId + '&response_type=code&scope=user-modify-playback-state+user-read-playback-state';
                 const qr = qrcodegen.QrCode.encodeText(url, qrcodegen.QrCode.Ecc.MEDIUM);
                 cachedQr = qr;
+                cachedQrUrl = url;
                 return qr;
             } catch (e) {
                 return null;
@@ -221,31 +226,57 @@ mgu.run({
 
         /* ---------- Page 3: Connect & QR Setup ---------- */
         function drawConnect(cv, t) {
-            // Left: QR Code Pairing
-            G.panel(cv, t, 40, 52, 580, 410, 'Scan to Connect Phone');
+            // Left: QR Code Pairing or Connected Status
+            G.panel(cv, t, 40, 52, 580, 410, spotify.isOnline ? 'Spotify Account Status' : 'Scan to Connect Phone');
 
-            const qrx = 160, qry = 120, qrsz = 210;
-            const qr = getQrMatrix();
-            if (qr) {
-                const modCount = qr.size;
-                const modPx = Math.floor(qrsz / modCount);
-                const actualSz = modPx * modCount;
-                const ox = qrx + Math.floor((qrsz - actualSz) / 2);
-                const oy = qry + Math.floor((qrsz - actualSz) / 2);
+            if (spotify.isOnline) {
+                // Connected Card
+                cv.roundRect(70, 114, 520, 320, 14, '#0a1612');
+                cv.strokeRoundRect(70, 114, 520, 320, 14, 1.5, '#1ed760');
 
-                // White backdrop for clean camera scanning
-                cv.roundRect(ox - 14, oy - 14, actualSz + 28, actualSz + 28, 12, '#ffffff');
-                for (let r = 0; r < modCount; r++) {
-                    for (let c = 0; c < modCount; c++) {
-                        if (qr.getModule(c, r)) {
-                            cv.fillRect(ox + c * modPx, oy + r * modPx, modPx, modPx, '#000000');
+                cv.circle(330, 175, 32, '#1ed760');
+                cv.text('[OK]', 330, 184, 18, '#000000', { align: 'center', font: 'bold' });
+
+                cv.text('SPOTIFY CONNECTED', 330, 235, 22, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+                cv.text('Active Target: ' + spotify.activeDevice, 330, 265, 15, '#cbd5e1', { align: 'center' });
+                cv.text('Personal library & playlists active', 330, 290, 14, '#64748b', { align: 'center' });
+
+                // Disconnect Button
+                const dcX = 160, dcY = 340, dcW = 340, dcH = 48;
+                cv.roundRect(dcX, dcY, dcW, dcH, 10, '#1f1418');
+                cv.strokeRoundRect(dcX, dcY, dcW, dcH, 10, 1.5, '#e1001a');
+                cv.text('DISCONNECT / SWITCH ACCOUNT', dcX + dcW / 2, dcY + 30, 15, '#e1001a', { align: 'center', font: 'bold', spacing: 1 });
+
+                cv.target(dcX, dcY, dcW, dcH, () => {
+                    spotify.logout();
+                    cachedQr = null;
+                }, 'btn_logout', 15);
+            } else {
+                // QR Code for Driver's Phone
+                const qrx = 160, qry = 114, qrsz = 200;
+                const qr = getQrMatrix();
+                if (qr) {
+                    const modCount = qr.size;
+                    const modPx = Math.floor(qrsz / modCount);
+                    const actualSz = modPx * modCount;
+                    const ox = qrx + Math.floor((qrsz - actualSz) / 2);
+                    const oy = qry + Math.floor((qrsz - actualSz) / 2);
+
+                    // White backdrop for clean camera scanning
+                    cv.roundRect(ox - 14, oy - 14, actualSz + 28, actualSz + 28, 12, '#ffffff');
+                    for (let r = 0; r < modCount; r++) {
+                        for (let c = 0; c < modCount; c++) {
+                            if (qr.getModule(c, r)) {
+                                cv.fillRect(ox + c * modPx, oy + r * modPx, modPx, modPx, '#000000');
+                            }
                         }
                     }
                 }
-            }
 
-            cv.text('Scan with your phone to authorize', 330, 385, 20, t.text, { align: 'center', font: 'bold' });
-            cv.text('Tokens save automatically on this car', 330, 412, 17, t.dim, { align: 'center' });
+                cv.text('Scan with phone to connect Spotify', 330, 362, 19, t.text, { align: 'center', font: 'bold' });
+                cv.text('Connect phone to BMW Wi-Fi Hotspot / CarPlay', 330, 390, 14, t.dim, { align: 'center' });
+                cv.text(authServer.getLoginUrl(), 330, 415, 13, '#00f0ff', { align: 'center', font: 'num' });
+            }
 
             // Right: Spotify Connect Target Devices
             G.panel(cv, t, 640, 52, 920, 410, 'Spotify Connect Devices');
@@ -270,8 +301,8 @@ mgu.run({
             });
 
             // Status indicator
-            cv.roundRect(664, 380, 260, 42, 8, withAlpha(t.panelEdge, 0.8));
-            cv.text(spotify.isOnline ? 'ONLINE: CONNECTED' : 'DEMO MODE: ACTIVE', 794, 406, 18, spotify.isOnline ? '#1ed760' : t.accent, { align: 'center', font: 'bold' });
+            cv.roundRect(664, 380, 280, 42, 8, withAlpha(t.panelEdge, 0.8));
+            cv.text(spotify.isOnline ? 'ONLINE: CONNECTED' : 'AWAITING PHONE LOGIN', 804, 406, 17, spotify.isOnline ? '#1ed760' : '#ffb703', { align: 'center', font: 'bold' });
         }
 
         /* ---------- Master Render Loop ---------- */

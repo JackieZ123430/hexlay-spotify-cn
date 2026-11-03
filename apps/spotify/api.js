@@ -119,7 +119,10 @@ class SpotifyClient {
 
     _loadAuth() {
         try {
-            const configPath = path.join(__dirname, 'spotify_auth.json');
+            const dataPath = this.ctx && this.ctx.dataDir ? path.join(this.ctx.dataDir, 'spotify_auth.json') : null;
+            const localPath = path.join(__dirname, 'spotify_auth.json');
+            const configPath = (dataPath && fs.existsSync(dataPath)) ? dataPath : localPath;
+
             if (fs.existsSync(configPath)) {
                 const data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
                 if (data.token) {
@@ -130,11 +133,105 @@ class SpotifyClient {
                     this.clientSecret = data.clientSecret;
                     this.paired = true;
                     this.isOnline = true;
-                    this.log.info('Loaded Spotify auth token');
+                    this.log.info('Loaded Spotify auth token from ' + configPath);
                 }
             }
         } catch (e) {
             this.log.warn('Could not read auth: ' + e);
+        }
+    }
+
+    reloadAuth() {
+        this._loadAuth();
+        if (this.token) {
+            this.initialFetch();
+        }
+    }
+
+    logout() {
+        this.token = null;
+        this.refreshToken = null;
+        this.paired = false;
+        this.isOnline = false;
+        this.playlists = DEMO_PLAYLISTS;
+        this.currentPlaylist = this.playlists[0];
+        this.currentTrack = this.currentPlaylist.tracks[0];
+
+        const paths = [
+            this.ctx && this.ctx.dataDir ? path.join(this.ctx.dataDir, 'spotify_auth.json') : null,
+            path.join(__dirname, 'spotify_auth.json')
+        ].filter(Boolean);
+
+        paths.forEach(p => {
+            try {
+                if (fs.existsSync(p)) fs.unlinkSync(p);
+            } catch (e) {}
+        });
+
+        this.log.info('Logged out from Spotify');
+    }
+
+    async refreshAccessToken() {
+        if (!this.refreshToken || !this.clientId || !this.clientSecret) return false;
+        try {
+            const postData = new URLSearchParams({
+                grant_type: 'refresh_token',
+                refresh_token: this.refreshToken
+            }).toString();
+
+            const authHeader = 'Basic ' + Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
+
+            return new Promise((resolve) => {
+                const req = https.request({
+                    hostname: 'accounts.spotify.com',
+                    port: 443,
+                    path: '/api/token',
+                    method: 'POST',
+                    headers: {
+                        'Authorization': authHeader,
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Content-Length': Buffer.byteLength(postData)
+                    }
+                }, (res) => {
+                    let data = '';
+                    res.on('data', c => { data += c; });
+                    res.on('end', () => {
+                        try {
+                            const parsed = JSON.parse(data);
+                            if (parsed.access_token) {
+                                this.token = parsed.access_token;
+                                this.expiresAt = Date.now() + (parsed.expires_in * 1000);
+                                if (parsed.refresh_token) this.refreshToken = parsed.refresh_token;
+
+                                // Persist updated tokens
+                                const paths = [
+                                    this.ctx && this.ctx.dataDir ? path.join(this.ctx.dataDir, 'spotify_auth.json') : null,
+                                    path.join(__dirname, 'spotify_auth.json')
+                                ].filter(Boolean);
+                                const out = {
+                                    token: this.token,
+                                    refreshToken: this.refreshToken,
+                                    expiresAt: this.expiresAt,
+                                    clientId: this.clientId,
+                                    clientSecret: this.clientSecret,
+                                    savedAt: new Date().toISOString()
+                                };
+                                paths.forEach(p => {
+                                    try { fs.writeFileSync(p, JSON.stringify(out, null, 2), 'utf8'); } catch (e) {}
+                                });
+                                this.log.info('Successfully refreshed Spotify access token');
+                                return resolve(true);
+                            }
+                        } catch (e) {}
+                        resolve(false);
+                    });
+                });
+                req.on('error', () => resolve(false));
+                req.write(postData);
+                req.end();
+            });
+        } catch (e) {
+            return false;
         }
     }
 
@@ -168,6 +265,14 @@ class SpotifyClient {
                 res.on('data', (c) => { data += c; });
                 res.on('end', () => {
                     if (res.statusCode === 204) return resolve(null);
+                    if (res.statusCode === 401 && this.refreshToken) {
+                        return this.refreshAccessToken().then((refreshed) => {
+                            if (refreshed) {
+                                return this._request(method, endpoint, body).then(resolve).catch(reject);
+                            }
+                            reject(new Error('Spotify session expired. Please re-authenticate.'));
+                        }).catch(reject);
+                    }
                     try {
                         const json = data ? JSON.parse(data) : {};
                         if (res.statusCode >= 200 && res.statusCode < 300) resolve(json);

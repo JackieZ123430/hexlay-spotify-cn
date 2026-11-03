@@ -121,8 +121,8 @@ python3 kit/tools/build.py
 # 2. Package the CarKit installer
 deploy/make-car-kit.sh
 
-# 3. Push to car over SSH
-HU=root@169.254.34.2 PORT=22 KEY=~/.ssh/id_mgu deploy/push-to-car.sh install
+# 3. Push to car over SSH (replace <car-ip> with your ENET link-local IP, e.g. 169.254.x.x)
+HU=root@<car-ip> PORT=22 KEY=~/.ssh/id_mgu deploy/push-to-car.sh install
 ```
 
 ---

@@ -37,7 +37,7 @@
       "title": "M-Copilot",
       "buttons": [
         ["BTN_PROMPT", "Ask Copilot"],
-        ["BTN_PAGE", "Next Page"],
+        ["BTN_REPAIR", "Pair Phone"],
         ["BTN_SETTINGS", "Settings"]
       ]
     }

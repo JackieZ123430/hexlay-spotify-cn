@@ -2,20 +2,22 @@
 /**
  * M-Copilot - AI Performance Co-Driver & Intelligent Assistant for BMW iDrive 7.
  *
- * Optimized Architecture:
- *   1. Cloud Pairing (Zero 127.0.0.1 / localhost):
+ * Streamlined Architecture:
+ *   1. Zero Duplicate Tabs:
+ *      Single unified screen ('M-Copilot'). When unconfigured, it seamlessly displays the
+ *      Setup & Pairing QR code. Once paired, it unlocks the full AI Co-Driver interface.
+ *   2. Cloud Pairing (Zero 127.0.0.1 / localhost):
  *      QR Code points to https://hexlay.github.io/idrive7-custom-apps/copilot.html?channel=...
  *      Allows pairing from any smartphone over 4G/5G/Wi-Fi with free Google Gemini API Key.
- *   2. Mandatory Online Mode:
+ *   3. Mandatory Online Mode:
  *      Head unit verifies active vehicle uplink (cellular/hotspot). Gating screens if offline
  *      or unconfigured, preventing CPU-heavy local offline regex/NLP simulations.
- *   3. Ultra-Low CPU/GPU Adaptive Pacing:
+ *   4. Ultra-Low CPU/GPU Adaptive Pacing:
  *      Eliminates continuous 66 fps loop in favor of 4 fps idle refresh (~250ms), dynamically
  *      switching to 25 fps (~40ms) ONLY while neural thinking animation is active.
- *   4. Vehicle Context Engine:
- *      Pours rich, safe, read-only CAN & UDS telemetry (speed, RPM, gear, torque, oil/coolant,
- *      boost, lateral/longitudinal G, 4-wheel tire pressures & temperatures, DTCs) directly into
- *      Google Gemini with prompt-specific intent analysis (Launch control, Cooling, Grip, DTCs).
+ *   5. Vehicle Context Engine:
+ *      Pours rich, safe, read-only CAN & UDS telemetry directly into Google Gemini with
+ *      prompt-specific intent analysis (Launch control, Cooling, Grip, DTCs).
  */
 const mgu = require('./kit/mgu');
 const { withAlpha } = require('./kit/canvas');
@@ -26,7 +28,7 @@ const { CloudPairManager } = require('./cloud_pair');
 const qrcodegen = require('./qrcodegen');
 
 const W = 1600, H = 520;
-const PAGES = ['M-Copilot AI', 'Cloud Pairing'];
+const PAGES = ['M-Copilot'];
 
 const PROMPTS = [
     { title: 'Launch Protocol', query: 'What are the launch control prerequisites and sequence for BMW G-Series ZF 8HP?' },
@@ -47,7 +49,7 @@ mgu.run({
         const cloudPair = new CloudPairManager(ctx, ai);
         cloudPair.startPolling();
 
-        let page = 0;
+        let showPairing = false;
         let isThinking = false;
         let thinkTimer = null;
         let lastRenderTime = 0;
@@ -120,8 +122,8 @@ mgu.run({
         }
 
         cloudPair.onPaired = () => {
+            showPairing = false;
             notify('AI Paired via Cloud! Gemini Ready.');
-            page = 0;
             render(true).catch(() => {});
         };
 
@@ -155,7 +157,7 @@ mgu.run({
                 return;
             }
             if (!ai.isConfigured()) {
-                page = 1; // Open cloud pairing
+                showPairing = true;
                 render(true).catch(() => {});
                 return;
             }
@@ -284,9 +286,9 @@ mgu.run({
             }, 'btn_retry_net', 10);
         }
 
-        /* ---------- Setup Screen: Copilot Setup Required ---------- */
+        /* ---------- Setup Screen: Copilot Setup / Cloud Pairing ---------- */
         function drawSetupRequired(cv, t) {
-            G.panel(cv, t, 40, 52, 1520, 410, 'M-Copilot Cloud Setup Required');
+            G.panel(cv, t, 40, 52, 1520, 410, 'M-Copilot Cloud Pairing & Setup');
 
             cv.roundRect(80, 110, 1440, 310, 16, '#090e15');
             cv.strokeRoundRect(80, 110, 1440, 310, 16, 2, '#00a3e0');
@@ -321,19 +323,31 @@ mgu.run({
             cv.text('Enter your free Gemini API key on the phone page to link your car co-driver.', ix, 258, 16, '#94a3b8');
 
             // Status indicator
-            cv.roundRect(ix, 300, 380, 38, 8, withAlpha('#00a3e0', 0.15));
-            cv.strokeRoundRect(ix, 300, 380, 38, 8, 1, '#00a3e0');
-            cv.text('WAITING FOR PHONE PAIRING...', ix + 190, 324, 15, '#00f0ff', { align: 'center', font: 'bold' });
+            cv.roundRect(ix, 290, 380, 36, 8, withAlpha('#00a3e0', 0.15));
+            cv.strokeRoundRect(ix, 290, 380, 36, 8, 1, '#00a3e0');
+            cv.text('WAITING FOR PHONE PAIRING...', ix + 190, 314, 15, '#00f0ff', { align: 'center', font: 'bold' });
+
+            // If already configured and opened via Re-pair, show Back button
+            if (ai.isConfigured()) {
+                const bBackX = ix, bBackY = 345, bBackW = 260, bBackH = 46;
+                cv.roundRect(bBackX, bBackY, bBackW, bBackH, 10, '#004e8c');
+                cv.strokeRoundRect(bBackX, bBackY, bBackW, bBackH, 10, 1.5, '#00a3e0');
+                cv.text('BACK TO CO-DRIVER', bBackX + bBackW / 2, bBackY + 29, 16, '#ffffff', { align: 'center', font: 'bold' });
+                cv.target(bBackX, bBackY, bBackW, bBackH, () => {
+                    showPairing = false;
+                    render(true);
+                }, 'btn_back_copilot', 10);
+            }
         }
 
-        /* ---------- Page 0: M-Copilot AI Main Screen ---------- */
+        /* ---------- M-Copilot AI Main Screen ---------- */
         function drawMainCopilot(cv, t, now) {
             // Panel 1 (Left): AI Neural Core
             G.panel(cv, t, 40, 52, 380, 410, 'M Neural Core');
 
             drawNeuralOrb(cv, 230, 180, 84, now);
 
-            // Status Badge
+            // Status Badge (Interactive: tap to open re-pair if needed)
             const isGemini = ai.config.mode === 'gemini';
             const tierLabel = isGemini ? 'GOOGLE GEMINI FLASH (FREE)' : 'CUSTOM AI API';
             const tierCol = isGemini ? '#2af575' : '#00a3e0';
@@ -341,6 +355,10 @@ mgu.run({
             cv.roundRect(80, 280, 300, 30, 8, withAlpha(tierCol, 0.15));
             cv.strokeRoundRect(80, 280, 300, 30, 8, 1, tierCol);
             cv.text(tierLabel, 230, 300, 14, tierCol, { align: 'center', font: 'bold' });
+            cv.target(80, 280, 300, 30, () => {
+                showPairing = true;
+                render(true);
+            }, 'btn_relink', 8);
 
             // Read-Only Safety confirmation badge & Telemetry quick pill
             cv.text('READ-ONLY PASSIVE MONITOR', 230, 332, 13, '#2af575', { align: 'center', font: 'bold' });
@@ -400,70 +418,6 @@ mgu.run({
             });
         }
 
-        /* ---------- Page 1: Cloud Pairing & Configuration ---------- */
-        function drawConnect(cv, t) {
-            G.panel(cv, t, 40, 52, 600, 410, 'Smartphone Cloud Pairing');
-
-            const qr = getPairingQr();
-            if (qr) {
-                const qrx = 80, qry = 120, qrsz = 210;
-                const modCount = qr.size;
-                const modPx = Math.floor(qrsz / modCount);
-                const actualSz = modPx * modCount;
-                const ox = qrx + Math.floor((qrsz - actualSz) / 2);
-                const oy = qry + Math.floor((qrsz - actualSz) / 2);
-
-                cv.roundRect(ox - 12, oy - 12, actualSz + 24, actualSz + 24, 12, '#ffffff');
-                for (let r = 0; r < modCount; r++) {
-                    for (let c = 0; c < modCount; c++) {
-                        if (qr.getModule(c, r)) {
-                            cv.fillRect(ox + c * modPx, oy + r * modPx, modPx, modPx, '#000000');
-                        }
-                    }
-                }
-
-                cv.text('SCAN WITH SMARTPHONE', 320, 150, 18, '#ffffff', { font: 'bold' });
-                cv.text('Zero 127.0.0.1 / localhost.', 320, 182, 16, t.dim);
-                cv.text('Works over 4G, 5G, or Wi-Fi.', 320, 206, 16, t.dim);
-                cv.text('Google Gemini Free Tier ($0.00)', 320, 230, 16, '#2af575', { font: 'bold' });
-
-                cv.text(`Pairing Code: ${cloudPair.getShortCode()}`, 320, 280, 19, '#00f0ff', { font: 'num' });
-            }
-
-            // Right Panel: Available Modes Explanation
-            G.panel(cv, t, 660, 52, 900, 410, 'AI Setup & Telemetry Context');
-
-            const modes = [
-                {
-                    title: '1. Google Gemini 1.5/2.0 Flash (Recommended - $0.00 / Mo)',
-                    desc: 'Google AI Studio offers 15 requests per minute completely free with zero credit card.\nInstant latency and deep understanding of BMW engineering telemetry.',
-                    color: '#2af575'
-                },
-                {
-                    title: '2. Live CAN & UDS Vehicle Context Injection',
-                    desc: 'Safe, read-only telemetry is injected into Gemini prompts:\nOil & coolant thermals, 4-wheel tire pressures, torque, lateral/longitudinal G forces.',
-                    color: '#00a3e0'
-                },
-                {
-                    title: '3. Read-Only Safety Interlock',
-                    desc: 'M-Copilot is strictly passive and cannot write coding or change vehicle calibrations.\nFor vehicle coding and adaptations, use the dedicated QuickCode app.',
-                    color: '#ffb703'
-                }
-            ];
-
-            modes.forEach((m, idx) => {
-                const my = 114 + idx * 105;
-                cv.roundRect(680, my, 860, 92, 10, '#080d14');
-                cv.strokeRoundRect(680, my, 860, 92, 10, 1, m.color);
-
-                cv.text(m.title, 704, my + 30, 18, m.color, { font: 'bold' });
-                const descLines = m.desc.split('\n');
-                descLines.forEach((dl, di) => {
-                    cv.text(dl, 704, my + 56 + di * 22, 15, '#94a3b8');
-                });
-            });
-        }
-
         /* ---------- Adaptive Pacing Render Loop ---------- */
         async function render(force = false) {
             const now = Date.now();
@@ -479,18 +433,17 @@ mgu.run({
             // Mandatory Online & Config Checks
             if (!ai.hasInternet) {
                 drawNoInternet(cv, t);
-            } else if (!ai.isConfigured() && page === 0) {
+            } else if (!ai.isConfigured() || showPairing) {
                 drawSetupRequired(cv, t);
             } else {
-                if (page === 0) drawMainCopilot(cv, t, now);
-                else if (page === 1) drawConnect(cv, t);
+                drawMainCopilot(cv, t, now);
             }
 
-            // G-Series Live Cockpit frame tabs along the top
-            G.frame(cv, t, PAGES, page, [
-                { text: 'M-COPILOT AI' },
+            // G-Series Live Cockpit frame tabs along the top: clean single title + live status badges
+            G.frame(cv, t, PAGES, 0, [
+                { text: telemetry.driveMode },
                 { text: 'READ-ONLY SAFE', color: '#2af575' },
-                { text: telemetry.driveMode }
+                { text: ai.isConfigured() ? 'GEMINI ONLINE' : 'SETUP REQUIRED', color: ai.isConfigured() ? '#00a3e0' : '#ffb703' }
             ]);
 
             // Global Notification banner
@@ -508,13 +461,13 @@ mgu.run({
             return render(true);
         });
 
-        ui.onClick('BTN_PAGE', () => {
-            page = (page + 1) % PAGES.length;
+        ui.onClick('BTN_REPAIR', () => {
+            showPairing = !showPairing;
             return render(true);
         });
 
-        ctx.onTab((idx) => {
-            page = idx;
+        ctx.onTab(() => {
+            showPairing = false;
             return render(true);
         });
 

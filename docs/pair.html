@@ -154,34 +154,43 @@
     <!-- Active Pairing Card -->
     <div class="card" id="cardPairing">
         <div class="pair-code" id="codeDisplay">PAIRING CODE: <span id="spanCode">BMW-CONNECT</span></div>
-        <p style="font-size: 13px; color: #94a3b8; text-align: center; margin-bottom: 12px;">
-            Tap below to authenticate with Spotify on this phone. Your library will sync with your vehicle instantly.
+        <p style="font-size: 13px; color: #94a3b8; text-align: center; margin-bottom: 14px;">
+            Pair your personal Spotify account to sync your playlists and playback with your BMW.
         </p>
+
+        <div style="margin-top: 10px; margin-bottom: 8px;">
+            <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 700; color: #ffffff; margin-bottom: 6px;">
+                <span>Spotify Client ID</span>
+                <span id="savedIndicator" style="display: none; color: #1ed760; font-size: 11px; font-weight: 600;">&#10003; Remembered</span>
+            </label>
+            <input type="text" id="inputClientId" placeholder="Paste Client ID from Spotify Dashboard">
+            <p style="font-size: 11px; color: #94a3b8; margin-top: 5px; line-height: 1.4;">
+                Stored securely on this phone and car only — never committed to public git.
+            </p>
+        </div>
 
         <button class="btn-spotify" id="btnConnect" onclick="startAuth()">Connect with Spotify</button>
 
-        <div style="display: flex; align-items: center; text-align: center; margin: 18px 0 14px; color: #475569;">
+        <div id="statusBox" style="display:none; margin-top: 14px; padding: 12px 14px; border-radius: 8px; font-size: 13px; text-align: center; line-height: 1.4;"></div>
+
+        <div style="display: flex; align-items: center; text-align: center; margin: 20px 0 14px; color: #475569;">
             <div style="flex: 1; height: 1px; background: #1e293b;"></div>
-            <span style="padding: 0 10px; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;">or paste access token</span>
+            <span style="padding: 0 10px; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;">or paste access token directly</span>
             <div style="flex: 1; height: 1px; background: #1e293b;"></div>
         </div>
 
         <div>
-            <input type="text" id="inputManualToken" placeholder="Paste Spotify OAuth access token (starts with BQ...)">
+            <input type="text" id="inputManualToken" placeholder="Paste Spotify access token (starts with BQ...)">
             <button style="width: 100%; margin-top: 10px; background: #004e8c; color: #ffffff; border: 1px solid #00a3e0; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 14px; cursor: pointer;" onclick="sendManualToken()">Send Token to Car</button>
         </div>
 
-        <div id="statusBox" style="display:none; margin-top: 14px; padding: 12px 14px; border-radius: 8px; font-size: 13px; text-align: center; line-height: 1.4;"></div>
-
         <details>
-            <summary>Custom Spotify App / Client ID</summary>
+            <summary>Pairing Channel & Redirect URI</summary>
             <div style="margin-top: 12px;">
                 <p style="font-size: 12px; color: #94a3b8; margin-bottom: 8px;">
-                    If using your own Spotify Developer App, add this exact Redirect URI to your Spotify App Dashboard:
+                    Ensure this exact Redirect URI is added in your Spotify Developer App:
                     <br><code style="color: #00f0ff; background: #070d18; padding: 2px 6px; border-radius: 4px; display: inline-block; margin-top: 4px; word-break: break-all;">https://hexlay.github.io/idrive7-custom-apps/pair.html</code>
                 </p>
-                <label>Spotify Client ID</label>
-                <input type="text" id="inputClientId" placeholder="Your Spotify Client ID">
                 <label>Car Pairing Code / Channel</label>
                 <input type="text" id="inputChannel" placeholder="e.g. bmw_spot_xyz">
             </div>
@@ -201,7 +210,6 @@
     </div>
 
     <script>
-        const DEFAULT_CLIENT_ID = 'e7a0225d57b243b8a3e7587d605c30fb'; // Universal default or customizable
         const SCOPES = [
             'user-read-playback-state',
             'user-modify-playback-state',
@@ -247,7 +255,7 @@
         // Read query params and hash fragment
         const urlParams = new URLSearchParams(window.location.search);
         let channel = urlParams.get('channel') || localStorage.getItem('bmw_spot_channel') || '';
-        let clientId = urlParams.get('client_id') || localStorage.getItem('bmw_spot_client_id') || DEFAULT_CLIENT_ID;
+        let clientId = urlParams.get('client_id') || localStorage.getItem('bmw_spot_client_id') || '';
 
         if (channel) {
             localStorage.setItem('bmw_spot_channel', channel);
@@ -257,6 +265,8 @@
         }
         if (clientId) {
             document.getElementById('inputClientId').value = clientId;
+            const ind = document.getElementById('savedIndicator');
+            if (ind) ind.style.display = 'inline';
         }
 
         // Process incoming OAuth callback (PKCE code or implicit token)
@@ -274,7 +284,7 @@
             if (code) {
                 showStatus('Exchanging authorization code with Spotify & linking car...');
                 const codeVerifier = localStorage.getItem('bmw_code_verifier');
-                const activeClientId = document.getElementById('inputClientId').value.trim() || clientId || localStorage.getItem('bmw_spot_client_id') || DEFAULT_CLIENT_ID;
+                const activeClientId = document.getElementById('inputClientId').value.trim() || clientId || localStorage.getItem('bmw_spot_client_id');
                 const redirectUri = window.location.origin + window.location.pathname;
 
                 try {
@@ -351,11 +361,20 @@
 
         async function startAuth() {
             const customId = document.getElementById('inputClientId').value.trim();
-            const activeId = customId || clientId || DEFAULT_CLIENT_ID;
+            const activeId = customId || clientId || localStorage.getItem('bmw_spot_client_id');
             const customChannel = document.getElementById('inputChannel').value.trim() || channel || ('bmw_spot_' + Math.random().toString(36).substring(2, 10));
+
+            if (!activeId) {
+                showStatus('Please enter your Spotify Client ID from your Spotify Developer Dashboard above.', true);
+                document.getElementById('inputClientId').focus();
+                document.getElementById('inputClientId').style.borderColor = '#e1001a';
+                return;
+            }
 
             localStorage.setItem('bmw_spot_client_id', activeId);
             localStorage.setItem('bmw_spot_channel', customChannel);
+            const ind = document.getElementById('savedIndicator');
+            if (ind) ind.style.display = 'inline';
 
             // Generate PKCE code verifier and challenge
             const codeVerifier = generateRandomString(64);

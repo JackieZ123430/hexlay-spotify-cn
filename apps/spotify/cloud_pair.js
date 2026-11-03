@@ -25,8 +25,9 @@ class CloudPairManager {
     }
 
     getPairingUrl() {
-        const clientId = this.spotify.clientId || 'e7a0225d57b243b8a3e7587d605c30fb';
-        return `https://hexlay.github.io/idrive7-custom-apps/pair.html?channel=${this.channel}&client_id=${clientId}`;
+        const clientId = this.spotify.clientId || '';
+        const clientParam = clientId ? `&client_id=${clientId}` : '';
+        return `https://hexlay.github.io/idrive7-custom-apps/pair.html?channel=${this.channel}${clientParam}`;
     }
 
     getShortCode() {

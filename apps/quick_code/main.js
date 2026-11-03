@@ -1,6 +1,6 @@
 'use strict';
 /**
- * QuickCode - One-tap cockpit coding for BMW iDrive 7 (MGU).
+ * QuickCode - One-tap cockpit coding for all BMW G-Series (iDrive 7).
  * Allows changing comfort options, custom ambient RGB lighting,
  * and system acoustic chimes directly on the vehicle's GPU at 60 fps.
  *
@@ -8,7 +8,10 @@
  *   - Verifies BMW G-Series architecture (BDC_BODY3 / HU_MGU).
  *   - Dynamically detects module presence (BDC 0x40, KOMBI 0x60, HU_MGU 0x63, DSC 0x29).
  *   - Hides any coding options or tabs where the required ECU module is absent.
- *   - Completely gates coding writes if non-G-Series architecture is detected.
+ *   - ENGINE RUNNING SAFEGUARD: Coding is strictly locked if engine RPM > 0.
+ *   - MOTION SAFEGUARD: Coding is strictly locked if vehicle speed > 0.
+ *   - DIAGNOSTIC MODE: Requires Terminal 15 Diagnostic Mode (3-press Start button, engine OFF)
+ *     before writing any ECU parameters (matches BimmerCode & ISTA safety standards).
  */
 const mgu = require('./kit/mgu');
 const { withAlpha } = require('./kit/canvas');
@@ -43,6 +46,17 @@ mgu.run({
         const safety = new VehicleSafety(diag, log);
         safety.scanModules().catch(() => {});
 
+        // Monitor vehicle speed and engine RPM for safety interlock
+        try {
+            const Car = require('./kit/car');
+            const car = new Car(ctx, ['rpm', 'speed']);
+            car.onSample((sample) => {
+                safety.updateTelemetry(sample);
+            });
+        } catch (e) {
+            log.warn('QuickCode: Telemetry monitor fallback: ' + e.message);
+        }
+
         let page = 0;
         let selectedColor = AMBIENT_PRESETS[0];
 
@@ -55,9 +69,10 @@ mgu.run({
         let videoInMotionUnlocked = true;
         let tirePsiAndTemp = true;
 
-        // Feedback banner
+        // Feedback & Safety Dialog state
         let statusMsg = null;
         let statusTime = 0;
+        let activeSafetyAlert = null;
 
         function notify(msg) {
             statusMsg = msg;
@@ -92,6 +107,78 @@ mgu.run({
 
             cv.roundRect(260, 320, 380, 44, 8, '#1e293b');
             cv.text('STATUS: READ-ONLY SAFE LOCKOUT', 450, 348, 16, '#ffb703', { align: 'center', font: 'bold' });
+        }
+
+        /* ---------- Safety Modal Dialog (Engine Running / Diag Mode Required) ---------- */
+        function drawSafetyModal(cv, t) {
+            if (!activeSafetyAlert) return;
+            const alert = activeSafetyAlert;
+
+            // Fullscreen dark backdrop overlay
+            cv.roundRect(0, 0, W, H, 0, withAlpha('#000000', 0.82));
+
+            // Dialog Box
+            const dw = 860, dh = 400;
+            const dx = (W - dw) / 2, dy = (H - dh) / 2;
+            cv.roundRect(dx, dy, dw, dh, 16, '#0c131d');
+            cv.strokeRoundRect(dx, dy, dw, dh, 16, 2, alert.badgeColor || '#e1001a');
+
+            // Header Banner
+            cv.roundRect(dx + 16, dy + 16, dw - 32, 54, 10, withAlpha(alert.badgeColor || '#e1001a', 0.15));
+            cv.circle(dx + 50, dy + 43, 16, alert.badgeColor || '#e1001a');
+            cv.text('!', dx + 50, dy + 49, 18, '#000000', { align: 'center', font: 'bold' });
+            cv.text(alert.title, dx + 82, dy + 50, 20, alert.badgeColor || '#e1001a', { font: 'bold', spacing: 1 });
+
+            // Message text
+            cv.text(alert.message, dx + 32, dy + 104, 15, '#cbd5e1');
+
+            // Step instructions box
+            const boxY = dy + 130, boxH = 160;
+            cv.roundRect(dx + 32, boxY, dw - 64, boxH, 10, '#060a10');
+            cv.strokeRoundRect(dx + 32, boxY, dw - 64, boxH, 10, 1, '#1e293b');
+
+            cv.text('HOW TO ENTER BMW DIAGNOSTIC MODE (PAD):', dx + 48, boxY + 28, 15, '#00a3e0', { font: 'bold' });
+
+            const steps = alert.steps && alert.steps.length ? alert.steps : [
+                '1. Turn OFF engine completely (Press Start/Stop button)',
+                '2. Foot completely OFF the brake pedal',
+                '3. Press the Start/Stop button 3 times in quick succession',
+                '4. Instrument cluster will display "Diagnostic mode active"'
+            ];
+
+            steps.forEach((st, i) => {
+                cv.text(st, dx + 48, boxY + 58 + i * 25, 15, '#ffffff');
+            });
+
+            // Action Buttons at bottom
+            const btnW = 240, btnH = 46;
+            const b1X = dx + 32, bY = dy + dh - 64;
+
+            // Dismiss Button
+            cv.roundRect(b1X, bY, btnW, btnH, 8, '#1e293b');
+            cv.strokeRoundRect(b1X, bY, btnW, btnH, 8, 1, '#334155');
+            cv.text('OK, UNDERSTOOD', b1X + btnW / 2, bY + 29, 16, '#ffffff', { align: 'center', font: 'bold' });
+            cv.target(b1X, bY, btnW, btnH, () => {
+                activeSafetyAlert = null;
+            }, 'btn_dismiss_alert', 15);
+
+            // Simulation / Toggle Button (for bench / demo mode)
+            const b2X = dx + dw - 32 - 340;
+            const isDiag = safety.vehicleState.diagnosticMode;
+            cv.roundRect(b2X, bY, 340, btnH, 8, isDiag ? '#0f291e' : '#2d1518');
+            cv.strokeRoundRect(b2X, bY, 340, btnH, 8, 1, isDiag ? '#2af575' : '#e1001a');
+            const simLabel = isDiag ? 'DIAG MODE: ACTIVE (CLICK TO LOCK)' : 'SIMULATE: ENTER DIAG MODE';
+            cv.text(simLabel, b2X + 170, bY + 29, 14, isDiag ? '#2af575' : '#ffb703', { align: 'center', font: 'bold' });
+            cv.target(b2X, bY, 340, btnH, () => {
+                safety.toggleSimulatedDiagMode();
+                if (safety.vehicleState.diagnosticMode) {
+                    activeSafetyAlert = null;
+                    notify('[OK] Diagnostic Mode simulated (Coding unlocked)');
+                } else {
+                    activeSafetyAlert = safety.checkCodingSafety();
+                    notify('[!] Diagnostic Mode exited (Coding locked)');
+                }
+            }, 'btn_sim_diag', 15);
         }
 
         /* ---------- Page: Ambient Lighting RGB ---------- */
@@ -145,13 +232,22 @@ mgu.run({
 
             cv.text('ACTIVE PREVIEW: ' + selectedColor.name.toUpperCase(), cx + cw / 2, cy + 205, 20, glowCol, { align: 'center', font: 'bold', spacing: 1.5 });
 
-            // Apply button (Gated by Safety)
+            // Apply button (Gated by Engine Running & Diagnostic Mode Safety)
             const btnX = cx + 180, btnY = 380, btnW = cw - 360, btnH = 54;
-            cv.roundRect(btnX, btnY, btnW, btnH, 12, selectedColor.hex);
-            cv.text('WRITE COLOR TO BDC (0x40)', btnX + btnW / 2, btnY + 34, 20, '#000000', { align: 'center', font: 'bold', spacing: 1.5 });
+            const safeCheck = safety.checkCodingSafety('ambient_rgb');
+            const canWrite = safeCheck.allowed;
+
+            cv.roundRect(btnX, btnY, btnW, btnH, 12, canWrite ? selectedColor.hex : '#16202c');
+            cv.strokeRoundRect(btnX, btnY, btnW, btnH, 12, 1.5, canWrite ? selectedColor.hex : safeCheck.badgeColor);
+
+            const btnLabel = canWrite ? 'WRITE COLOR TO BDC (0x40)' : `[LOCKED] ${safeCheck.title}`;
+            cv.text(btnLabel, btnX + btnW / 2, btnY + 34, 18, canWrite ? '#000000' : safeCheck.badgeColor, { align: 'center', font: 'bold', spacing: 1.2 });
+
             cv.target(btnX, btnY, btnW, btnH, () => {
-                if (!safety.supports('ambient_rgb')) {
-                    notify('[!] BDC (0x40) module missing or locked');
+                const check = safety.checkCodingSafety('ambient_rgb');
+                if (!check.allowed) {
+                    activeSafetyAlert = check;
+                    notify('[!] ' + check.title);
                     return;
                 }
                 notify('BDC Updated: Ambient RGB set to ' + selectedColor.name);
@@ -197,7 +293,7 @@ mgu.run({
                 }
             ];
 
-            // Filter out items whose required modules are not present on the vehicle!
+            // Filter out items whose required modules are not present on the vehicle
             const toggles = allToggles.filter(item => safety.supports(item.key));
 
             toggles.forEach((item, idx) => {
@@ -205,22 +301,33 @@ mgu.run({
                 const row = Math.floor(idx / 2);
                 const tx = 64 + col * 740;
                 const ty = 120 + row * 155;
+                const safeCheck = safety.checkCodingSafety(item.key);
+                const canCode = safeCheck.allowed;
 
                 cv.roundRect(tx, ty, 715, 135, 12, item.active ? withAlpha(t.accent, 0.18) : t.track);
-                cv.strokeRoundRect(tx, ty, 715, 135, 12, 1.5, item.active ? t.accent : t.panelEdge);
+                cv.strokeRoundRect(tx, ty, 715, 135, 12, 1.5, canCode ? (item.active ? t.accent : t.panelEdge) : withAlpha(safeCheck.badgeColor, 0.6));
 
                 cv.text(item.title, tx + 28, ty + 38, 24, item.active ? t.text : '#dddddd', { font: 'bold' });
                 cv.text(item.desc, tx + 28, ty + 68, 17, t.dim);
 
-                const pillCol = item.active ? '#1db954' : t.dim;
-                cv.roundRect(tx + 28, ty + 88, 220, 32, 6, withAlpha(pillCol, 0.25));
-                cv.text(item.stateLabel, tx + 138, ty + 109, 16, pillCol, { align: 'center', font: 'bold', spacing: 1 });
+                const pillCol = canCode ? (item.active ? '#1db954' : t.dim) : safeCheck.badgeColor;
+                const pillLabel = canCode ? item.stateLabel : ('[LOCKED] ' + safeCheck.status);
+                cv.roundRect(tx + 28, ty + 88, 240, 32, 6, withAlpha(pillCol, 0.25));
+                cv.text(pillLabel, tx + 148, ty + 109, 15, pillCol, { align: 'center', font: 'bold', spacing: 1 });
 
                 const swX = tx + 570, swY = ty + 40, swW = 115, swH = 50;
-                cv.roundRect(swX, swY, swW, swH, 25, item.active ? t.accent : '#20262c');
-                cv.circle(item.active ? swX + swW - 25 : swX + 25, swY + 25, 18, '#ffffff');
+                cv.roundRect(swX, swY, swW, swH, 25, canCode ? (item.active ? t.accent : '#20262c') : '#181f28');
+                cv.circle(item.active ? swX + swW - 25 : swX + 25, swY + 25, 18, canCode ? '#ffffff' : '#64748b');
 
-                cv.target(tx, ty, 715, 135, item.action, 'tog_' + idx, 12);
+                cv.target(tx, ty, 715, 135, () => {
+                    const check = safety.checkCodingSafety(item.key);
+                    if (!check.allowed) {
+                        activeSafetyAlert = check;
+                        notify('[!] ' + check.title);
+                        return;
+                    }
+                    item.action();
+                }, 'tog_' + idx, 12);
             });
         }
 
@@ -231,6 +338,8 @@ mgu.run({
             SOUND_THEMES.forEach((theme, idx) => {
                 const sy = 120 + idx * 78;
                 const isCur = currentSoundTheme.id === theme.id;
+                const safeCheck = safety.checkCodingSafety('sound_chimes');
+                const canCode = safeCheck.allowed;
 
                 cv.roundRect(64, sy, 1472, 68, 12, isCur ? withAlpha(t.accent, 0.22) : t.track);
                 cv.strokeRoundRect(64, sy, 1472, 68, 12, isCur ? 2 : 1, isCur ? t.accent : t.panelEdge);
@@ -240,11 +349,14 @@ mgu.run({
                 cv.text(theme.desc, 130, sy + 54, 18, t.dim);
 
                 cv.roundRect(1380, sy + 15, 130, 38, 8, isCur ? t.accent : withAlpha(t.tick, 0.5));
-                cv.text(isCur ? 'ACTIVE' : 'SELECT', 1445, sy + 39, 16, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+                const badgeText = canCode ? (isCur ? 'ACTIVE' : 'SELECT') : '[LOCKED]';
+                cv.text(badgeText, 1445, sy + 39, 15, canCode ? '#ffffff' : safeCheck.badgeColor, { align: 'center', font: 'bold', spacing: 1 });
 
                 cv.target(64, sy, 1472, 68, () => {
-                    if (!safety.supports('sound_chimes')) {
-                        notify('[!] KOMBI (0x60) or MGU missing');
+                    const check = safety.checkCodingSafety('sound_chimes');
+                    if (!check.allowed) {
+                        activeSafetyAlert = check;
+                        notify('[!] ' + check.title);
                         return;
                     }
                     currentSoundTheme = theme;
@@ -260,41 +372,53 @@ mgu.run({
             const allItems = [
                 {
                     key: 'video_in_motion',
-                    title: 'Video in Motion Speed Lock',
-                    desc: 'Unlocks video playback while vehicle is driving (allows passenger video streaming)',
+                    title: 'Video in Motion (VIM)',
+                    desc: 'Enables continuous passenger media & cinema playback regardless of speed limit (Lock at 3 km/h disabled)',
                     active: videoInMotionUnlocked,
-                    status: videoInMotionUnlocked ? 'SPEED LOCK DISABLED (UNLOCKED)' : 'OEM LOCKED (>3 KM/H)',
-                    action: () => { videoInMotionUnlocked = !videoInMotionUnlocked; notify('Video in Motion ' + (videoInMotionUnlocked ? 'Unlocked' : 'Locked')); }
+                    status: videoInMotionUnlocked ? 'PERMANENTLY UNLOCKED' : 'FACTORY OEM (LOCKED)',
+                    action: () => { videoInMotionUnlocked = !videoInMotionUnlocked; notify('Video In Motion ' + (videoInMotionUnlocked ? 'Unlocked' : 'Locked')); }
                 },
                 {
                     key: 'tpms_display',
-                    title: 'Live Tire Pressure & Temperature (TPMS)',
-                    desc: 'Always displays real-time Bar/PSI and Celsius temperatures on all 4 wheels simultaneously',
+                    title: 'Tire Pressure & Temperature Display',
+                    desc: 'Forces real-time bar/PSI AND live compound Celsius temperature readout simultaneously on Live Cockpit Kombi',
                     active: tirePsiAndTemp,
-                    status: tirePsiAndTemp ? 'PSI + °C FORCED ALWAYS' : 'OEM STANDARD',
-                    action: () => { tirePsiAndTemp = !tirePsiAndTemp; notify('TPMS forced PSI & Temperature Display'); }
+                    status: tirePsiAndTemp ? 'PSI + DEG C FORCED ALWAYS' : 'OEM STANDARD',
+                    action: () => { tirePsiAndTemp = !tirePsiAndTemp; notify('TPMS Kombi Display ' + (tirePsiAndTemp ? 'Forced PSI+Temp' : 'OEM')); }
                 }
             ];
 
             const items = allItems.filter(item => safety.supports(item.key));
 
             items.forEach((item, idx) => {
-                const dy = 130 + idx * 135;
+                const dy = 124 + idx * 135;
+                const safeCheck = safety.checkCodingSafety(item.key);
+                const canCode = safeCheck.allowed;
 
-                cv.roundRect(64, dy, 1472, 115, 12, item.active ? withAlpha(t.accent, 0.2) : t.track);
-                cv.strokeRoundRect(64, dy, 1472, 115, 12, 1.5, item.active ? t.accent : t.panelEdge);
+                cv.roundRect(64, dy, 1472, 115, 12, item.active ? withAlpha(t.accent, 0.18) : t.track);
+                cv.strokeRoundRect(64, dy, 1472, 115, 12, 1.5, canCode ? (item.active ? t.accent : t.panelEdge) : withAlpha(safeCheck.badgeColor, 0.6));
 
-                cv.text(item.title, 96, dy + 40, 24, item.active ? t.text : '#dddddd', { font: 'bold' });
-                cv.text(item.desc, 96, dy + 70, 18, t.dim);
+                cv.text(item.title, 96, dy + 38, 24, item.active ? t.text : '#dddddd', { font: 'bold' });
+                cv.text(item.desc, 96, dy + 66, 17, t.dim);
 
-                cv.roundRect(96, dy + 82, 300, 26, 6, withAlpha(item.active ? '#1db954' : t.dim, 0.25));
-                cv.text(item.status, 246, dy + 100, 15, item.active ? '#1db954' : t.dim, { align: 'center', font: 'bold', spacing: 1 });
+                const pillCol = canCode ? (item.active ? '#1db954' : t.dim) : safeCheck.badgeColor;
+                const pillLabel = canCode ? item.status : ('[LOCKED] ' + safeCheck.status);
+                cv.roundRect(96, dy + 82, 320, 26, 6, withAlpha(pillCol, 0.25));
+                cv.text(pillLabel, 256, dy + 100, 15, pillCol, { align: 'center', font: 'bold', spacing: 1 });
 
                 const swX = 1390, swY = dy + 35, swW = 115, swH = 50;
-                cv.roundRect(swX, swY, swW, swH, 25, item.active ? t.accent : '#20262c');
-                cv.circle(item.active ? swX + swW - 25 : swX + 25, swY + 25, 18, '#ffffff');
+                cv.roundRect(swX, swY, swW, swH, 25, canCode ? (item.active ? t.accent : '#20262c') : '#181f28');
+                cv.circle(item.active ? swX + swW - 25 : swX + 25, swY + 25, 18, canCode ? '#ffffff' : '#64748b');
 
-                cv.target(64, dy, 1472, 115, item.action, 'disp_' + idx, 12);
+                cv.target(64, dy, 1472, 115, () => {
+                    const check = safety.checkCodingSafety(item.key);
+                    if (!check.allowed) {
+                        activeSafetyAlert = check;
+                        notify('[!] ' + check.title);
+                        return;
+                    }
+                    item.action();
+                }, 'disp_' + idx, 12);
             });
         }
 
@@ -329,23 +453,62 @@ mgu.run({
 
             // G-Series Live Cockpit frame tabs along the top
             const pageNames = activePages.map(p => p.name);
+            const safeStatus = safety.checkCodingSafety();
             G.frame(cv, t, pageNames, page, [
                 { text: 'QUICKCODE' },
                 { text: safety.detectedChassis },
-                { text: safety.modules.bdc ? 'BDC: ONLINE' : 'BDC: GATED' }
+                { text: safeStatus.badgeText }
             ]);
+
+            // Top Diagnostic Mode Simulation Quick-Pill (Clickable for Bench / Demo testing)
+            cv.roundRect(W - 270, 14, 250, 30, 6, withAlpha('#000000', 0.6));
+            cv.strokeRoundRect(W - 270, 14, 250, 30, 6, 1, safeStatus.badgeColor);
+            cv.text(safety.vehicleState.diagnosticMode ? '[OK] DIAG MODE: ON' : '[!] DIAG MODE: OFF', W - 145, 33, 13, safeStatus.badgeColor, { align: 'center', font: 'bold' });
+            cv.target(W - 270, 14, 250, 30, () => {
+                safety.toggleSimulatedDiagMode();
+                if (safety.vehicleState.diagnosticMode) {
+                    activeSafetyAlert = null;
+                    notify('[OK] Diagnostic Mode simulated (Coding unlocked)');
+                } else {
+                    activeSafetyAlert = safety.checkCodingSafety();
+                    notify('[!] Diagnostic Mode exited (Coding locked)');
+                }
+            }, 'btn_top_sim_diag', 20);
+
+            // If safety alert modal is active, render on top of everything!
+            if (activeSafetyAlert) {
+                drawSafetyModal(cv, t);
+            }
 
             await ui.image('MAIN_GFX', cv);
         }
 
         /* ---------- HMI Button & Touch Interactions ---------- */
         ui.onClick('BTN_PAGE', () => {
+            if (activeSafetyAlert) {
+                activeSafetyAlert = null;
+                return render();
+            }
             const activePages = getPages();
             page = (page + 1) % activePages.length;
             return render();
         });
 
+        ui.onClick('BTN_APPLY', () => {
+            const check = safety.checkCodingSafety();
+            if (!check.allowed) {
+                activeSafetyAlert = check;
+                notify('[!] ' + check.title);
+            } else {
+                notify('[OK] Selected parameters committed to ECU');
+            }
+            return render();
+        });
+
         ctx.onTab((idx) => {
+            if (activeSafetyAlert) {
+                activeSafetyAlert = null;
+            }
             page = idx;
             return render();
         });

@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Vehicle Platform & Module Verification for QuickCode.
+ * Vehicle Platform, Module & Diagnostic Mode Verification for QuickCode.
  *
  * Safety Rules:
  *   1. Must verify BMW G-Series architecture (HU_MGU / BDC_BODY3).
@@ -11,6 +11,16 @@
  *      - 0x63 (HU_MGU): Video in Motion, Acoustic sound profiles.
  *      - 0x29 (DSC): TPMS telemetry.
  *   3. If any module is missing, its corresponding coding toggle is HIDDEN.
+ *   4. ENGINE RUNNING & MOTION SAFEGUARD:
+ *      - If engine is running (RPM > 0), coding writes are STRICTLY LOCKED.
+ *        Reason: Writing ECU coding or soft-resetting BDC/KOMBI/DSC while
+ *        the engine is running causes CAN/Ethernet bus drops, alternator
+ *        voltage spikes, or unexpected engine stalls.
+ *      - If vehicle is in motion (Speed > 0 km/h), coding is locked.
+ *   5. DIAGNOSTIC MODE REQUIREMENT:
+ *      - Standard BMW G-Series coding protocol (BimmerCode / E-Sys / ISTA)
+ *        requires Diagnostic Mode (Terminal 15 active, engine OFF).
+ *      - Entered by pressing Start/Stop 3 times quickly without pressing the brake.
  */
 
 class VehicleSafety {
@@ -29,6 +39,60 @@ class VehicleSafety {
             dme: true     // 0x12: Digital Motor Electronics
         };
         this.scanned = false;
+
+        // Live Vehicle Telemetry & Diagnostic Mode status
+        this.vehicleState = {
+            rpm: 0,
+            speed: 0,
+            diagnosticMode: false,
+            simulatedDiagMode: true, // Default true in demo/bench for out-of-box convenience
+            isDemo: false
+        };
+    }
+
+    /**
+     * Update telemetry from CAN/CDS signals
+     */
+    updateTelemetry(sample) {
+        if (!sample) return;
+        if (sample.demo !== undefined) {
+            this.vehicleState.isDemo = !!sample.demo;
+        }
+        if (sample.rpm !== undefined) {
+            this.vehicleState.rpm = Math.max(0, Math.round(sample.rpm));
+        }
+        if (sample.speed !== undefined) {
+            this.vehicleState.speed = Math.max(0, Math.round(sample.speed));
+        }
+
+        // Automatic Diagnostic Mode evaluation:
+        // 1. If engine is running (RPM > 0) or car is rolling (Speed > 0),
+        //    Diagnostic Mode is IMPOSSIBLE. Lock immediately.
+        if (this.vehicleState.rpm > 0 || this.vehicleState.speed > 0) {
+            this.vehicleState.diagnosticMode = false;
+        } else {
+            // Engine is 0 RPM and stationary:
+            if (this.vehicleState.isDemo || !this.diag || !this.diag.available) {
+                // In demo or emulator mode, obey user toggle
+                this.vehicleState.diagnosticMode = this.vehicleState.simulatedDiagMode;
+            } else {
+                // On real vehicle with diagnostic transport connected:
+                // If bus is awake at 0 RPM, Terminal 15 / Diagnostic Mode is active
+                this.vehicleState.diagnosticMode = true;
+            }
+        }
+    }
+
+    setSimulatedDiagMode(val) {
+        this.vehicleState.simulatedDiagMode = !!val;
+        if (this.vehicleState.rpm === 0 && this.vehicleState.speed === 0) {
+            this.vehicleState.diagnosticMode = this.vehicleState.simulatedDiagMode;
+        }
+    }
+
+    toggleSimulatedDiagMode() {
+        this.setSimulatedDiagMode(!this.vehicleState.simulatedDiagMode);
+        return this.vehicleState.diagnosticMode;
     }
 
     /**
@@ -95,6 +159,94 @@ class VehicleSafety {
             default:
                 return true;
         }
+    }
+
+    /**
+     * Comprehensive safety check before ANY parameter or coding write.
+     */
+    checkCodingSafety(feature) {
+        if (!this.isGSeries) {
+            return {
+                allowed: false,
+                status: 'NON_G_SERIES',
+                badgeText: 'NON-G-SERIES (LOCKED)',
+                badgeColor: '#e1001a',
+                title: 'NON-G-SERIES ARCHITECTURE',
+                message: 'QuickCode is only supported on BMW G-Series vehicles. All coding writes are permanently locked.',
+                steps: []
+            };
+        }
+
+        if (this.vehicleState.speed > 0) {
+            return {
+                allowed: false,
+                status: 'IN_MOTION',
+                badgeText: `IN MOTION ${this.vehicleState.speed} KM/H (LOCKED)`,
+                badgeColor: '#e1001a',
+                title: 'VEHICLE IN MOTION - CODING LOCKED',
+                message: `Vehicle is moving at ${this.vehicleState.speed} km/h. Coding while driving is strictly locked for safety.`,
+                steps: [
+                    '1. Safely pull over and bring vehicle to a complete stop',
+                    '2. Shift transmission into Park (P)'
+                ]
+            };
+        }
+
+        if (this.vehicleState.rpm > 0) {
+            return {
+                allowed: false,
+                status: 'ENGINE_RUNNING',
+                badgeText: `ENGINE RUNNING ${this.vehicleState.rpm} RPM (LOCKED)`,
+                badgeColor: '#e1001a',
+                title: 'ENGINE RUNNING - CODING LOCKED',
+                message: `Engine is running at ${this.vehicleState.rpm} RPM. Writing ECU parameters with the engine running risks sudden ECU reboot, alternator voltage spikes, or engine stalling!`,
+                steps: [
+                    '1. Turn OFF engine completely (Press Start/Stop button)',
+                    '2. Keep foot completely OFF the brake pedal',
+                    '3. Press Start/Stop button 3 times in quick succession',
+                    '4. Instrument cluster will display "Diagnostic mode active"'
+                ]
+            };
+        }
+
+        if (!this.vehicleState.diagnosticMode) {
+            return {
+                allowed: false,
+                status: 'NOT_DIAG_MODE',
+                badgeText: 'DIAG MODE REQ (PRESS START 3X)',
+                badgeColor: '#ffb703',
+                title: 'DIAGNOSTIC MODE REQUIRED',
+                message: 'Like BimmerCode and ISTA, all BMW G-Series coding requires Terminal 15 Diagnostic Mode before accepting changes.',
+                steps: [
+                    '1. Keep your foot completely OFF the brake pedal',
+                    '2. Press the Start/Stop button 3 times quickly',
+                    '3. Instrument cluster will confirm "Diagnostic mode active"',
+                    '4. QuickCode will automatically unlock for safe 1-tap coding'
+                ]
+            };
+        }
+
+        if (feature && !this.supports(feature)) {
+            return {
+                allowed: false,
+                status: 'MODULE_MISSING',
+                badgeText: 'MODULE MISSING',
+                badgeColor: '#ffb703',
+                title: 'MODULE NOT INSTALLED',
+                message: 'The ECU module required for this feature is not installed or not responding on this vehicle.',
+                steps: []
+            };
+        }
+
+        return {
+            allowed: true,
+            status: 'READY',
+            badgeText: 'DIAG MODE ACTIVE (SAFE TO CODE)',
+            badgeColor: '#2af575',
+            title: 'DIAGNOSTIC MODE READY',
+            message: 'Vehicle is in Diagnostic Mode with engine stopped. Safe for parameter coding.',
+            steps: []
+        };
     }
 }
 

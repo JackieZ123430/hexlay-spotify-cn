@@ -57,6 +57,27 @@ mgu.run({
             log.info('M-Cinema: ' + msg);
         }
 
+        /* ---------- Helper: Text Wrapping for Descriptions ---------- */
+        function wrapLines(text, maxChars = 40) {
+            if (!text) return [];
+            const rawLines = text.split('\n');
+            const lines = [];
+            rawLines.forEach(rl => {
+                const words = rl.split(' ');
+                let cur = '';
+                words.forEach(w => {
+                    if ((cur ? cur + ' ' + w : w).length <= maxChars) {
+                        cur = cur ? cur + ' ' + w : w;
+                    } else {
+                        if (cur) lines.push(cur);
+                        cur = w;
+                    }
+                });
+                if (cur) lines.push(cur);
+            });
+            return lines;
+        }
+
         // Initialize Cast Server for smartphone streaming
         const castServer = new CastServer({
             onCast(video) {
@@ -143,14 +164,20 @@ mgu.run({
             // Right Panel (460px): Stream Details & Quick Controls
             G.panel(cv, t, 1100, 52, 460, 410, 'Stream Details');
 
-            cv.text(video.title, 1124, 130, 20, '#ffffff', { font: 'bold' });
-            cv.text(video.channel, 1124, 162, 17, glowCol, { font: 'bold' });
-            cv.text(video.views, 1124, 188, 15, t.dim);
+            const titleText = (video.title && video.title.length > 28) ? video.title.slice(0, 26) + '...' : (video.title || 'Ready');
+            cv.text(titleText, 1124, 130, 20, '#ffffff', { font: 'bold' });
+            cv.text(video.channel || '', 1124, 162, 17, glowCol, { font: 'bold' });
+            cv.text(video.views || '', 1124, 188, 15, t.dim);
 
-            // Description / URL box
-            cv.roundRect(1124, 210, 412, 100, 10, '#090e16');
-            cv.strokeRoundRect(1124, 210, 412, 100, 10, 1, t.panelEdge);
-            cv.text(video.desc, 1140, 242, 16, '#94a3b8');
+            // Description / URL box with multiline text wrapping
+            const descBoxX = 1124, descBoxY = 210, descBoxW = 412, descBoxH = 100;
+            cv.roundRect(descBoxX, descBoxY, descBoxW, descBoxH, 10, '#090e16');
+            cv.strokeRoundRect(descBoxX, descBoxY, descBoxW, descBoxH, 10, 1, t.panelEdge);
+
+            const descLines = wrapLines(video.desc, 42);
+            descLines.slice(0, 3).forEach((line, idx) => {
+                cv.text(line, descBoxX + 16, descBoxY + 30 + idx * 24, 15, '#94a3b8');
+            });
 
             // Quick Actions
             const btnW = 196, btnH = 48;

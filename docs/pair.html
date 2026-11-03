@@ -171,6 +171,8 @@
             <button style="width: 100%; margin-top: 10px; background: #004e8c; color: #ffffff; border: 1px solid #00a3e0; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 14px; cursor: pointer;" onclick="sendManualToken()">Send Token to Car</button>
         </div>
 
+        <div id="statusBox" style="display:none; margin-top: 14px; padding: 12px 14px; border-radius: 8px; font-size: 13px; text-align: center; line-height: 1.4;"></div>
+
         <details>
             <summary>Custom Spotify App / Client ID</summary>
             <div style="margin-top: 12px;">
@@ -209,6 +211,39 @@
             'user-library-read'
         ].join(' ');
 
+        function showStatus(text, isError = false) {
+            const box = document.getElementById('statusBox');
+            box.style.display = 'block';
+            box.style.background = isError ? 'rgba(225, 0, 26, 0.15)' : 'rgba(0, 240, 255, 0.15)';
+            box.style.border = '1px solid ' + (isError ? '#e1001a' : '#00a3e0');
+            box.style.color = isError ? '#ff6b6b' : '#00f0ff';
+            box.innerText = text;
+        }
+
+        function generateRandomString(length) {
+            const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+            const values = crypto.getRandomValues(new Uint8Array(length));
+            return Array.from(values).map(x => possible[x % possible.length]).join('');
+        }
+
+        async function sha256(plain) {
+            const encoder = new TextEncoder();
+            const data = encoder.encode(plain);
+            return window.crypto.subtle.digest('SHA-256', data);
+        }
+
+        function base64encode(input) {
+            return btoa(String.fromCharCode(...new Uint8Array(input)))
+                .replace(/=/g, '')
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_');
+        }
+
+        async function generateCodeChallenge(codeVerifier) {
+            const hashed = await sha256(codeVerifier);
+            return base64encode(hashed);
+        }
+
         // Read query params and hash fragment
         const urlParams = new URLSearchParams(window.location.search);
         let channel = urlParams.get('channel') || localStorage.getItem('bmw_spot_channel') || '';
@@ -224,41 +259,97 @@
             document.getElementById('inputClientId').value = clientId;
         }
 
-        // Check if returning from Spotify OAuth (token in hash)
-        function checkOAuthReturn() {
+        // Process incoming OAuth callback (PKCE code or implicit token)
+        async function checkOAuthReturn() {
+            const code = urlParams.get('code');
+            const state = urlParams.get('state') || channel;
+            const err = urlParams.get('error');
+
+            if (err) {
+                showStatus('Spotify authorization error: ' + err, true);
+                return;
+            }
+
+            // 1. PKCE Authorization Code flow (standard for Spotify apps)
+            if (code) {
+                showStatus('Exchanging authorization code with Spotify & linking car...');
+                const codeVerifier = localStorage.getItem('bmw_code_verifier');
+                const activeClientId = document.getElementById('inputClientId').value.trim() || clientId || localStorage.getItem('bmw_spot_client_id') || DEFAULT_CLIENT_ID;
+                const redirectUri = window.location.origin + window.location.pathname;
+
+                try {
+                    const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded'
+                        },
+                        body: new URLSearchParams({
+                            client_id: activeClientId,
+                            grant_type: 'authorization_code',
+                            code: code,
+                            redirect_uri: redirectUri,
+                            code_verifier: codeVerifier
+                        }).toString()
+                    });
+
+                    const data = await tokenRes.json();
+                    if (data.access_token) {
+                        const targetChannel = state || channel || localStorage.getItem('bmw_spot_channel');
+                        const payload = {
+                            token: data.access_token,
+                            refreshToken: data.refresh_token,
+                            clientId: activeClientId,
+                            expiresAt: Date.now() + ((data.expires_in || 3600) * 1000),
+                            time: Date.now()
+                        };
+
+                        await fetch('https://ntfy.sh/' + targetChannel, {
+                            method: 'POST',
+                            body: JSON.stringify(payload)
+                        });
+
+                        document.getElementById('cardPairing').style.display = 'none';
+                        document.getElementById('cardSuccess').style.display = 'block';
+                        return true;
+                    } else {
+                        showStatus('Spotify Token Exchange Failed: ' + (data.error_description || data.error || JSON.stringify(data)), true);
+                    }
+                } catch (e) {
+                    showStatus('Network error while exchanging Spotify token: ' + e.message, true);
+                }
+                return;
+            }
+
+            // 2. Legacy Implicit Grant (hash fragment fallback)
             if (window.location.hash && window.location.hash.includes('access_token')) {
                 const hashParams = new URLSearchParams(window.location.hash.substring(1));
                 const token = hashParams.get('access_token');
                 const expiresIn = hashParams.get('expires_in') || '3600';
-                const state = hashParams.get('state') || channel;
+                const st = hashParams.get('state') || channel;
 
-                if (token && state) {
-                    // Send token to vehicle via cloud broker
+                if (token && st) {
                     const payload = {
                         token: token,
                         expiresAt: Date.now() + (parseInt(expiresIn, 10) * 1000),
                         time: Date.now()
                     };
 
-                    fetch('https://ntfy.sh/' + state, {
+                    fetch('https://ntfy.sh/' + st, {
                         method: 'POST',
                         body: JSON.stringify(payload)
                     }).then(() => {
                         document.getElementById('cardPairing').style.display = 'none';
                         document.getElementById('cardSuccess').style.display = 'block';
-                    }).catch(err => {
-                        console.error('Failed to publish token:', err);
-                        // Still show success since token was acquired
+                    }).catch(() => {
                         document.getElementById('cardPairing').style.display = 'none';
                         document.getElementById('cardSuccess').style.display = 'block';
                     });
                     return true;
                 }
             }
-            return false;
         }
 
-        function startAuth() {
+        async function startAuth() {
             const customId = document.getElementById('inputClientId').value.trim();
             const activeId = customId || clientId || DEFAULT_CLIENT_ID;
             const customChannel = document.getElementById('inputChannel').value.trim() || channel || ('bmw_spot_' + Math.random().toString(36).substring(2, 10));
@@ -266,13 +357,20 @@
             localStorage.setItem('bmw_spot_client_id', activeId);
             localStorage.setItem('bmw_spot_channel', customChannel);
 
+            // Generate PKCE code verifier and challenge
+            const codeVerifier = generateRandomString(64);
+            localStorage.setItem('bmw_code_verifier', codeVerifier);
+            const codeChallenge = await generateCodeChallenge(codeVerifier);
+
             // Redirect URI: exact URL of this pair page (stripping hash/query)
             const redirectUri = window.location.origin + window.location.pathname;
 
             const authParams = new URLSearchParams({
                 client_id: activeId,
-                response_type: 'token',
+                response_type: 'code',
                 redirect_uri: redirectUri,
+                code_challenge_method: 'S256',
+                code_challenge: codeChallenge,
                 scope: SCOPES,
                 state: customChannel,
                 show_dialog: 'true'
@@ -305,7 +403,7 @@
             }).then(() => {
                 document.getElementById('cardPairing').style.display = 'none';
                 document.getElementById('cardSuccess').style.display = 'block';
-            }).catch(err => {
+            }).catch(() => {
                 alert('Transmission failed. Check internet connection.');
             });
         }

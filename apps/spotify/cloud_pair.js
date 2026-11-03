@@ -57,7 +57,9 @@ class CloudPairManager {
                                 this.log.info('CloudPair: Received Spotify token via cloud pairing channel!');
                                 this.spotify.saveAuthTokens({
                                     token: parsed.token,
-                                    expiresAt: parsed.expiresAt || (Date.now() + 3600000)
+                                    refreshToken: parsed.refreshToken,
+                                    expiresAt: parsed.expiresAt || (Date.now() + 3600000),
+                                    clientId: parsed.clientId
                                 });
                                 this.stopPolling();
                             }

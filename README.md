@@ -1,97 +1,88 @@
-# BMW iDrive 7 (MGU) — Native Spotify App
+# BMW iDrive 7 (MGU) — Custom Apps Suite
 
 <p align="center">
-  <b>Native Spotify Connect player and library browser for BMW iDrive 7 (MGU), rendered at 60 fps on the vehicle's GPU.</b>
+  <b>A collection of custom applications for BMW iDrive 7 (MGU), rendered at 60 fps directly on the vehicle's GPU.</b>
 </p>
 
 <p align="center">
   <img alt="60 fps" src="https://img.shields.io/badge/frame%20rate-60%20fps-2ea44f?style=for-the-badge">
   <img alt="OpenGL ES 2" src="https://img.shields.io/badge/render-OpenGL%20ES%202-1c6dd0?style=for-the-badge">
   <img alt="BMW iDrive 7" src="https://img.shields.io/badge/BMW-iDrive%207%20MGU-e4002b?style=for-the-badge">
-  <img alt="Spotify Connect" src="https://img.shields.io/badge/Spotify-Connect-1ed760?style=for-the-badge">
+  <img alt="MGU Store Ready" src="https://img.shields.io/badge/MGU%20Store-Compatible-8957e5?style=for-the-badge">
 </p>
 
 ---
 
-## Overview
+## Included Apps
 
-This app runs directly on BMW's **Media Graphic Unit (MGU / Head Unit High 3)** running iDrive 7. 
-
-Designed specifically for automotive cockpits:
-* **Cockpit Ergonomics**: Seamlessly blends BMW G20 / G15 Live Cockpit dark styling with Spotify green accents.
-* **Controller & Touch**: Fully navigable using both the physical **iDrive rotary controller (FrontCCU)** and the central touchscreen.
-* **True 60 FPS GPU Rendering**: Drawn directly on the compositor layer via `mgu-render` using OpenGL ES 2 vector commands.
-* **Seamless Audio**: Your phone streams audio through your car's stereo (Bluetooth or CarPlay), while this app gives you full library browsing and playlist switching on the main screen.
+| App | ID | Description |
+| :--- | :--- | :--- |
+| **Spotify** | `spotify` | Native Spotify Connect controller, library and playlist browser with 60 fps equalizer indicators and QR code phone pairing. |
+| *(More coming soon)* | | Easily add your own apps under `apps/<id>/`. |
 
 ---
 
 ## How to Install via MGU Store
 
-If you have [MGU Store](https://github.com/robertnisipeanu/mgu-store) installed on your head unit:
+To add this repository as a source in [MGU Store](https://github.com/robertnisipeanu/mgu-store):
 
-1. On the central display, open **Store > Sources > Add source**.
-2. Type this repository's GitHub path:
+1. On your iDrive central display, open **Store > Sources > Add source**.
+2. Enter this repository:
    ```text
-   <your-github-username>/idrive7-spotify
+   <your-github-username>/idrive7-custom-apps
    ```
-3. Tap **OK**. The Store reads `mgu-repo.json` and lists **Spotify**.
-4. Tap **Install**. The tile appears under **CAR > Installed Apps > Spotify**!
+3. Tap **OK**. The Store reads `mgu-repo.json` and lists all apps in this suite.
+4. Tap any app to install!
 
 ---
 
-## Features
+## How to Add New Apps to this Repo
 
-* **Playlists View**: Split-pane view of all your playlists with song counts, descriptions, and M-color accents.
-* **Live In-List Playing Indicator**: The track currently streaming to your car lights up with a glowing green border and an **animated 4-bar equalizer** bouncing at 60 fps.
-* **Your Library**: Quick one-tap cards for Liked Songs (Favorites), Heavy Rotation, Saved Albums, and Following Artists.
-* **Queue**: Real-time view of upcoming tracks.
-* **Easy Phone Pairing**: On-screen QR code lets any driver or passenger scan with their phone camera and connect in seconds.
-* **Device Switcher**: Switch playback between your phone, car, or other Spotify Connect devices with one tap.
+Any folder added under `apps/` is automatically discovered by MGU Store:
+
+```
+apps/
+├── spotify/
+│   ├── app.json      # Manifest (ID, title, screens, settings)
+│   ├── main.js       # App entry point (drawn at 60 fps via kit/mgu)
+│   └── icon.png      # 140x140 transparent tile icon
+└── my_new_app/
+    ├── app.json
+    ├── main.js
+    └── icon.png
+```
 
 ---
 
 ## Local Development & Live Emulator
 
-You can test and run the app right on your computer without a car or VM:
+Test and run any app on your computer without a car:
 
 ```bash
-# 1. Build the package
+# Build an app (e.g. spotify)
 python3 kit/tools/build.py spotify
 
-# 2. Start the live 60 fps emulator
+# Launch the live emulator at http://localhost:8077
 node kit/tools/emu.js spotify
 ```
-
-Then open **`http://localhost:8077`** in your browser.
 
 * **Mouse click / drag**: Touchscreen input.
 * **Mouse wheel / `[` `]`**: Turn iDrive rotary controller knob.
 * **`Enter`**: Press iDrive controller knob.
 * **Arrow keys**: Push controller up / down / left / right.
 
-### Connecting Real Spotify in Emulator
-
-To connect your live Spotify account to the emulator:
-```bash
-# Authenticate via browser
-node apps/spotify/auth.js --client-id <CLIENT_ID> --client-secret <CLIENT_SECRET>
-
-# Or with a temporary token
-node apps/spotify/auth.js --token "BQC..."
-```
-
 ---
 
 ## Manual Installation via ENET Cable
 
-To deploy directly to your vehicle over an OBD-ENET cable:
+To flash all apps directly to your car via an OBD-ENET cable:
 
 ```bash
 # 1. Build and pack the car installer kit
-python3 kit/tools/build.py spotify
+python3 kit/tools/build.py
 deploy/make-car-kit.sh
 
-# 2. Push over SSH (replace with your unit IP and enrolled key)
+# 2. Push over SSH
 HU=root@169.254.34.2 PORT=22 KEY=~/.ssh/id_mgu deploy/push-to-car.sh install
 ```
 
@@ -100,4 +91,4 @@ HU=root@169.254.34.2 PORT=22 KEY=~/.ssh/id_mgu deploy/push-to-car.sh install
 ## License
 
 This project is released under the GNU General Public License v3.0 or later.
-Not affiliated with or endorsed by BMW AG or Spotify AB.
+Not affiliated with or endorsed by BMW AG.

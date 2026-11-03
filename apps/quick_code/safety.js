@@ -181,7 +181,7 @@ class VehicleSafety {
             return {
                 allowed: false,
                 status: 'IN_MOTION',
-                badgeText: `IN MOTION ${this.vehicleState.speed} KM/H (LOCKED)`,
+                badgeText: 'IN MOTION (LOCKED)',
                 badgeColor: '#e1001a',
                 title: 'VEHICLE IN MOTION - CODING LOCKED',
                 message: `Vehicle is moving at ${this.vehicleState.speed} km/h. Coding while driving is strictly locked for safety.`,
@@ -196,7 +196,7 @@ class VehicleSafety {
             return {
                 allowed: false,
                 status: 'ENGINE_RUNNING',
-                badgeText: `ENGINE RUNNING ${this.vehicleState.rpm} RPM (LOCKED)`,
+                badgeText: 'ENGINE RUNNING (LOCKED)',
                 badgeColor: '#e1001a',
                 title: 'ENGINE RUNNING - CODING LOCKED',
                 message: `Engine is running at ${this.vehicleState.rpm} RPM. Writing ECU parameters with the engine running risks sudden ECU reboot, alternator voltage spikes, or engine stalling!`,
@@ -213,7 +213,7 @@ class VehicleSafety {
             return {
                 allowed: false,
                 status: 'NOT_DIAG_MODE',
-                badgeText: 'DIAG MODE REQ (PRESS START 3X)',
+                badgeText: 'DIAG MODE REQ',
                 badgeColor: '#ffb703',
                 title: 'DIAGNOSTIC MODE REQUIRED',
                 message: 'Like BimmerCode and ISTA, all BMW G-Series coding requires Terminal 15 Diagnostic Mode before accepting changes.',
@@ -241,7 +241,7 @@ class VehicleSafety {
         return {
             allowed: true,
             status: 'READY',
-            badgeText: 'DIAG MODE ACTIVE (SAFE TO CODE)',
+            badgeText: 'DIAG MODE: READY',
             badgeColor: '#2af575',
             title: 'DIAGNOSTIC MODE READY',
             message: 'Vehicle is in Diagnostic Mode with engine stopped. Safe for parameter coding.',

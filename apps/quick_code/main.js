@@ -422,6 +422,64 @@ mgu.run({
             });
         }
 
+        /* ---------- Bottom Diagnostic & Vehicle State Dock ---------- */
+        function drawDiagnosticDock(cv, t, safeStatus) {
+            const dockX = 40, dockY = 472, dockW = 1520, dockH = 38;
+            const isDiag = safety.vehicleState.diagnosticMode;
+            const rpm = safety.vehicleState.rpm;
+            const speed = safety.vehicleState.speed;
+            const stateColor = safeStatus.badgeColor;
+
+            // Dock background container
+            cv.roundRect(dockX, dockY, dockW, dockH, 8, '#080d14');
+            cv.strokeRoundRect(dockX, dockY, dockW, dockH, 8, 1, withAlpha(stateColor, 0.45));
+
+            // Status indicator dot
+            cv.circle(dockX + 22, dockY + dockH / 2, 6, stateColor);
+            cv.circle(dockX + 22, dockY + dockH / 2, 11, withAlpha(stateColor, 0.22));
+
+            // State label & detailed advice
+            let mainLabel = '';
+            let subLabel = '';
+            if (speed > 0) {
+                mainLabel = `VEHICLE IN MOTION (${speed} KM/H)`;
+                subLabel = 'Coding locked while driving. Park vehicle to enable.';
+            } else if (rpm > 0) {
+                mainLabel = `ENGINE RUNNING (${rpm} RPM)`;
+                subLabel = 'Coding locked. Turn off engine and press Start/Stop 3 times for Diagnostic Mode.';
+            } else if (!isDiag) {
+                mainLabel = 'DIAGNOSTIC MODE REQUIRED';
+                subLabel = 'Turn engine OFF -> Press Start/Stop 3 times rapidly (foot off brake) until cluster confirms.';
+            } else {
+                mainLabel = 'DIAGNOSTIC MODE ACTIVE';
+                subLabel = 'Terminal 15 engaged (0 RPM). All ECUs unlocked and safe for 1-tap coding.';
+            }
+
+            cv.text(mainLabel, dockX + 42, dockY + 24, 15, stateColor, { font: 'bold', spacing: 1 });
+            const mainW = cv.textWidth(mainLabel, 15, { font: 'bold', spacing: 1 });
+            cv.text(' |  ' + subLabel, dockX + 46 + mainW, dockY + 24, 14, t.dim);
+
+            // Right-side Simulation / Guide Action Button
+            const btnW = 210, btnH = 26;
+            const btnX = dockX + dockW - btnW - 6, btnY = dockY + 6;
+            cv.roundRect(btnX, btnY, btnW, btnH, 6, isDiag ? '#0e241b' : '#261214');
+            cv.strokeRoundRect(btnX, btnY, btnW, btnH, 6, 1, stateColor);
+
+            const btnText = isDiag ? 'TEST: LOCK (ENGINE ON)' : 'TEST: ENTER DIAG MODE';
+            cv.text(btnText, btnX + btnW / 2, btnY + 18, 12, stateColor, { align: 'center', font: 'bold', spacing: 0.8 });
+
+            cv.target(btnX, btnY, btnW, btnH, () => {
+                safety.toggleSimulatedDiagMode();
+                if (safety.vehicleState.diagnosticMode) {
+                    activeSafetyAlert = null;
+                    notify('[OK] Diagnostic Mode simulated (Coding unlocked)');
+                } else {
+                    activeSafetyAlert = safety.checkCodingSafety();
+                    notify('[!] Diagnostic Mode exited (Coding locked)');
+                }
+            }, 'btn_dock_toggle_diag', 15);
+        }
+
         /* ---------- Master Render Loop ---------- */
         async function render() {
             const t = ctx.theme();
@@ -443,37 +501,24 @@ mgu.run({
             else if (curPageId === 'sounds') drawSounds(cv, t);
             else if (curPageId === 'display') drawDisplaySafety(cv, t);
 
-            // Toast feedback message
-            if (statusMsg && now - statusTime < 3500) {
-                const alpha = Math.min(1, (3500 - (now - statusTime)) / 500);
-                cv.roundRect(W / 2 - 280, H - 76, 560, 48, 10, withAlpha('#000000', 0.85 * alpha));
-                cv.strokeRoundRect(W / 2 - 280, H - 76, 560, 48, 10, 1.5, withAlpha('#1db954', alpha));
-                cv.text(statusMsg, W / 2, H - 46, 20, withAlpha('#ffffff', alpha), { align: 'center', font: 'bold', spacing: 1 });
-            }
-
-            // G-Series Live Cockpit frame tabs along the top
+            // G-Series Live Cockpit frame tabs along the top (clean, uncrowded)
             const pageNames = activePages.map(p => p.name);
             const safeStatus = safety.checkCodingSafety();
             G.frame(cv, t, pageNames, page, [
-                { text: 'QUICKCODE' },
-                { text: safety.detectedChassis },
-                { text: safeStatus.badgeText }
+                { text: 'G-SERIES' },
+                { text: safeStatus.badgeText, color: safeStatus.badgeColor }
             ]);
 
-            // Top Diagnostic Mode Simulation Quick-Pill (Clickable for Bench / Demo testing)
-            cv.roundRect(W - 270, 14, 250, 30, 6, withAlpha('#000000', 0.6));
-            cv.strokeRoundRect(W - 270, 14, 250, 30, 6, 1, safeStatus.badgeColor);
-            cv.text(safety.vehicleState.diagnosticMode ? '[OK] DIAG MODE: ON' : '[!] DIAG MODE: OFF', W - 145, 33, 13, safeStatus.badgeColor, { align: 'center', font: 'bold' });
-            cv.target(W - 270, 14, 250, 30, () => {
-                safety.toggleSimulatedDiagMode();
-                if (safety.vehicleState.diagnosticMode) {
-                    activeSafetyAlert = null;
-                    notify('[OK] Diagnostic Mode simulated (Coding unlocked)');
-                } else {
-                    activeSafetyAlert = safety.checkCodingSafety();
-                    notify('[!] Diagnostic Mode exited (Coding locked)');
-                }
-            }, 'btn_top_sim_diag', 20);
+            // Dedicated Vehicle State & Diagnostic Dock along bottom
+            drawDiagnosticDock(cv, t, safeStatus);
+
+            // Toast feedback message (floating cleanly above the dock)
+            if (statusMsg && now - statusTime < 3500) {
+                const alpha = Math.min(1, (3500 - (now - statusTime)) / 500);
+                cv.roundRect(W / 2 - 280, 415, 560, 44, 10, withAlpha('#000000', 0.9 * alpha));
+                cv.strokeRoundRect(W / 2 - 280, 415, 560, 44, 10, 1.5, withAlpha('#1db954', alpha));
+                cv.text(statusMsg, W / 2, 443, 18, withAlpha('#ffffff', alpha), { align: 'center', font: 'bold', spacing: 1 });
+            }
 
             // If safety alert modal is active, render on top of everything!
             if (activeSafetyAlert) {

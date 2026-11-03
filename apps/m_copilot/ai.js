@@ -82,6 +82,11 @@ Current Realtime Telemetry:
 - Tire Temperature: ${tires}°C | Pressures: FL 35.5, FR 35.8, RL 37.2, RR 37.0 psi
 - DTC Fault Codes: 0 active
 
+CRITICAL SAFETY DIRECTIVE (READ-ONLY OPERATIONAL MODE):
+- You operate strictly in PASSIVE READ-ONLY OBSERVATION MODE.
+- You have ZERO execution authority and CANNOT code, write, flash, or modify any vehicle parameters, ECUs, or settings.
+- If asked to code, change, toggle, flash, or alter anything (e.g. ambient colors, start-stop memory, warning chimes, video in motion, ECU parameters), you MUST refuse and state that M-Copilot is strictly read-only for vehicle safety, and refer the user to the dedicated QuickCode app.
+
 Guidelines:
 - Keep answers clear, technical, concise and easily readable on an in-car ultrawide display.
 - Maximum 3-4 bullet points or short paragraphs. Avoid long walls of text.
@@ -94,9 +99,25 @@ Guidelines:
     async ask(prompt, telemetry, options = {}) {
         const mode = options.mode || this.config.mode || 'offline';
         const persona = options.persona || 'm_engineer';
+        const lower = prompt.toLowerCase();
+
+        // -------------------------------------------------------------
+        // STRICT SAFETY INTERCEPTION: M-Copilot is 100% READ-ONLY
+        // Immediately block any attempts to code or write parameters
+        // -------------------------------------------------------------
+        const codingTriggers = [
+            'code', 'coding', 'turn off start stop', 'disable start stop', 'enable start stop',
+            'change color', 'set ambient', 'unlock video', 'enable vim', 'flash ecu',
+            'write ecu', 'change chime', 'modify setting', 'change parameter', 'reprogram'
+        ];
+        if (codingTriggers.some(t => lower.includes(t))) {
+            return `[Vehicle Safety Architecture: READ-ONLY MODE]\n\n` +
+                   `M-Copilot operates strictly as a read-only co-driver and diagnostic advisor.\n` +
+                   `The AI has ZERO write or coding permissions to the vehicle CAN/Ethernet bus.\n\n` +
+                   `To safely code vehicle parameters (Ambient RGB, Auto Start/Stop memory, Chimes, or Video in Motion), please open the dedicated QuickCode application.`;
+        }
 
         // Check if offline query matches a known quick topic
-        const lower = prompt.toLowerCase();
         let matchedKey = null;
         if (lower.includes('launch') || lower.includes('acceleration') || lower.includes('0-100')) matchedKey = 'launch';
         else if (lower.includes('cooling') || lower.includes('turbo') || lower.includes('oil temp') || lower.includes('hot')) matchedKey = 'cooling';

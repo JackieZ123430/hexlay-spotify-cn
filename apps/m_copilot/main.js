@@ -201,17 +201,18 @@ mgu.run({
             else if (tier === 'custom_api') { tierLabel = 'CUSTOM API KEY'; tierCol = '#ffb703'; }
             else if (tier === 'offline_expert') { tierLabel = 'OFFLINE ECU EXPERT'; tierCol = '#a0aec0'; }
 
-            cv.roundRect(80, 290, 300, 32, 8, withAlpha(tierCol, 0.15));
-            cv.strokeRoundRect(80, 290, 300, 32, 8, 1, tierCol);
-            cv.text(tierLabel, 230, 312, 16, tierCol, { align: 'center', font: 'bold' });
+            cv.roundRect(80, 280, 300, 30, 8, withAlpha(tierCol, 0.15));
+            cv.strokeRoundRect(80, 280, 300, 30, 8, 1, tierCol);
+            cv.text(tierLabel, 230, 300, 15, tierCol, { align: 'center', font: 'bold' });
 
-            // Telemetry quick pill
-            cv.text(`${telemetry.oilTemp}°C OIL | ${telemetry.boost} BAR | ${telemetry.driveMode}`, 230, 348, 17, t.dim, { align: 'center', font: 'num' });
+            // Read-Only Safety confirmation badge & Telemetry quick pill
+            cv.text('READ-ONLY MONITOR (PASSIVE)', 230, 335, 14, '#2af575', { align: 'center', font: 'bold' });
+            cv.text(`${telemetry.oilTemp}°C OIL | ${telemetry.boost} BAR | ${telemetry.driveMode}`, 230, 358, 15, t.dim, { align: 'center', font: 'num' });
 
             // Ask button
-            const askW = 300, askH = 48, askX = 80, askY = 384;
+            const askW = 300, askH = 46, askX = 80, askY = 384;
             cv.roundRect(askX, askY, askW, askH, 10, isThinking ? '#2c3e50' : '#00a3e0');
-            cv.text(isThinking ? 'THINKING...' : 'ASK M-COPILOT', askX + askW / 2, askY + 31, 19, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+            cv.text(isThinking ? 'THINKING...' : 'ASK M-COPILOT', askX + askW / 2, askY + 29, 18, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
             cv.target(askX, askY, askW, askH, () => {
                 askCopilot(PROMPTS[0].query, PROMPTS[0].title);
             }, 'btn_ask', 10);
@@ -339,7 +340,7 @@ mgu.run({
             // G-Series Live Cockpit frame tabs along the top
             G.frame(cv, t, PAGES, page, [
                 { text: 'M-COPILOT AI' },
-                { text: 'BMW G-SERIES' },
+                { text: 'READ-ONLY SAFE' },
                 { text: telemetry.driveMode }
             ]);
 

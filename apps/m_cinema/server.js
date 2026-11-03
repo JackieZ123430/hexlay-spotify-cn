@@ -74,12 +74,16 @@ class CastServer {
                             title = ytId ? `YouTube [${ytId}]` : (data.url ? 'Web Stream' : 'Phone Cast Video');
                         }
 
+                        // Hardware thermal protection: Intel Atom A3960 CPU/GPU safe capping
+                        // Strictly clamp to 720p or 1080p (never 2K or 4K to prevent head unit overheating)
+                        const streamQuality = (data.quality === '1080p') ? '1080p 60' : '720p 60';
+
                         if (this.cb.onCast) {
                             this.cb.onCast({
                                 title: title,
                                 channel: data.channel || (ytId ? 'YouTube Stream' : 'Phone Mirror'),
                                 duration: data.duration || 'Live Stream',
-                                quality: '1080p 60',
+                                quality: streamQuality,
                                 glow: ytId ? '#ff0000' : '#00a3e0',
                                 views: 'Personal Cast',
                                 desc: data.url || `Video ID: ${ytId || 'Local Media'}`,
@@ -197,6 +201,15 @@ class CastServer {
       <input type="text" id="ytUrl" placeholder="Paste YouTube / Web Video link">
     </div>
 
+    <!-- Thermal Protection Quality Selector -->
+    <div style="margin-bottom: 16px;">
+      <label>STREAM QUALITY (INTEL ATOM SAFE CAP)</label>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+        <button type="button" id="q720" class="btn-ctrl" style="background: #18283d; border-color: #00a3e0; color: #00a3e0;" onclick="setQuality('720p')">✓ 720p (Cool & Safe)</button>
+        <button type="button" id="q1080" class="btn-ctrl" onclick="setQuality('1080p')">1080p (Max Limit)</button>
+      </div>
+    </div>
+
     <button class="btn-secondary" onclick="castManual()">▶ CAST TO BMW DISPLAY</button>
     <div id="status" class="status-box"></div>
 
@@ -249,17 +262,43 @@ class CastServer {
         const res = await fetch('/api/cast', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: url })
+          body: JSON.stringify({ url: url, quality: currentQuality })
         });
         const data = await res.json();
         if (data.ok) {
-          showStatus('✓ Playing on BMW 21:9 Ultrawide!', 'status-success');
+          showStatus('✓ Playing on BMW 21:9 Ultrawide (' + currentQuality + ')!', 'status-success');
           saveHistory(url, data.title);
         } else {
           showStatus('Error: ' + (data.error || 'Failed to cast'), 'status-err');
         }
       } catch (e) {
         showStatus('Connection error: ' + e.message, 'status-err');
+      }
+    }
+
+    let currentQuality = '720p';
+    function setQuality(q) {
+      currentQuality = q;
+      const b720 = document.getElementById('q720');
+      const b1080 = document.getElementById('q1080');
+      if (q === '720p') {
+        b720.style.background = '#18283d';
+        b720.style.borderColor = '#00a3e0';
+        b720.style.color = '#00a3e0';
+        b720.textContent = '✓ 720p (Cool & Safe)';
+        b1080.style.background = '#0d1522';
+        b1080.style.borderColor = '#1e293b';
+        b1080.style.color = '#cbd5e1';
+        b1080.textContent = '1080p (Max Limit)';
+      } else {
+        b1080.style.background = '#18283d';
+        b1080.style.borderColor = '#00a3e0';
+        b1080.style.color = '#00a3e0';
+        b1080.textContent = '✓ 1080p (Max Limit)';
+        b720.style.background = '#0d1522';
+        b720.style.borderColor = '#1e293b';
+        b720.style.color = '#cbd5e1';
+        b720.textContent = '720p (Cool & Safe)';
       }
     }
 

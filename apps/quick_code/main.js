@@ -151,10 +151,10 @@ mgu.run({
             cv.text('WRITE COLOR TO BDC (0x40)', btnX + btnW / 2, btnY + 34, 20, '#000000', { align: 'center', font: 'bold', spacing: 1.5 });
             cv.target(btnX, btnY, btnW, btnH, () => {
                 if (!safety.supports('ambient_rgb')) {
-                    notify('⚠ BDC (0x40) module missing or locked');
+                    notify('[!] BDC (0x40) module missing or locked');
                     return;
                 }
-                notify('✓ BDC Updated: Ambient RGB set to ' + selectedColor.name);
+                notify('BDC Updated: Ambient RGB set to ' + selectedColor.name);
             }, 'btn_apply_amb', 12);
         }
 
@@ -244,7 +244,7 @@ mgu.run({
 
                 cv.target(64, sy, 1472, 68, () => {
                     if (!safety.supports('sound_chimes')) {
-                        notify('⚠ KOMBI (0x60) or MGU missing');
+                        notify('[!] KOMBI (0x60) or MGU missing');
                         return;
                     }
                     currentSoundTheme = theme;

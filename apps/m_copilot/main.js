@@ -236,8 +236,8 @@ mgu.run({
                 let col = '#e2e8f0';
                 let isBold = false;
 
-                if (line.startsWith('✓') || line.includes('Optimal') || line.includes('Passed')) col = '#2af575';
-                else if (line.startsWith('⚠') || line.includes('Cold') || line.includes('Warning')) col = '#ffb703';
+                if (line.startsWith('[OK]') || line.startsWith('✓') || line.includes('Optimal') || line.includes('Passed')) col = '#2af575';
+                else if (line.startsWith('[!]') || line.startsWith('⚠') || line.includes('Cold') || line.includes('Warning') || line.includes('Fault')) col = '#ffb703';
                 else if (line.startsWith('[') && line.endsWith(']')) { col = '#00a3e0'; isBold = true; }
                 else if (line.startsWith('1.') || line.startsWith('2.') || line.startsWith('3.')) col = '#ffffff';
 

@@ -15,15 +15,15 @@ const KNOWLEDGE_BASE = {
 
             let diagnosis = '';
             if (oil < 70) {
-                diagnosis += `⚠ Oil temp is ${oil}°C (Below 70°C minimum for full DME boost & transmission clutch protection).\n`;
+                diagnosis += `[!] Oil temp is ${oil}°C (Below 70°C minimum for full DME boost & transmission clutch protection).\n`;
             } else {
-                diagnosis += `✓ Engine Oil Temp: ${oil}°C (Optimal thermal window).\n`;
+                diagnosis += `[OK] Engine Oil Temp: ${oil}°C (Optimal thermal window).\n`;
             }
 
             if (tires < 25) {
-                diagnosis += `⚠ Tire Temp: ${tires}°C (Cold compound). Grip reduced. Expect traction intervention.\n`;
+                diagnosis += `[!] Tire Temp: ${tires}°C (Cold compound). Grip reduced. Expect traction intervention.\n`;
             } else {
-                diagnosis += `✓ Tire Temp: ${tires}°C (Operating grip window).\n`;
+                diagnosis += `[OK] Tire Temp: ${tires}°C (Operating grip window).\n`;
             }
 
             diagnosis += `\n[BMW G-Series Launch Sequence]:\n` +
@@ -45,9 +45,9 @@ const KNOWLEDGE_BASE = {
             let advice = `BMW TwinPower Turbo Powertrain Thermal Management:\n\n`;
             advice += `Current Engine Vitals:\n- Engine Oil Temp: ${oil}°C (Norm: 90-110°C)\n- Coolant Temp: ${coolant}°C (Norm: 85-100°C)\n\n`;
             if (oil > 110) {
-                advice += `⚠ High Thermal Load: Run a 2-minute cool-down drive at low RPM (<2000 RPM) before shutdown to avoid heat soak.\nDo NOT turn engine off immediately after hard highway pulls; let the electric auxiliary coolant pump circulate fluid.`;
+                advice += `[!] High Thermal Load: Run a 2-minute cool-down drive at low RPM (<2000 RPM) before shutdown to avoid heat soak.\nDo NOT turn engine off immediately after hard highway pulls; let the electric auxiliary coolant pump circulate fluid.`;
             } else {
-                advice += `✓ Thermal Status: Normal operating temperature.\nBMW G-series electric coolant pumps will automatically circulate post-shutdown if thermal dissipation is required.`;
+                advice += `[OK] Thermal Status: Normal operating temperature.\nBMW G-series electric coolant pumps will automatically circulate post-shutdown if thermal dissipation is required.`;
             }
             return { ready: true, text: advice };
         }
@@ -87,10 +87,10 @@ const KNOWLEDGE_BASE = {
             if (dtcCount === 0) {
                 return {
                     ready: true,
-                    text: `✓ ECU Health Check: All Systems Normal\n\nScanned Control Units:\n- DME / DDE (Engine Electronics): 0 Faults\n- EGS (ZF 8HP Transmission): 0 Faults\n- DSC (Dynamic Stability Control): 0 Faults\n- BDC (Body Domain Controller): 0 Faults\n- HU_MGU (Head Unit Infotainment): 0 Faults\n\nNo active or shadow trouble codes logged. Sensor channels reporting optimal values.`
+                    text: `[OK] ECU Health Check: All Systems Normal\n\nScanned Control Units:\n- DME / DDE (Engine Electronics): 0 Faults\n- EGS (ZF 8HP Transmission): 0 Faults\n- DSC (Dynamic Stability Control): 0 Faults\n- BDC (Body Domain Controller): 0 Faults\n- HU_MGU (Head Unit Infotainment): 0 Faults\n\nNo active or shadow trouble codes logged. Sensor channels reporting optimal values.`
                 };
             }
-            let text = `⚠ ${dtcCount} DTC Fault(s) Detected:\n`;
+            let text = `[!] ${dtcCount} DTC Fault(s) Detected:\n`;
             telemetry.dtcs.forEach(d => {
                 text += `- [${d.code}] ${d.desc}\n  Impact: ${d.impact}\n`;
             });

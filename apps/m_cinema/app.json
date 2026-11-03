@@ -21,12 +21,17 @@
       "buttons": [
         ["BTN_PLAY", "Play / Pause"],
         ["BTN_MODE", "Aspect Mode"],
-        ["BTN_PAGE", "Next Category"],
+        ["BTN_PAGE", "Cast QR / Player"],
         ["BTN_SETTINGS", "Settings"]
       ]
     }
   ],
   "settings": [
+    {"key": "quality", "label": "Max Stream Quality (Thermal Safe)", "type": "choice", "default": "720p",
+     "options": [
+       ["720p", "720p HD (Cool & Efficient - Recommended)"],
+       ["1080p", "1080p Full HD (Max Hardware Safe Limit)"]
+     ]},
     {"key": "aspect", "label": "Display aspect ratio", "type": "choice", "default": "21_9",
      "options": [
        ["21_9", "Cinema 21:9 (Ultrawide Fill)"],

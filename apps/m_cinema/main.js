@@ -33,7 +33,7 @@ mgu.run({
             title: 'Ready for Cast Stream',
             channel: 'M-Cinema Receiver',
             duration: '00:00',
-            quality: '1080p 60',
+            quality: (settings.quality === '1080p') ? '1080p 60' : '720p 60',
             glow: '#00a3e0',
             views: 'Waiting for Phone',
             desc: 'Scan QR code in Cast & Connect tab with your phone to stream any YouTube link.',
@@ -60,11 +60,15 @@ mgu.run({
         // Initialize Cast Server for smartphone streaming
         const castServer = new CastServer({
             onCast(video) {
+                // Thermal safety: restrict to settings.quality (720p or 1080p max, never 4K)
+                if (settings.quality === '720p') {
+                    video.quality = '720p 60';
+                }
                 activeCastVideo = video;
                 page = 0; // jump directly to Theater Player
                 isPlaying = true;
                 playProgress = 0;
-                notify('Streaming: ' + video.title);
+                notify('Streaming (' + video.quality + '): ' + video.title);
                 render().catch(() => {});
             },
             onControl(action, val) {
@@ -201,9 +205,10 @@ mgu.run({
             cv.line(cx, cy, cx, y + h - 15, 3, '#ffffff');
 
             // Video Stream Status Pill
-            cv.roundRect(x + 30, y + 25, 240, 36, 6, withAlpha('#000000', 0.7));
-            cv.text('YOUTUBE ULTRA-WIDE STREAM', x + 44, y + 48, 14, glowCol, { font: 'bold', spacing: 1 });
-            cv.text('1080P 60FPS | 21:9 CINEMA', x + 44, y + 74, 15, '#ffffff', { font: 'num' });
+            cv.roundRect(x + 30, y + 25, 270, 48, 8, withAlpha('#000000', 0.75));
+            cv.strokeRoundRect(x + 30, y + 25, 270, 48, 8, 1, withAlpha(glowCol, 0.4));
+            cv.text('YOUTUBE ULTRA-WIDE STREAM', x + 44, y + 45, 13, glowCol, { font: 'bold', spacing: 1 });
+            cv.text((video.quality || '720P 60').toUpperCase() + ' | 21:9 CINEMA', x + 44, y + 64, 14, '#ffffff', { font: 'num' });
 
             // Center Play Triangle (if paused)
             if (!isPlaying) {
@@ -258,18 +263,18 @@ mgu.run({
             // Right Panel: Safety & Video in Motion Status
             G.panel(cv, t, 820, 52, 740, 410, 'Cast Remote & Motion Safety');
 
-            // Server active pill
+            // Server active pill with thermal hardware protection status
             cv.roundRect(844, 114, 692, 90, 10, '#090e16');
             cv.strokeRoundRect(844, 114, 692, 90, 10, 1, '#00a3e0');
-            cv.text('CAST RECEIVER ACTIVE (:8090)', 870, 145, 18, '#00a3e0', { font: 'bold' });
-            cv.text('Accepts any YouTube link, youtu.be, HLS streams, or MP4', 870, 172, 15, '#94a3b8');
+            cv.text('CAST RECEIVER ACTIVE (:8090) | THERMAL SAFE (' + (settings.quality === '1080p' ? '1080P MAX' : '720P COOL') + ')', 870, 145, 17, '#00a3e0', { font: 'bold' });
+            cv.text('Intel Atom A3960 hardware protection: 4K/2K streams downsampled to prevent overheating', 870, 172, 14, '#94a3b8');
 
             const isParked = vehicleSpeed === 0;
             cv.roundRect(844, 218, 692, 90, 10, '#090e16');
             cv.strokeRoundRect(844, 218, 692, 90, 10, 1, isParked ? '#2af575' : '#ffb703');
 
             cv.text('VEHICLE STATUS: ' + (isParked ? 'PARKED (0 KM/H)' : 'IN MOTION (' + vehicleSpeed + ' KM/H)'), 870, 248, 18, isParked ? '#2af575' : '#ffb703', { font: 'bold' });
-            cv.text(isParked ? '✓ Safe for full cockpit video and audio playback' : 'WARNING: Motion lockout active without Video in Motion coding', 870, 275, 15, '#cbd5e1');
+            cv.text(isParked ? '[OK] Safe for full cockpit video and audio playback' : '[!] Motion lockout active without Video in Motion coding', 870, 275, 15, isParked ? '#cbd5e1' : '#ffb703');
 
             // QuickCode VIM Integration banner
             cv.roundRect(844, 322, 692, 110, 10, '#0c1626');

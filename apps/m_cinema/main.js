@@ -13,6 +13,8 @@ const mgu = require('./kit/mgu');
 const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
 const { CATEGORIES } = require('./channels');
+const { CastServer } = require('./server');
+const qrcodegen = require('./qrcodegen');
 
 const W = 1600, H = 520;
 const PAGES = ['Now Playing', 'Channels & Feeds', 'Cast & Stream'];
@@ -30,6 +32,7 @@ mgu.run({
         let vehicleSpeed = 0;
         let statusMsg = null;
         let statusTime = 0;
+        let activeCastVideo = null;
 
         // Try reading vehicle speed
         try {
@@ -43,6 +46,7 @@ mgu.run({
         }
 
         function currentVideo() {
+            if (activeCastVideo) return activeCastVideo;
             const cat = CATEGORIES[catIdx] || CATEGORIES[0];
             return cat.items[itemIdx] || cat.items[0];
         }
@@ -51,6 +55,38 @@ mgu.run({
             statusMsg = msg;
             statusTime = Date.now();
             log.info('M-Cinema: ' + msg);
+        }
+
+        // Initialize Cast Server for smartphone YouTube streaming
+        const castServer = new CastServer({
+            onCast(video) {
+                activeCastVideo = video;
+                page = 0; // jump to Now Playing player
+                isPlaying = true;
+                playProgress = 0;
+                notify('Casting: ' + video.title);
+                render().catch(() => {});
+            },
+            onControl(action, val) {
+                if (action === 'toggle') isPlaying = !isPlaying;
+                else if (action === 'fullscreen') isFullscreen = !isFullscreen;
+                else if (action === 'seek') playProgress = Math.max(0, Math.min(1, playProgress + (val || 0) * 0.02));
+                render().catch(() => {});
+            }
+        }, log);
+        castServer.start();
+
+        /* ---------- QR Code for Smartphone Cast Remote ---------- */
+        let cachedQr = null;
+        function getCastQr() {
+            if (cachedQr) return cachedQr;
+            try {
+                const url = castServer.getCastUrl();
+                cachedQr = qrcodegen.QrCode.encodeText(url, qrcodegen.QrCode.Ecc.MEDIUM);
+                return cachedQr;
+            } catch (e) {
+                return null;
+            }
         }
 
         /* ---------- Page 0: Now Playing Cinema Player ---------- */
@@ -251,47 +287,63 @@ mgu.run({
 
         /* ---------- Page 2: Cast & Direct Stream ---------- */
         function drawCast(cv, t) {
-            G.panel(cv, t, 40, 52, 740, 410, 'Direct Stream / Phone Cast');
+            // Left Panel: Smartphone QR Code
+            G.panel(cv, t, 40, 52, 740, 410, 'Scan Phone to Cast YouTube');
 
-            const cx = 64, cy = 114;
-            cv.text('STREAM SOURCES & PROTOCOLS', cx, cy + 20, 18, '#ffffff', { font: 'bold' });
-            cv.text('M-Cinema accepts live HLS (.m3u8), MP4 and RTSP streams', cx, cy + 48, 16, t.dim);
+            const qr = getCastQr();
+            if (qr) {
+                const qrx = 70, qry = 120, qrsz = 210;
+                const modCount = qr.size;
+                const modPx = Math.floor(qrsz / modCount);
+                const actualSz = modPx * modCount;
+                const ox = qrx + Math.floor((qrsz - actualSz) / 2);
+                const oy = qry + Math.floor((qrsz - actualSz) / 2);
 
-            const sources = [
-                { title: 'YouTube & Browser Mirroring', desc: 'Stream video from smartphone via phone hotspot / Wi-Fi', status: 'READY' },
-                { title: 'Local Media USB / DLNA', desc: 'Play 1080p high-bitrate video files stored on MGU USB drive', status: 'MOUNTED' },
-                { title: 'Plex & Jellyfin Direct Feed', desc: 'Connect to your home media server while charging or parked', status: 'ONLINE' }
-            ];
+                cv.roundRect(ox - 14, oy - 14, actualSz + 28, actualSz + 28, 12, '#ffffff');
+                for (let r = 0; r < modCount; r++) {
+                    for (let c = 0; c < modCount; c++) {
+                        if (qr.getModule(c, r)) {
+                            cv.fillRect(ox + c * modPx, oy + r * modPx, modPx, modPx, '#000000');
+                        }
+                    }
+                }
 
-            sources.forEach((s, idx) => {
-                const sy = cy + 80 + idx * 85;
-                cv.roundRect(cx, sy, 690, 72, 10, '#0a1019');
-                cv.strokeRoundRect(cx, sy, 690, 72, 10, 1, t.panelEdge);
+                // Steps instructions
+                const sx = 320, sy = 120;
+                cv.text('SCAN PHONE TO CAST', sx, sy + 18, 19, '#ffffff', { font: 'bold' });
+                cv.text('1. Connect phone to car Wi-Fi hotspot', sx, sy + 48, 15, '#cbd5e1');
+                cv.text('2. In YouTube app, tap Share -> Copy Link', sx, sy + 74, 15, '#cbd5e1');
+                cv.text('3. Paste in Remote & tap "Cast to BMW"', sx, sy + 100, 15, '#2af575', { font: 'bold' });
+                cv.text('4. Full 21:9 Ultrawide streaming begins!', sx, sy + 126, 15, '#00a3e0');
 
-                cv.text(s.title, cx + 20, sy + 28, 18, '#ffffff', { font: 'bold' });
-                cv.text(s.desc, cx + 20, sy + 52, 15, t.dim);
-
-                cv.roundRect(cx + 570, sy + 20, 100, 32, 6, withAlpha('#00a3e0', 0.2));
-                cv.text(s.status, cx + 620, sy + 41, 14, '#00a3e0', { align: 'center', font: 'bold' });
-            });
+                cv.roundRect(sx, sy + 152, 420, 36, 8, '#0b131f');
+                cv.strokeRoundRect(sx, sy + 152, 420, 36, 8, 1, '#00a3e0');
+                cv.text(castServer.getCastUrl(), sx + 210, sy + 175, 15, '#00a3e0', { align: 'center', font: 'num' });
+            }
 
             // Right Panel: Safety & Video in Motion Status
-            G.panel(cv, t, 820, 52, 740, 410, 'Cockpit Safety & VIM Status');
+            G.panel(cv, t, 820, 52, 740, 410, 'Cast Remote & Motion Safety');
+
+            // Server active pill
+            cv.roundRect(844, 114, 692, 90, 10, '#090e16');
+            cv.strokeRoundRect(844, 114, 692, 90, 10, 1, '#00a3e0');
+            cv.text('CAST RECEIVER ACTIVE (:8090)', 870, 145, 18, '#00a3e0', { font: 'bold' });
+            cv.text('Accepts any YouTube watch link, youtu.be, HLS streams, or MP4', 870, 172, 15, '#94a3b8');
 
             const isParked = vehicleSpeed === 0;
-            cv.roundRect(844, 114, 692, 100, 12, '#090e16');
-            cv.strokeRoundRect(844, 114, 692, 100, 12, 1.5, isParked ? '#2af575' : '#ffb703');
+            cv.roundRect(844, 218, 692, 90, 10, '#090e16');
+            cv.strokeRoundRect(844, 218, 692, 90, 10, 1, isParked ? '#2af575' : '#ffb703');
 
-            cv.text('VEHICLE STATUS: ' + (isParked ? 'PARKED (0 KM/H)' : 'IN MOTION (' + vehicleSpeed + ' KM/H)'), 870, 150, 20, isParked ? '#2af575' : '#ffb703', { font: 'bold' });
-            cv.text(isParked ? '✓ Safe for full cockpit video and audio playback' : '⚠ Motion lockout active without Video in Motion coding', 870, 182, 16, '#cbd5e1');
+            cv.text('VEHICLE STATUS: ' + (isParked ? 'PARKED (0 KM/H)' : 'IN MOTION (' + vehicleSpeed + ' KM/H)'), 870, 248, 18, isParked ? '#2af575' : '#ffb703', { font: 'bold' });
+            cv.text(isParked ? '✓ Safe for full cockpit video and audio playback' : '⚠ Motion lockout active without Video in Motion coding', 870, 275, 15, '#cbd5e1');
 
             // QuickCode VIM Integration banner
-            cv.roundRect(844, 234, 692, 110, 12, '#0c1626');
-            cv.strokeRoundRect(844, 234, 692, 110, 12, 1, '#00a3e0');
+            cv.roundRect(844, 322, 692, 110, 10, '#0c1626');
+            cv.strokeRoundRect(844, 322, 692, 110, 10, 1, '#00a3e0');
 
-            cv.text('QUICKCODE INTEGRATION', 870, 266, 18, '#00a3e0', { font: 'bold' });
-            cv.text('Want to allow your passenger to watch while driving?', 870, 292, 16, '#ffffff');
-            cv.text('Open QuickCode app -> Video & Display -> Enable Video In Motion (VIM).', 870, 318, 15, t.dim);
+            cv.text('QUICKCODE INTEGRATION', 870, 350, 18, '#00a3e0', { font: 'bold' });
+            cv.text('Want to allow your passenger to watch while driving?', 870, 376, 15, '#ffffff');
+            cv.text('Open QuickCode app -> Video & Display -> Enable Video In Motion (VIM).', 870, 402, 14, t.dim);
         }
 
         /* ---------- Master 60 fps Render Loop ---------- */

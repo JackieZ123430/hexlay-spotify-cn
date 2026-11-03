@@ -16,9 +16,9 @@
  *      Preserves 100% responsive touchscreen touch routing across tabs and seekbar!
  *   4. Active Cockpit Playback & Live Spectrum Equalizer:
  *      Dynamic live timecode, smooth seeking scrubber, animated ambilight aura, and
- *      live 28-band multi-colored audio spectrum visualizer.
+ *      clean 16-bar multi-colored audio spectrum visualizer.
  *   5. Intel Atom A3960 Hardware Thermal Safe Cap:
- *      Clamps streams to 720p or 1080p 60 to protect head unit CPU/GPU.
+ *      Clamps streams strictly to 720p 60 HD to protect head unit CPU/GPU.
  *
  * Audio Routing:
  *   Audio streams through the vehicle stereo via Bluetooth Audio or Apple CarPlay / Android Auto.
@@ -70,7 +70,6 @@ mgu.run({
         let currentTimeSec = 0;
         let totalDurationSec = 0;
         let playProgress = 0;
-        let isFullscreen = false;
         let vehicleSpeed = 0;
         let statusMsg = null;
         let statusTime = 0;
@@ -85,9 +84,9 @@ mgu.run({
         let activeCastVideo = {
             title: 'Ready to Play',
             channel: 'YouTube on TV',
-            duration: '00:00',
+            duration: '0:00',
             durationSec: 0,
-            quality: (settings.quality === '1080p') ? '1080p 60' : '720p 60',
+            quality: '720p HD',
             glow: '#0066b1',
             views: 'Connected',
             desc: 'Search YouTube directly from iDrive in Search tab or link YouTube mobile app in Connect tab.',
@@ -112,32 +111,9 @@ mgu.run({
             log.info('M-Cinema: ' + msg);
         }
 
-        /* ---------- Helper: Text Formatting & Wrapping ---------- */
-        function wrapLines(text, maxChars = 42) {
-            if (!text) return [];
-            const rawLines = text.split('\n');
-            const lines = [];
-            rawLines.forEach(rl => {
-                const words = rl.split(' ');
-                let cur = '';
-                words.forEach(w => {
-                    if ((cur ? cur + ' ' + w : w).length <= maxChars) {
-                        cur = cur ? cur + ' ' + w : w;
-                    } else {
-                        if (cur) lines.push(cur);
-                        cur = w;
-                    }
-                });
-                if (cur) lines.push(cur);
-            });
-            return lines;
-        }
-
         // Common handler for playing any video (cast or searched)
         function playVideo(video) {
-            if (settings.quality === '720p') {
-                video.quality = '720p 60';
-            }
+            video.quality = '720p HD';
             activeCastVideo = video;
             page = 0; // jump directly to Now Playing
             isPlaying = true;
@@ -188,7 +164,7 @@ mgu.run({
         }, log);
         loungeReceiver.start().catch((e) => log.warn('Lounge start err: ' + e.message));
 
-        /* ---------- Vector Play Icon ---------- */
+        /* ---------- Vector Play / Pause Icon ---------- */
         function drawPlayGlyph(cv, cx, cy, sz, col) {
             const hw = sz * 0.46, hh = sz * 0.52;
             const p0 = [cx - hw * 0.6, cy - hh];
@@ -196,6 +172,12 @@ mgu.run({
             const p2 = [cx - hw * 0.6, cy + hh];
             if (cv.triangle) cv.triangle([p0, p1, p2], col);
             else cv.quad([p0, p1, p2, p2], col);
+        }
+
+        function drawPauseGlyph(cv, cx, cy, sz, col) {
+            const w = sz * 0.28, h = sz * 0.9, gap = sz * 0.2;
+            cv.fillRect(cx - gap - w, cy - h / 2, w, h, col);
+            cv.fillRect(cx + gap, cy - h / 2, w, h, col);
         }
 
         /* ---------- Execute In-Car Search ---------- */
@@ -227,11 +209,6 @@ mgu.run({
             const interlock = settings.interlock || 'auto';
             const motionLocked = !isParked && interlock === 'strict';
 
-            if (isFullscreen) {
-                drawVideoScreen(cv, 0, 0, W, H, video, true, now, motionLocked);
-                return;
-            }
-
             // Left / Main Media Viewport (1040 x 410)
             G.panel(cv, t, 40, 52, 1040, 410, 'Video Display');
 
@@ -239,11 +216,11 @@ mgu.run({
 
             if (settings.ambilight !== 'off' && !motionLocked) {
                 const pulse = (Math.sin(now / 400) + 1) * 0.5;
-                const glowAlpha = isPlaying ? (0.24 + pulse * 0.16) : 0.08;
-                cv.roundRect(vx - 3, vy - 3, vw + 6, vh + 6, 12, withAlpha('#0066b1', glowAlpha));
+                const glowAlpha = isPlaying ? (0.22 + pulse * 0.14) : 0.06;
+                cv.roundRect(vx - 2, vy - 2, vw + 4, vh + 4, 10, withAlpha('#0066b1', glowAlpha));
             }
 
-            drawVideoScreen(cv, vx, vy, vw, vh, video, false, now, motionLocked);
+            drawVideoScreen(cv, vx, vy, vw, vh, video, now, motionLocked);
 
             // Scrubber Bar
             const sy = 405, sw = 992;
@@ -253,7 +230,7 @@ mgu.run({
             cv.circle(thumbX, sy + 3, 7, '#ffffff');
             cv.arc(thumbX, sy + 3, 7, 9, 0, 360, '#00a3e0');
 
-            // Generous 38px tall touch target centered on the scrubber
+            // 38px tall touch target centered on the scrubber
             cv.target(vx, sy - 16, sw, 38, (touchX) => {
                 const rel = Math.max(0, Math.min(1, (touchX - vx) / sw));
                 playProgress = rel;
@@ -266,10 +243,9 @@ mgu.run({
 
             const durDisplay = totalDurationSec > 0 ? formatTime(totalDurationSec) : (video.duration || '0:00');
             const timeStr = `${formatTime(currentTimeSec)} / ${durDisplay}`;
-            cv.text(timeStr, vx, 442, 15, t.dim, { font: 'num' });
-            cv.text(video.quality, vx + 160, 442, 13, '#00a3e0', { font: 'bold' });
-            cv.text('Audio: Bluetooth / CarPlay Stereo', vx + 300, 442, 13, '#64748b');
-            cv.text(isPlaying ? 'PLAYING' : 'PAUSED', vx + sw - 120, 442, 15, isPlaying ? '#2af575' : '#ffb703', { font: 'bold', align: 'right' });
+            cv.text(timeStr, vx, 442, 16, t.dim, { font: 'num' });
+            cv.text('720p HD', vx + 160, 442, 13, '#00a3e0', { font: 'bold' });
+            cv.text(isPlaying ? 'PLAYING' : 'PAUSED', vx + sw - 12, 442, 15, isPlaying ? '#2af575' : '#ffb703', { font: 'bold', align: 'right' });
 
             // Right Panel (460px): Track Info & Controls
             G.panel(cv, t, 1100, 52, 460, 410, 'Track Info');
@@ -278,54 +254,39 @@ mgu.run({
             cv.strokeRoundRect(1124, 114, 96, 24, 4, 1, '#1e324c');
             cv.text('YOUTUBE', 1172, 131, 11, '#00a3e0', { align: 'center', font: 'bold', spacing: 1 });
 
-            const titleText = trunc(video.title || 'Ready to Play', 32);
-            cv.text(titleText, 1124, 168, 20, '#ffffff', { font: 'bold' });
-            cv.text(video.channel || 'YouTube on TV', 1124, 196, 16, '#00a3e0', { font: 'bold' });
-            cv.text(video.views || 'Ready', 1124, 220, 14, t.dim);
+            const titleText = trunc(video.title || 'Ready to Play', 30);
+            cv.text(titleText, 1124, 172, 21, '#ffffff', { font: 'bold' });
+            cv.text(video.channel || 'YouTube on TV', 1124, 204, 16, '#00a3e0', { font: 'bold' });
+            cv.text(video.views ? `${video.views}  |  720p HD` : 'Ready to Play', 1124, 230, 14, t.dim);
 
-            const descBoxX = 1124, descBoxY = 236, descBoxW = 412, descBoxH = 76;
-            cv.roundRect(descBoxX, descBoxY, descBoxW, descBoxH, 8, '#080d15');
-            cv.strokeRoundRect(descBoxX, descBoxY, descBoxW, descBoxH, 8, 1, t.panelEdge);
-
-            const descLines = wrapLines(video.desc, 44);
-            descLines.slice(0, 2).forEach((line, idx) => {
-                cv.text(line, descBoxX + 14, descBoxY + 28 + idx * 22, 13, '#94a3b8');
-            });
-
-            // Transport Buttons
-            const btnW = 196, btnH = 44;
-            cv.roundRect(1124, 326, btnW, btnH, 8, isPlaying ? '#162233' : '#0066b1');
-            cv.strokeRoundRect(1124, 326, btnW, btnH, 8, 1, isPlaying ? '#23364f' : '#00a3e0');
-            cv.text(isPlaying ? 'PAUSE' : 'PLAY', 1124 + btnW / 2, 353, 16, '#ffffff', { align: 'center', font: 'bold' });
-            cv.target(1124, 326, btnW, btnH, () => {
+            // Clean Play / Pause Button
+            const btnW = 412, btnH = 50;
+            cv.roundRect(1124, 276, btnW, btnH, 8, isPlaying ? '#162233' : '#0066b1');
+            cv.strokeRoundRect(1124, 276, btnW, btnH, 8, 1, isPlaying ? '#23364f' : '#00a3e0');
+            cv.text(isPlaying ? 'PAUSE' : 'PLAY', 1124 + btnW / 2, 307, 16, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+            cv.target(1124, 276, btnW, btnH, () => {
                 isPlaying = !isPlaying;
                 notify(isPlaying ? 'Resumed' : 'Paused');
                 render().catch(() => {});
             }, 'btn_play_toggle', 10);
 
-            cv.roundRect(1340, 326, btnW, btnH, 8, '#162233');
-            cv.strokeRoundRect(1340, 326, btnW, btnH, 8, 1, '#23364f');
-            cv.text('21:9 WIDESCREEN', 1340 + btnW / 2, 353, 15, '#ffffff', { align: 'center', font: 'bold' });
-            cv.target(1340, 326, btnW, btnH, () => {
-                isFullscreen = !isFullscreen;
-                notify(isFullscreen ? '21:9 Fullscreen' : 'Standard View');
-                render().catch(() => {});
-            }, 'btn_fs_toggle', 10);
-
-            // In-Car Search Tab Shortcut
-            cv.roundRect(1124, 384, 412, 44, 8, '#0f1724');
-            cv.strokeRoundRect(1124, 384, 412, 44, 8, 1, '#0066b1');
-            cv.text('SEARCH YOUTUBE IN IDRIVE  >', 1124 + 206, 411, 14, '#00f0ff', { align: 'center', font: 'bold' });
-            cv.target(1124, 384, 412, 44, () => {
+            // In-Car Search Tab Shortcut Button
+            cv.roundRect(1124, 344, btnW, btnH, 8, '#0f1724');
+            cv.strokeRoundRect(1124, 344, btnW, btnH, 8, 1, '#1e324c');
+            cv.text('SEARCH VIDEOS IN IDRIVE  >', 1124 + btnW / 2, 375, 14, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
+            cv.target(1124, 344, btnW, btnH, () => {
                 page = 1;
                 render().catch(() => {});
             }, 'btn_go_search', 10);
+
+            // Vehicle Stereo Audio Notice
+            cv.text('Audio output: Vehicle stereo via Bluetooth / CarPlay', 1124 + btnW / 2, 428, 12, '#64748b', { align: 'center' });
         }
 
-        /* ---------- Video Screen Canvas Renderer (60 fps Native Vector Stage) ---------- */
-        function drawVideoScreen(cv, x, y, w, h, video, isFs, now, motionLocked) {
-            cv.roundRect(x, y, w, h, isFs ? 0 : 8, '#060a12');
-            if (!isFs) cv.strokeRoundRect(x, y, w, h, 8, 1, '#1a273b');
+        /* ---------- Video Screen Canvas Renderer (Debloated 60 fps Vector Stage) ---------- */
+        function drawVideoScreen(cv, x, y, w, h, video, now, motionLocked) {
+            cv.roundRect(x, y, w, h, 8, '#060a12');
+            cv.strokeRoundRect(x, y, w, h, 8, 1, '#1a273b');
 
             if (motionLocked) {
                 cv.roundRect(x + 40, y + 40, w - 80, h - 80, 12, '#0c121c');
@@ -341,7 +302,7 @@ mgu.run({
             // Ambient background glow inside the video screen
             if (isPlaying) {
                 const pulse = (Math.sin(now / 350) + 1) * 0.5;
-                cv.roundRect(x + 12, y + 12, w - 24, h - 24, 6, withAlpha('#0066b1', 0.08 + pulse * 0.06));
+                cv.roundRect(x + 12, y + 12, w - 24, h - 24, 6, withAlpha('#0066b1', 0.06 + pulse * 0.05));
             }
 
             // Top Video HUD Bar
@@ -353,63 +314,57 @@ mgu.run({
             cv.text('YOUTUBE', x + 58, y + 27, 11, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
 
             // Video Title
-            const titleText = trunc(video.title || 'Ready to Play', isFs ? 64 : 44);
+            const titleText = trunc(video.title || 'Ready to Play', 46);
             cv.text(titleText, x + 112, y + 28, 15, '#ffffff', { font: 'bold' });
 
-            // Channel & Resolution Badges
-            cv.text(video.quality || '720p 60', x + w - 20, y + 28, 13, '#00a3e0', { align: 'right', font: 'bold' });
+            // Quality Badge
+            cv.text('720p HD', x + w - 20, y + 28, 13, '#00a3e0', { align: 'right', font: 'bold' });
 
-            // Center Stage: Animated Playback Stage or Waiting Graphic
+            // Center Stage: Refined Minimalist Playback Indicator
             if (video.ytId) {
                 if (isPlaying) {
                     // Pulsing animated playback ring
                     const pulse = (Math.sin(now / 300) + 1) * 0.5;
-                    const rSize = 36 + pulse * 4;
-                    cv.circle(cx, cy - 10, rSize + 8, withAlpha('#0066b1', 0.2));
-                    cv.circle(cx, cy - 10, rSize, '#0c1524');
-                    cv.arc(cx, cy - 10, rSize - 2, rSize, 0, 360, '#00a3e0');
-                    drawPlayGlyph(cv, cx + 4, cy - 10, 22, '#2af575');
+                    const rSize = 34 + pulse * 3;
+                    cv.circle(cx, cy - 6, rSize + 8, withAlpha('#0066b1', 0.18));
+                    cv.circle(cx, cy - 6, rSize, '#0c1524');
+                    cv.arc(cx, cy - 6, rSize - 2, rSize, 0, 360, '#00a3e0');
+                    drawPlayGlyph(cv, cx + 4, cy - 6, 20, '#2af575');
 
-                    // Channel & Views readout below ring
-                    const chText = `${video.channel || 'YouTube'} • ${video.views || 'Playing'}`;
-                    cv.text(chText, cx, cy + 44, 15, '#cbd5e1', { align: 'center', font: 'bold' });
-                    cv.text('Tap screen to Pause', cx, cy + 68, 12, '#64748b', { align: 'center' });
+                    // Channel & Views readout below ring (using ASCII |, never Unicode bullet)
+                    const chText = `${video.channel || 'YouTube'}  |  ${video.views || 'Playing'}`;
+                    cv.text(chText, cx, cy + 46, 15, '#cbd5e1', { align: 'center', font: 'bold' });
 
-                    // 28-Band Animated Spectrum Equalizer along bottom
-                    const eqX = x + 32, eqW = w - 64, eqY = y + h - 14;
-                    const numBars = Math.min(28, Math.floor(eqW / 14));
-                    for (let bi = 0; bi < numBars; bi++) {
-                        const wave = Math.abs(Math.sin((now / 150) + bi * 0.5));
-                        const barH = 4 + Math.floor(wave * 24);
-                        const col = bi % 3 === 0 ? '#0066b1' : (bi % 3 === 1 ? '#00a3e0' : '#e1001a');
-                        cv.roundRect(eqX + bi * 14, eqY - barH, 8, barH, 2, col);
+                    // Sleek 16-bar Spectrum Visualizer in bottom-right corner
+                    const eqX = x + w - 160, eqY = y + h - 14;
+                    for (let bi = 0; bi < 16; bi++) {
+                        const wave = Math.abs(Math.sin((now / 160) + bi * 0.6));
+                        const barH = 4 + Math.floor(wave * 20);
+                        const col = bi < 5 ? '#0066b1' : (bi < 11 ? '#00a3e0' : '#e1001a');
+                        cv.roundRect(eqX + bi * 9, eqY - barH, 6, barH, 2, col);
                     }
                 } else {
-                    // Paused state
-                    cv.circle(cx, cy - 10, 42, withAlpha('#000000', 0.7));
-                    cv.arc(cx, cy - 10, 40, 42, 0, 360, '#ffb703');
-                    drawPlayGlyph(cv, cx + 4, cy - 10, 26, '#ffffff');
+                    // Clean Paused state
+                    cv.circle(cx, cy - 6, 38, withAlpha('#0c1420', 0.85));
+                    cv.arc(cx, cy - 6, 36, 38, 0, 360, '#ffb703');
+                    drawPauseGlyph(cv, cx, cy - 6, 20, '#ffb703');
 
-                    cv.text('PAUSED', cx, cy + 48, 16, '#ffb703', { align: 'center', font: 'bold' });
-                    cv.text('Tap screen or press controller to resume', cx, cy + 72, 13, '#94a3b8', { align: 'center' });
+                    cv.text('PAUSED', cx, cy + 46, 16, '#ffb703', { align: 'center', font: 'bold' });
                 }
             } else {
                 // Waiting for search or cast
-                cv.circle(cx, cy - 16, 42, '#0c1420');
-                cv.arc(cx, cy - 16, 40, 42, 0, 360, '#1e2d42');
-                drawPlayGlyph(cv, cx + 4, cy - 16, 24, '#00a3e0');
+                cv.circle(cx, cy - 14, 40, '#0c1420');
+                cv.arc(cx, cy - 14, 38, 40, 0, 360, '#1e2d42');
+                drawPlayGlyph(cv, cx + 4, cy - 14, 22, '#00a3e0');
 
                 cv.text('Waiting for YouTube Stream', cx, cy + 46, 17, '#ffffff', { align: 'center', font: 'bold' });
-                cv.text('Select a video in Search tab or cast from YouTube mobile app', cx, cy + 72, 13, '#94a3b8', { align: 'center' });
+                cv.text('Select a video in Search tab or cast from YouTube mobile app', cx, cy + 70, 13, '#94a3b8', { align: 'center' });
             }
 
             // Touch target over entire video screen to toggle Play/Pause
             cv.target(x, y, w, h, () => {
-                if (isFs) isFullscreen = false;
-                else {
-                    isPlaying = !isPlaying;
-                    notify(isPlaying ? 'Play' : 'Pause');
-                }
+                isPlaying = !isPlaying;
+                notify(isPlaying ? 'Play' : 'Pause');
                 render().catch(() => {});
             }, 'vid_screen', 10);
         }
@@ -553,9 +508,9 @@ mgu.run({
                         duration: item.duration,
                         durationSec: item.durationSec || parseDurationSec(item.duration),
                         views: item.views,
-                        quality: (settings.quality === '1080p') ? '1080p 60' : '720p 60',
+                        quality: '720p HD',
                         glow: '#0066b1',
-                        desc: item.channel ? `${item.channel} • ${item.duration} • ${item.views}` : item.url,
+                        desc: item.channel ? `${item.channel}  |  ${item.duration}  |  ${item.views}` : item.url,
                         url: item.url
                     });
                 }, 'res_' + (searchScroll + idx), 10);
@@ -643,29 +598,25 @@ mgu.run({
             const t = ctx.theme();
             const cv = ctx.canvas(W, H).clear(t.bg);
 
-            if (!isFullscreen) {
-                if (page === 0) drawPlayer(cv, t, now);
-                else if (page === 1) drawSearch(cv, t);
-                else if (page === 2) drawConnect(cv, t);
+            if (page === 0) drawPlayer(cv, t, now);
+            else if (page === 1) drawSearch(cv, t);
+            else if (page === 2) drawConnect(cv, t);
 
-                // G-Series Live Cockpit frame tabs along the top
-                G.frame(cv, t, PAGES, page, [
-                    { text: 'M-CINEMA' },
-                    { text: activeCastVideo.quality },
-                    { text: isPlaying ? 'PLAYING' : 'PAUSED' }
-                ]);
+            // G-Series Live Cockpit frame tabs along the top
+            G.frame(cv, t, PAGES, page, [
+                { text: 'M-CINEMA' },
+                { text: '720p HD' },
+                { text: isPlaying ? 'PLAYING' : 'PAUSED' }
+            ]);
 
-                // Explicit touch targets for top header tabs
-                if (cv.tabRects && Array.isArray(cv.tabRects)) {
-                    cv.tabRects.forEach((tr) => {
-                        cv.target(tr.x, tr.y, tr.w, tr.h, () => {
-                            page = tr.i;
-                            render().catch(() => {});
-                        }, 'hdr_tab_' + tr.i, 15);
-                    });
-                }
-            } else {
-                drawVideoScreen(cv, 0, 0, W, H, activeCastVideo, true, now, vehicleSpeed > 0 && settings.interlock === 'strict');
+            // Explicit touch targets for top header tabs
+            if (cv.tabRects && Array.isArray(cv.tabRects)) {
+                cv.tabRects.forEach((tr) => {
+                    cv.target(tr.x, tr.y, tr.w, tr.h, () => {
+                        page = tr.i;
+                        render().catch(() => {});
+                    }, 'hdr_tab_' + tr.i, 15);
+                });
             }
 
             if (statusMsg && (now - statusTime < 3200)) {
@@ -679,17 +630,6 @@ mgu.run({
         /* ---------- Tab Navigation & Interactions ---------- */
         ctx.onTab((idx) => {
             page = idx;
-            return render();
-        });
-
-        ui.onClick('BTN_PLAY', () => {
-            isPlaying = !isPlaying;
-            notify(isPlaying ? 'Play' : 'Pause');
-            return render();
-        });
-
-        ui.onClick('BTN_SEARCH', () => {
-            page = 1; // switch to Search
             return render();
         });
 
@@ -734,9 +674,9 @@ mgu.run({
                             duration: first.duration,
                             durationSec: first.durationSec || parseDurationSec(first.duration),
                             views: first.views,
-                            quality: (settings.quality === '1080p') ? '1080p 60' : '720p 60',
+                            quality: '720p HD',
                             glow: '#0066b1',
-                            desc: first.channel ? `${first.channel} • ${first.duration} • ${first.views}` : first.url,
+                            desc: first.channel ? `${first.channel}  |  ${first.duration}  |  ${first.views}` : first.url,
                             url: first.url
                         });
                     }

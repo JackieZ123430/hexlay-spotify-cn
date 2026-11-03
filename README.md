@@ -101,7 +101,7 @@ This repository is forked and built upon the foundational open-source BMW iDrive
 * **Decoded Video Thumbnail Artwork & 21:9 Ultrawide**:
   - Downloads and decodes official high-resolution YouTube video thumbnail art into the cockpit screen with ambient edge accents and rotary scrubbing.
 * **Intel Atom A3960 Hardware Thermal Safe Cap**:
-  - Capped to thermal-safe **720p 60** (cool & efficient) or **1080p 60** max limit, rejecting 4K/2K streams to protect the head unit processor from overheating.
+  - Clamped strictly to thermal-safe **720p 60 HD** (cool, responsive, and efficient), protecting the head unit processor from overheating.
 
 ---
 

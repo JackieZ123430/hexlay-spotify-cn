@@ -12,6 +12,17 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
+function decodeHtmlEntities(str) {
+    if (!str || typeof str !== 'string') return '';
+    return str
+        .replace(/&amp;/g, '&')
+        .replace(/&#x2F;/g, '/')
+        .replace(/&#39;/g, "'")
+        .replace(/&quot;/g, '"')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>');
+}
+
 const DEMO_PLAYLISTS = [
     {
         id: 'pl_m_driving',
@@ -402,17 +413,20 @@ class SpotifyClient {
     async fetchPlaylists() {
         if (!this.token) return;
         try {
-            const res = await this._request('GET', '/v1/me/playlists?limit=15');
+            const res = await this._request('GET', '/v1/me/playlists?limit=25');
             if (res && res.items && res.items.length) {
-                const list = res.items.map((pl, i) => ({
-                    id: pl.id,
-                    name: pl.name,
-                    description: pl.description || 'User playlist',
-                    trackCount: pl.tracks ? pl.tracks.total : 0,
-                    uri: pl.uri,
-                    accent: ['#1db954', '#e1001a', '#81c4ff', '#ff9d00', '#1ed760'][i % 5],
-                    tracks: []
-                }));
+                const list = res.items.map((pl, i) => {
+                    const count = pl.tracks ? (pl.tracks.total ?? 0) : (pl.items ? (pl.items.total ?? 0) : 0);
+                    return {
+                        id: pl.id,
+                        name: decodeHtmlEntities(pl.name),
+                        description: decodeHtmlEntities(pl.description || 'User playlist'),
+                        trackCount: count,
+                        uri: pl.uri,
+                        accent: ['#1db954', '#e1001a', '#81c4ff', '#ff9d00', '#1ed760'][i % 5],
+                        tracks: []
+                    };
+                });
                 this.playlists = list;
                 if (list[0]) {
                     this.selectPlaylist(list[0]);
@@ -426,18 +440,34 @@ class SpotifyClient {
     async fetchTracksForPlaylist(playlist) {
         if (!this.token || !playlist || !playlist.id) return;
         try {
-            const res = await this._request('GET', `/v1/playlists/${playlist.id}/tracks?limit=30`);
+            let res = null;
+            try {
+                res = await this._request('GET', `/v1/playlists/${playlist.id}/items?limit=50`);
+            } catch (err) {
+                res = await this._request('GET', `/v1/playlists/${playlist.id}/tracks?limit=50`);
+            }
             if (res && res.items) {
                 playlist.tracks = res.items
-                    .filter((item) => item.track && item.track.id)
-                    .map((item) => ({
-                        id: item.track.id,
-                        title: item.track.name,
-                        artist: (item.track.artists || []).map((a) => a.name).join(', '),
-                        album: item.track.album ? item.track.album.name : '',
-                        durationMs: item.track.duration_ms,
-                        uri: item.track.uri
-                    }));
+                    .map((item) => {
+                        const t = item.item || item.track;
+                        if (!t || !t.id) return null;
+                        return {
+                            id: t.id,
+                            title: decodeHtmlEntities(t.name),
+                            artist: decodeHtmlEntities((t.artists || []).map((a) => a.name).join(', ')),
+                            album: decodeHtmlEntities(t.album ? t.album.name : ''),
+                            durationMs: t.duration_ms,
+                            uri: t.uri
+                        };
+                    })
+                    .filter(Boolean);
+
+                if ((!playlist.trackCount || playlist.trackCount === 0) && playlist.tracks.length > 0) {
+                    playlist.trackCount = playlist.tracks.length;
+                }
+                if (!this.currentTrack && playlist.tracks[0]) {
+                    this.currentTrack = playlist.tracks[0];
+                }
             }
         } catch (e) {
             this.log.warn('Fetch tracks error: ' + e.message);

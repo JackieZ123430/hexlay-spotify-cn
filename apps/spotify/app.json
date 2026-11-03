@@ -25,8 +25,8 @@
   "settings": [
     {"key": "theme", "label": "Colour theme", "type": "choice", "default": "spotify",
      "options": [["spotify", "Spotify Green"], ["m_tricolour", "M Tricolour"], ["m_red", "M Red"], ["ice", "Ice White"], ["amber", "Night Amber"]]},
-    {"key": "demo", "label": "Demo mode", "type": "choice", "default": "auto",
-     "options": [["auto", "Auto (Demo if offline)"], ["on", "Always Demo"], ["off", "Online Only"]]},
+    {"key": "demo", "label": "Playback mode", "type": "choice", "default": "off",
+     "options": [["off", "Online Mode (Default)"], ["on", "Demo Mode (Offline)"]]},
     {"key": "layout", "label": "Screen layout", "type": "choice", "default": "full",
      "options": [["full", "Full screen"], ["standard", "Standard"]]},
     {"key": "renderer", "label": "Renderer", "type": "choice", "default": "auto",

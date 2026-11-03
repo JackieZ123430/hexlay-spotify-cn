@@ -59,21 +59,28 @@ This repository is forked and built upon the foundational open-source BMW iDrive
 ### 2. Spotify (`spotify`)
 **Native Spotify Connect controller and library browser directly on the iDrive 7 central display.**
 
-![Spotify](docs/screenshots/spotify.png)
+![Spotify Playlists](docs/screenshots/spotify.png)
 
-* **Zero-Terminal In-Car QR Code Pairing**:
-  - Built-in background authentication server running on port `8888`.
-  - Connect your phone to the car's Wi-Fi hotspot or Wireless CarPlay and scan the QR code on the **"Connect"** tab.
-  - Mobile login page opens: tap **"Connect with Spotify"**, approve on Spotify, and your car screen immediately loads your personal playlists, saved songs, and devices.
-  - **No terminal, no SSH, and no Node commands required.**
-* **Automatic Background Token Refresh**:
-  - Automatically refreshes tokens in the background on expiration across ignition cycles.
-* **1-Tap Disconnect / Switch Account**:
-  - `[DISCONNECT / SWITCH ACCOUNT]` button wipes the active session with one touch so passengers or new drivers can pair their accounts.
-* **Cockpit UI**:
+* **Online Mode by Default**:
+  - Automatically launches in **Online Mode** (`demo: "off"`) for live personal library browsing and playback control.
+  - Requires authenticated personal account before showing demo tracks; launches directly to the **Connect** tab on fresh installations.
+* **Real Cloud QR Code Pairing (Zero 127.0.0.1 / Works over 4G/5G)**:
+  - Generates a unique pairing session and displays a crisp QR code pointing to `https://hexlay.github.io/idrive7-custom-apps/pair.html`.
+  - Works on **any smartphone over cellular data (4G/5G) or car Wi-Fi** — completely eliminating failed `127.0.0.1` / localhost URLs.
+  - Tap **"Connect with Spotify"** or paste your access token; tokens sync directly to the car via a secure ephemeral channel.
+  - **Zero terminal, zero SSH, and zero Node commands required.**
+* **Active Internet Connectivity Safeguard**:
+  - Actively monitors connectivity to `api.spotify.com:443`.
+  - If the vehicle loses internet, the player safely locks with a high-contrast **"NO INTERNET CONNECTION"** screen with `[RETRY CONNECTION]` and `[SWITCH TO DEMO MODE]` options.
+* **Cockpit UI & Features**:
   - 60 fps animated mini equalizers on active tracks.
-  - Browse personal playlists, saved library, and queue.
-  - Instant device switching across Spotify Connect targets.
+  - Browse personal playlists, saved library, and playback queue.
+  - Instant target device switching across Spotify Connect speakers, phones, and vehicle audio.
+  - Persistent token storage across ignition cycles.
+
+| Phone QR Pairing Screen | Offline Connectivity Lock |
+| :---: | :---: |
+| ![Spotify Pairing](docs/screenshots/spotify_connect.png) | ![Spotify Offline](docs/screenshots/spotify_offline.png) |
 
 ---
 

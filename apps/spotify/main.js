@@ -1,20 +1,22 @@
 'use strict';
 /**
  * Spotify - native BMW iDrive 7 (MGU) Spotify Connect library & playlist browser.
- * Focuses on browsing, selecting playlists, queuing music and fast switching.
- * "Now Playing" playback status is left to BMW's native media widget on the home/split screen.
  *
- * Pages:
- *   0: Playlists   - Split playlist & track selector with live playing indicators
- *   1: Library     - Liked songs, heavy rotation, saved albums & artists
- *   2: Queue       - Up next queue inspection
- *   3: Connect     - QR code phone authorization & Spotify Connect device switcher
+ * Operational Rules:
+ *   1. Default Mode: Starts in Online Mode by default.
+ *   2. Network Safeguard: In Online Mode, verifies active internet connectivity to Spotify.
+ *      If offline, app is disabled with a high-contrast "No Internet Connection" lock screen.
+ *   3. Connection Requirement: In Online Mode, requires authenticated personal account.
+ *      Gates the player until paired; defaults to Connect tab on first launch.
+ *   4. Real Cloud Pairing (No 127.0.0.1): Uses a real cloud pairing relay so any phone on
+ *      4G, 5G, or Wi-Fi can scan the QR code and pair directly with Spotify OAuth.
  */
 const mgu = require('./kit/mgu');
 const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
 const { SpotifyClient } = require('./api');
 const { SpotifyAuthServer } = require('./auth_server');
+const { CloudPairManager } = require('./cloud_pair');
 const qrcodegen = require('./qrcodegen');
 
 const W = 1600, H = 520;
@@ -56,15 +58,22 @@ mgu.run({
         const authServer = new SpotifyAuthServer(ctx, spotify);
         authServer.start();
 
-        let page = 0;
+        const cloudPair = new CloudPairManager(ctx, spotify);
+        cloudPair.startPolling();
+
+        // Default to Online mode (demo !== 'on')
+        // If not authenticated, open directly on the Connect tab!
+        const isOnlineMode = settings.get('demo') !== 'on';
+        let page = (isOnlineMode && !spotify.token) ? 3 : 0;
         let selectedPlaylistIdx = 0;
         let spectrumSeed = 0;
 
-        /* ---------- QR Code Generation ---------- */
+        /* ---------- Real Cloud Pairing QR Code Generation ---------- */
         let cachedQr = null;
         let cachedQrUrl = null;
         function getQrMatrix() {
-            const url = authServer.getLoginUrl();
+            // Use real public pairing URL (works anywhere over 4G/5G/Wi-Fi, zero 127.0.0.1)
+            const url = cloudPair.getPairingUrl();
             if (cachedQr && cachedQrUrl === url) return cachedQr;
             try {
                 const qr = qrcodegen.QrCode.encodeText(url, qrcodegen.QrCode.Ecc.MEDIUM);
@@ -76,11 +85,75 @@ mgu.run({
             }
         }
 
-        /* ---------- Page 0: Playlists & Tracks with Now Playing Indicator ---------- */
+        /* ---------- Offline Safeguard Screen: No Internet Connection ---------- */
+        function drawNoInternet(cv, t) {
+            G.panel(cv, t, 40, 52, 1520, 410, 'Network Status: Offline');
+
+            cv.roundRect(80, 110, 1440, 310, 16, '#0f141f');
+            cv.strokeRoundRect(80, 110, 1440, 310, 16, 2, '#e1001a');
+
+            cv.circle(180, 240, 44, withAlpha('#e1001a', 0.2));
+            cv.text('!', 180, 255, 46, '#e1001a', { align: 'center', font: 'bold' });
+
+            cv.text('NO INTERNET CONNECTION', 260, 180, 26, '#e1001a', { font: 'bold', spacing: 1 });
+            cv.text('Spotify Online requires an active internet connection on your vehicle.', 260, 218, 18, '#ffffff');
+            cv.text('Please verify that your BMW has cellular data or is connected to a mobile Wi-Fi hotspot.', 260, 248, 16, '#94a3b8');
+
+            // Action Buttons: [RETRY CONNECTION] and [SWITCH TO DEMO MODE]
+            const btnW = 280, btnH = 48, btnY = 320;
+            const b1X = 260;
+            cv.roundRect(b1X, btnY, btnW, btnH, 10, '#004e8c');
+            cv.strokeRoundRect(b1X, btnY, btnW, btnH, 10, 1.5, '#00a3e0');
+            cv.text('RETRY CONNECTION', b1X + btnW / 2, btnY + 30, 16, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+            cv.target(b1X, btnY, btnW, btnH, () => {
+                spotify.checkInternetConnection().then(() => render());
+            }, 'btn_retry_net', 15);
+
+            const b2X = b1X + btnW + 20;
+            cv.roundRect(b2X, btnY, btnW, btnH, 10, '#1a2332');
+            cv.strokeRoundRect(b2X, btnY, btnW, btnH, 10, 1, '#334155');
+            cv.text('SWITCH TO DEMO MODE', b2X + btnW / 2, btnY + 30, 15, '#cbd5e1', { align: 'center', font: 'bold' });
+            cv.target(b2X, btnY, btnW, btnH, () => {
+                settings.set('demo', 'on');
+                spotify.isDemoMode = true;
+                spotify.playlists = require('./api').DEMO_PLAYLISTS;
+                spotify.devices = require('./api').DEMO_DEVICES;
+                render();
+            }, 'btn_switch_demo', 15);
+        }
+
+        /* ---------- Gating Screen: Authentication Required in Online Mode ---------- */
+        function drawRequireConnect(cv, t) {
+            G.panel(cv, t, 40, 52, 1520, 410, 'Spotify Login Required');
+
+            cv.roundRect(80, 110, 1440, 310, 16, '#0c1522');
+            cv.strokeRoundRect(80, 110, 1440, 310, 16, 2, '#1ed760');
+
+            cv.circle(180, 240, 44, withAlpha('#1ed760', 0.2));
+            cv.text('>', 180, 255, 42, '#1ed760', { align: 'center', font: 'bold' });
+
+            cv.text('SPOTIFY LOGIN REQUIRED', 260, 180, 26, '#ffffff', { font: 'bold', spacing: 1 });
+            cv.text('Online Mode is active. Please pair your personal Spotify account to browse your library and control playback.', 260, 218, 17, '#cbd5e1');
+            cv.text('Scan the QR code with your phone to sync your playlists and Spotify Connect target devices.', 260, 248, 15, '#94a3b8');
+
+            const btnW = 340, btnH = 50, btnY = 320, bX = 260;
+            cv.roundRect(bX, btnY, btnW, btnH, 10, '#1ed760');
+            cv.text('PAIR PHONE (SCAN QR CODE)', bX + btnW / 2, btnY + 31, 16, '#000000', { align: 'center', font: 'bold', spacing: 1 });
+            cv.target(bX, btnY, btnW, btnH, () => {
+                page = 3; // Switch to Connect tab
+            }, 'btn_goto_connect', 15);
+        }
+
+        /* ---------- Page 0: Playlists & Tracks ---------- */
         function drawPlaylists(cv, t) {
             const playlists = spotify.getPlaylists();
 
-            // Left Pane: Playlists (w: 520)
+            if (!playlists || playlists.length === 0) {
+                drawRequireConnect(cv, t);
+                return;
+            }
+
+            // Left Pane: Playlists (w: 500)
             G.panel(cv, t, 40, 52, 500, 410, 'Your Playlists');
             playlists.forEach((pl, idx) => {
                 const py = 114 + idx * 74;
@@ -93,9 +166,8 @@ mgu.run({
                 // Accent tag
                 cv.roundRect(62, py + 8, 6, 46, 3, isPlPlaying ? t.accent : (pl.accent || t.accent));
                 cv.text(pl.name, 82, py + 32, 24, isSel ? t.text : '#e0e0e0', { font: 'bold' });
-                cv.text(pl.trackCount + ' songs  ·  ' + (pl.description.slice(0, 32) + '...'), 82, py + 52, 18, t.dim);
+                cv.text(pl.trackCount + ' songs  -  ' + (pl.description.slice(0, 32) + '...'), 82, py + 52, 18, t.dim);
 
-                // If this playlist is currently active:
                 if (isPlPlaying) {
                     drawMiniEqualizer(cv, 485, py + 31, t.accent, true, spectrumSeed);
                 }
@@ -110,113 +182,106 @@ mgu.run({
             const curPl = playlists[selectedPlaylistIdx] || playlists[0];
             const isThisPlPlaying = spotify.currentPlaylist && spotify.currentPlaylist.id === curPl.id;
 
-            G.panel(cv, t, 560, 52, 1000, 410, curPl.name + ' (' + curPl.tracks.length + ' tracks)');
+            G.panel(cv, t, 560, 52, 1000, 410, curPl.name + ' (' + (curPl.tracks ? curPl.tracks.length : 0) + ' tracks)');
 
-            curPl.tracks.slice(0, 7).forEach((trk, idx) => {
-                const ty = 114 + idx * 52;
-                const isPlayingThis = isThisPlPlaying && spotify.currentTrack && spotify.currentTrack.id === trk.id;
+            if (curPl.tracks) {
+                curPl.tracks.slice(0, 7).forEach((trk, idx) => {
+                    const ty = 114 + idx * 52;
+                    const isPlayingThis = isThisPlPlaying && spotify.currentTrack && spotify.currentTrack.id === trk.id;
 
-                if (isPlayingThis) {
-                    // High-contrast glowing row for currently playing song
-                    cv.roundRect(576, ty, 968, 46, 8, withAlpha(t.accent, 0.25));
-                    cv.strokeRoundRect(576, ty, 968, 46, 8, 1.5, t.accent);
+                    if (isPlayingThis) {
+                        cv.roundRect(576, ty, 968, 46, 8, withAlpha(t.accent, 0.22));
+                        cv.strokeRoundRect(576, ty, 968, 46, 8, 1.5, t.accent);
+                        drawMiniEqualizer(cv, 598, ty + 23, t.accent, spotify.isPlaying, spectrumSeed);
+                    } else {
+                        cv.roundRect(576, ty, 968, 46, 8, t.track);
+                        cv.text(String(idx + 1), 598, ty + 28, 17, t.dim, { align: 'center', font: 'num' });
+                    }
 
-                    // Animated equalizer bars replacing track number
-                    drawMiniEqualizer(cv, 602, ty + 23, t.accent, spotify.isPlaying, spectrumSeed);
+                    cv.text(trk.title, 626, ty + 29, 22, isPlayingThis ? t.accent : t.text, { font: 'bold' });
+                    cv.text(trk.artist + '  -  ' + trk.album, 880, ty + 29, 18, t.dim);
+                    cv.text(fmtTime(trk.durationMs), 1470, ty + 29, 17, t.dim, { align: 'right', font: 'num' });
 
-                    // Track title highlighted in Spotify green
-                    cv.text(trk.title, 630, ty + 30, 22, t.accent, { font: 'bold' });
-                    cv.text(trk.artist + '  ·  ' + trk.album, 950, ty + 30, 20, t.text);
+                    if (isPlayingThis) {
+                        cv.roundRect(1485, ty + 8, 50, 30, 6, t.accent);
+                        cv.text('PLAYING', 1510, ty + 26, 12, '#000000', { align: 'center', font: 'bold' });
+                    }
 
-                    // Elapsed / Duration
-                    const timeStr = fmtTime(spotify.progressMs) + ' / ' + fmtTime(trk.durationMs);
-                    cv.text(timeStr, 1420, ty + 30, 20, t.accent, { align: 'right', font: 'num' });
-
-                    // NOW PLAYING pill badge
-                    cv.roundRect(1440, ty + 10, 92, 26, 6, t.accent);
-                    cv.text('PLAYING', 1486, ty + 28, 14, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
-                } else {
-                    cv.roundRect(576, ty, 968, 46, 8, idx % 2 === 0 ? withAlpha(t.track, 0.5) : 'transparent');
-                    cv.text(String(idx + 1), 602, ty + 30, 20, t.dim, { align: 'center', font: 'num' });
-                    cv.text(trk.title, 630, ty + 30, 22, '#ffffff', { font: 'bold' });
-                    cv.text(trk.artist + '  ·  ' + trk.album, 950, ty + 30, 20, t.dim);
-                    cv.text(fmtTime(trk.durationMs), 1510, ty + 30, 20, t.dim, { align: 'right', font: 'num' });
-                }
-
-                cv.target(576, ty, 968, 46, () => {
-                    spotify.playTrack(curPl, idx);
-                }, 'trk_' + idx, 8);
-            });
+                    cv.target(576, ty, 968, 46, () => {
+                        spotify.playTrack(curPl, idx);
+                    }, 'trk_' + idx, 8);
+                });
+            }
         }
 
         /* ---------- Page 1: Library ---------- */
         function drawLibrary(cv, t) {
-            G.panel(cv, t, 40, 52, 1520, 410, 'Your Spotify Library');
+            const playlists = spotify.getPlaylists();
+            if (!playlists || playlists.length === 0) {
+                drawRequireConnect(cv, t);
+                return;
+            }
 
-            const isLikedPlaying = spotify.isPlaying && spotify.currentPlaylist && spotify.currentPlaylist.id === 'pl_liked';
-            const cards = [
-                { title: 'Liked Songs', count: '142 Tracks', tag: 'FAV', color: '#1db954', desc: 'Auto-synced with phone', active: isLikedPlaying },
-                { title: 'Heavy Rotation', count: '5 Playlists', tag: 'TOP', color: '#e1001a', desc: 'Your most played driving music', active: false },
-                { title: 'Albums', count: '28 Saved', tag: 'ALB', color: '#81c4ff', desc: 'Saved albums library', active: false },
-                { title: 'Artists', count: '45 Following', tag: 'ART', color: '#ff9d00', desc: 'Favorite music creators', active: false },
+            G.panel(cv, t, 40, 52, 1520, 410, 'Your Library & Saved Music');
+
+            const sections = [
+                { title: 'Liked Songs', count: '142 songs', icon: '+', col: '#1db954' },
+                { title: 'Heavy Rotation', count: 'Recent daily drivers', icon: 'R', col: '#e1001a' },
+                { title: 'Saved Albums', count: '28 albums', icon: 'O', col: '#81c4ff' },
+                { title: 'Followed Artists', count: '45 artists', icon: '*', col: '#ff9d00' },
             ];
 
-            cards.forEach((c, i) => {
-                const cx = 70 + i * 365;
-                const cy = 130;
-                cv.roundRect(cx, cy, 335, 290, 14, t.track);
-                cv.strokeRoundRect(cx, cy, 335, 290, 14, 1.5, c.active ? t.accent : t.panelEdge);
+            sections.forEach((sec, idx) => {
+                const sx = 64 + idx * 370;
+                cv.roundRect(sx, 120, 350, 220, 14, t.track);
+                cv.strokeRoundRect(sx, 120, 350, 220, 14, 1, t.panelEdge);
 
-                cv.circle(cx + 60, cy + 60, 36, withAlpha(c.color, 0.25));
-                cv.text(c.tag, cx + 60, cy + 68, 22, c.color, { align: 'center', font: 'bold', spacing: 1 });
+                cv.circle(sx + 50, 170, 26, withAlpha(sec.col, 0.22));
+                cv.text(sec.icon, sx + 50, 179, 24, sec.col, { align: 'center', font: 'bold' });
 
-                cv.text(c.title, cx + 24, cy + 145, 28, t.text, { font: 'bold' });
-                cv.text(c.count, cx + 24, cy + 180, 22, c.color, { font: 'bold' });
-                cv.text(c.desc, cx + 24, cy + 215, 18, t.dim);
+                cv.text(sec.title, sx + 90, 168, 24, t.text, { font: 'bold' });
+                cv.text(sec.count, sx + 90, 192, 17, t.dim);
 
-                // Quick Play button or Active indicator
-                if (c.active) {
-                    cv.roundRect(cx + 24, cy + 235, 150, 38, 8, t.accent);
-                    drawMiniEqualizer(cv, cx + 50, cy + 254, '#ffffff', true, spectrumSeed);
-                    cv.text('PLAYING', cx + 105, cy + 260, 16, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
-                } else {
-                    cv.roundRect(cx + 24, cy + 235, 140, 38, 8, withAlpha(c.color, 0.3));
-                    cv.text('PLAY ALL', cx + 94, cy + 260, 18, t.text, { align: 'center', font: 'bold' });
-                }
+                cv.roundRect(sx + 30, 270, 290, 48, 8, withAlpha(sec.col, 0.18));
+                cv.strokeRoundRect(sx + 30, 270, 290, 48, 8, 1, sec.col);
+                cv.text('PLAY COLLECTION', sx + 175, 300, 17, sec.col, { align: 'center', font: 'bold', spacing: 1 });
 
-                cv.target(cx, cy, 335, 290, () => {
-                    spotify.selectPlaylist(spotify.getPlaylists()[i % spotify.getPlaylists().length]);
-                    page = 0;
-                }, 'lib_card_' + i, 14);
+                cv.target(sx, 120, 350, 220, () => {
+                    if (playlists[idx % playlists.length]) {
+                        spotify.selectPlaylist(playlists[idx % playlists.length]);
+                        page = 0;
+                    }
+                }, 'lib_' + idx, 10);
             });
         }
 
         /* ---------- Page 2: Queue ---------- */
         function drawQueue(cv, t) {
-            G.panel(cv, t, 40, 52, 1520, 410, 'Playback Queue');
-
-            // Current playing banner
-            cv.roundRect(64, 114, 1472, 64, 10, withAlpha(t.accent, 0.22));
-            cv.strokeRoundRect(64, 114, 1472, 64, 10, 1.5, t.accent);
-
-            drawMiniEqualizer(cv, 96, 146, t.accent, spotify.isPlaying, spectrumSeed);
-            cv.text('NOW PLAYING', 126, 152, 18, t.accent, { font: 'bold', spacing: 1.5 });
-            cv.text(spotify.currentTrack.title, 300, 152, 24, t.text, { font: 'bold' });
-            cv.text(spotify.currentTrack.artist + '  ·  ' + spotify.currentTrack.album, 720, 152, 22, t.dim);
-            cv.text(fmtTime(spotify.progressMs) + ' / ' + fmtTime(spotify.currentTrack.durationMs), 1500, 152, 22, t.accent, { align: 'right', font: 'num' });
-
-            cv.text('NEXT IN QUEUE', 64, 215, 20, t.dim, { font: 'bold', spacing: 1.5 });
-
-            // Next items
             const pl = spotify.currentPlaylist;
-            const remaining = pl.tracks.slice(spotify.trackIndex + 1).concat(pl.tracks.slice(0, spotify.trackIndex));
-            remaining.slice(0, 4).forEach((trk, idx) => {
-                const qy = 236 + idx * 52;
-                cv.roundRect(64, qy, 1472, 46, 8, withAlpha(t.track, 0.6));
-                cv.text(String(idx + 1), 90, qy + 30, 20, t.dim, { align: 'center', font: 'num' });
-                cv.text(trk.title, 130, qy + 30, 22, t.text, { font: 'bold' });
-                cv.text(trk.artist + '  ·  ' + trk.album, 650, qy + 30, 20, t.dim);
-                cv.text(fmtTime(trk.durationMs), 1500, qy + 30, 20, t.dim, { align: 'right', font: 'num' });
+            if (!pl || !pl.tracks || pl.tracks.length === 0) {
+                drawRequireConnect(cv, t);
+                return;
+            }
+
+            G.panel(cv, t, 40, 52, 1520, 410, 'Playback Queue (Up Next)');
+
+            const curTrk = spotify.currentTrack;
+            if (curTrk) {
+                cv.roundRect(64, 114, 1472, 60, 10, withAlpha(t.accent, 0.18));
+                cv.strokeRoundRect(64, 114, 1472, 60, 10, 1.5, t.accent);
+                cv.text('NOW PLAYING', 84, 149, 16, t.accent, { font: 'bold', spacing: 1 });
+                cv.text(curTrk.title, 220, 149, 22, t.text, { font: 'bold' });
+                cv.text(curTrk.artist, 540, 149, 18, t.dim);
+                drawMiniEqualizer(cv, 1490, 144, t.accent, spotify.isPlaying, spectrumSeed);
+            }
+
+            pl.tracks.slice(spotify.trackIndex + 1, spotify.trackIndex + 6).forEach((trk, idx) => {
+                const qy = 186 + idx * 52;
+                cv.roundRect(64, qy, 1472, 46, 8, t.track);
+                cv.text(String(idx + 1), 84, qy + 28, 17, t.dim, { align: 'center', font: 'num' });
+                cv.text(trk.title, 120, qy + 29, 22, t.text, { font: 'bold' });
+                cv.text(trk.artist, 440, qy + 29, 18, t.dim);
+                cv.text(fmtTime(trk.durationMs), 1490, qy + 29, 17, t.dim, { align: 'right', font: 'num' });
 
                 cv.target(64, qy, 1472, 46, () => {
                     spotify.playTrack(pl, (spotify.trackIndex + 1 + idx) % pl.tracks.length);
@@ -224,12 +289,12 @@ mgu.run({
             });
         }
 
-        /* ---------- Page 3: Connect & QR Setup ---------- */
+        /* ---------- Page 3: Connect & Real Cloud Pairing ---------- */
         function drawConnect(cv, t) {
-            // Left: QR Code Pairing or Connected Status
+            // Left: Real Cloud Pairing QR Code or Connected Status
             G.panel(cv, t, 40, 52, 580, 410, spotify.isOnline ? 'Spotify Account Status' : 'Scan to Connect Phone');
 
-            if (spotify.isOnline) {
+            if (spotify.isOnline && spotify.token) {
                 // Connected Card
                 cv.roundRect(70, 114, 520, 320, 14, '#0a1612');
                 cv.strokeRoundRect(70, 114, 520, 320, 14, 1.5, '#1ed760');
@@ -250,10 +315,11 @@ mgu.run({
                 cv.target(dcX, dcY, dcW, dcH, () => {
                     spotify.logout();
                     cachedQr = null;
+                    cloudPair.startPolling();
                 }, 'btn_logout', 15);
             } else {
-                // QR Code for Driver's Phone
-                const qrx = 160, qry = 114, qrsz = 200;
+                // Real Cloud Pairing QR Code
+                const qrx = 160, qry = 114, qrsz = 195;
                 const qr = getQrMatrix();
                 if (qr) {
                     const modCount = qr.size;
@@ -273,9 +339,10 @@ mgu.run({
                     }
                 }
 
-                cv.text('Scan with phone to connect Spotify', 330, 362, 19, t.text, { align: 'center', font: 'bold' });
-                cv.text('Connect phone to BMW Wi-Fi Hotspot / CarPlay', 330, 390, 14, t.dim, { align: 'center' });
-                cv.text(authServer.getLoginUrl(), 330, 415, 13, '#00f0ff', { align: 'center', font: 'num' });
+                cv.text('Scan with phone to connect Spotify', 330, 355, 19, t.text, { align: 'center', font: 'bold' });
+                cv.text('Open camera on any smartphone (4G/5G/Wi-Fi)', 330, 380, 14, t.dim, { align: 'center' });
+                cv.text('PAIRING CODE: ' + cloudPair.getShortCode(), 330, 404, 15, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
+                cv.text('https://hexlay.github.io/idrive7-custom-apps/pair.html', 330, 426, 12, '#64748b', { align: 'center' });
             }
 
             // Right: Spotify Connect Target Devices
@@ -290,7 +357,7 @@ mgu.run({
 
                 cv.circle(694, dy + 35, 10, isCur ? '#1db954' : t.tick);
                 cv.text(dev.name, 724, dy + 33, 24, isCur ? t.text : '#dddddd', { font: 'bold' });
-                cv.text(dev.type + (isCur ? '  ·  CURRENT ACTIVE TARGET' : '  ·  Available'), 724, dy + 55, 18, isCur ? t.accent : t.dim);
+                cv.text(dev.type + (isCur ? '  -  CURRENT ACTIVE TARGET' : '  -  Available'), 724, dy + 55, 18, isCur ? t.accent : t.dim);
 
                 cv.roundRect(1410, dy + 16, 106, 38, 8, isCur ? t.accent : withAlpha(t.tick, 0.5));
                 cv.text(isCur ? 'CONNECTED' : 'TRANSFER', 1463, dy + 40, 16, '#ffffff', { align: 'center', font: 'bold' });
@@ -302,7 +369,7 @@ mgu.run({
 
             // Status indicator
             cv.roundRect(664, 380, 280, 42, 8, withAlpha(t.panelEdge, 0.8));
-            cv.text(spotify.isOnline ? 'ONLINE: CONNECTED' : 'AWAITING PHONE LOGIN', 804, 406, 17, spotify.isOnline ? '#1ed760' : '#ffb703', { align: 'center', font: 'bold' });
+            cv.text(spotify.isOnline ? 'ONLINE: CONNECTED' : 'AWAITING PHONE PAIRING', 804, 406, 16, spotify.isOnline ? '#1ed760' : '#ffb703', { align: 'center', font: 'bold' });
         }
 
         /* ---------- Master Render Loop ---------- */
@@ -313,7 +380,35 @@ mgu.run({
             const t = ctx.theme();
             const cv = ctx.canvas(W, H).clear(t.bg);
 
-            // Draw current active page
+            const isOnline = settings.get('demo') !== 'on';
+
+            // 1. Connection check: In Online mode, if there is no internet, disable app
+            if (isOnline && !spotify.hasInternet) {
+                drawNoInternet(cv, t);
+                G.frame(cv, t, PAGES, page, [
+                    { text: 'SPOTIFY' },
+                    { text: 'NO INTERNET (LOCKED)', color: '#e1001a' }
+                ]);
+                await ui.image('MAIN_GFX', cv);
+                return;
+            }
+
+            // 2. Authentication check: In Online mode, if unauthenticated, force Connect or Gating
+            if (isOnline && (!spotify.token || !spotify.paired)) {
+                if (page === 3) {
+                    drawConnect(cv, t);
+                } else {
+                    drawRequireConnect(cv, t);
+                }
+                G.frame(cv, t, PAGES, page, [
+                    { text: 'SPOTIFY' },
+                    { text: 'LOGIN REQUIRED', color: '#ffb703' }
+                ]);
+                await ui.image('MAIN_GFX', cv);
+                return;
+            }
+
+            // Normal Playback / Browsing screens
             if (page === 0) drawPlaylists(cv, t);
             else if (page === 1) drawLibrary(cv, t);
             else if (page === 2) drawQueue(cv, t);
@@ -330,9 +425,21 @@ mgu.run({
         }
 
         /* ---------- HMI Button & Touch Interactions ---------- */
-        ui.onClick('BTN_PLAY', () => { spotify.togglePlay(); return render(); });
-        ui.onClick('BTN_NEXT', () => { spotify.nextTrack(); return render(); });
-        ui.onClick('BTN_PREV', () => { spotify.prevTrack(); return render(); });
+        ui.onClick('BTN_PLAY', () => {
+            if (settings.get('demo') !== 'on' && (!spotify.hasInternet || !spotify.token)) return render();
+            spotify.togglePlay();
+            return render();
+        });
+        ui.onClick('BTN_NEXT', () => {
+            if (settings.get('demo') !== 'on' && (!spotify.hasInternet || !spotify.token)) return render();
+            spotify.nextTrack();
+            return render();
+        });
+        ui.onClick('BTN_PREV', () => {
+            if (settings.get('demo') !== 'on' && (!spotify.hasInternet || !spotify.token)) return render();
+            spotify.prevTrack();
+            return render();
+        });
         ui.onClick('BTN_PAGE', () => { page = (page + 1) % PAGES.length; return render(); });
         ctx.onTab((idx) => { page = idx; return render(); });
 

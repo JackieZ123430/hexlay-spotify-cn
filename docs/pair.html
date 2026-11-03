@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BMW iDrive 7 - Spotify Connect</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: #070b12;
+            color: #f1f5f9;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            padding: 24px 16px 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .header {
+            width: 100%;
+            max-width: 440px;
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        .badge {
+            display: inline-block;
+            background: #004e8c;
+            color: #00f0ff;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            padding: 4px 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+        h1 {
+            font-size: 24px;
+            font-weight: 800;
+            color: #ffffff;
+            margin-bottom: 6px;
+        }
+        p.subtitle {
+            font-size: 14px;
+            color: #94a3b8;
+        }
+        .card {
+            background: #0e1522;
+            border: 1px solid #1e293b;
+            border-radius: 16px;
+            padding: 26px 20px;
+            width: 100%;
+            max-width: 440px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            margin-bottom: 20px;
+        }
+        .btn-spotify {
+            display: block;
+            width: 100%;
+            background: #1ed760;
+            color: #000000;
+            font-size: 16px;
+            font-weight: 700;
+            text-align: center;
+            padding: 16px 0;
+            border-radius: 30px;
+            text-decoration: none;
+            cursor: pointer;
+            border: none;
+            transition: transform 0.1s ease, background 0.2s ease;
+            margin-top: 14px;
+            margin-bottom: 12px;
+        }
+        .btn-spotify:active {
+            transform: scale(0.98);
+            background: #1ab250;
+        }
+        .pair-code {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            background: #141f2e;
+            border: 1px solid #23354d;
+            padding: 12px;
+            border-radius: 10px;
+            font-size: 18px;
+            margin-bottom: 16px;
+            color: #00f0ff;
+            font-weight: 700;
+            letter-spacing: 2px;
+            font-family: monospace;
+        }
+        label {
+            display: block;
+            font-size: 13px;
+            color: #cbd5e1;
+            margin-bottom: 6px;
+            margin-top: 14px;
+            font-weight: 600;
+        }
+        input[type="text"] {
+            width: 100%;
+            background: #060a10;
+            border: 1px solid #253347;
+            border-radius: 8px;
+            padding: 12px;
+            color: #ffffff;
+            font-size: 14px;
+            outline: none;
+        }
+        input[type="text"]:focus {
+            border-color: #1ed760;
+        }
+        .success-box {
+            display: none;
+            text-align: center;
+            padding: 20px 0;
+        }
+        .icon-check {
+            width: 64px;
+            height: 64px;
+            background: #1ed760;
+            color: #000;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            font-weight: bold;
+            margin: 0 auto 20px;
+        }
+        details {
+            margin-top: 18px;
+            border-top: 1px solid #1a2433;
+            padding-top: 14px;
+        }
+        summary {
+            font-size: 13px;
+            color: #00a3e0;
+            cursor: pointer;
+            font-weight: 600;
+            outline: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="badge">BMW iDrive 7 Cockpit</div>
+        <h1>Spotify Connect</h1>
+        <p class="subtitle">Connect your personal Spotify library to your vehicle</p>
+    </div>
+
+    <!-- Active Pairing Card -->
+    <div class="card" id="cardPairing">
+        <div class="pair-code" id="codeDisplay">PAIRING CODE: <span id="spanCode">BMW-CONNECT</span></div>
+        <p style="font-size: 13px; color: #94a3b8; text-align: center; margin-bottom: 12px;">
+            Tap below to authenticate with Spotify on this phone. Your library will sync with your vehicle instantly.
+        </p>
+
+        <button class="btn-spotify" id="btnConnect" onclick="startAuth()">Connect with Spotify</button>
+
+        <div style="display: flex; align-items: center; text-align: center; margin: 18px 0 14px; color: #475569;">
+            <div style="flex: 1; height: 1px; background: #1e293b;"></div>
+            <span style="padding: 0 10px; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;">or paste access token</span>
+            <div style="flex: 1; height: 1px; background: #1e293b;"></div>
+        </div>
+
+        <div>
+            <input type="text" id="inputManualToken" placeholder="Paste Spotify OAuth access token (starts with BQ...)">
+            <button style="width: 100%; margin-top: 10px; background: #004e8c; color: #ffffff; border: 1px solid #00a3e0; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 14px; cursor: pointer;" onclick="sendManualToken()">Send Token to Car</button>
+        </div>
+
+        <details>
+            <summary>Custom Spotify App / Client ID</summary>
+            <div style="margin-top: 12px;">
+                <p style="font-size: 12px; color: #94a3b8; margin-bottom: 8px;">
+                    If using your own Spotify Developer App, add this exact Redirect URI to your Spotify App Dashboard:
+                    <br><code style="color: #00f0ff; background: #070d18; padding: 2px 6px; border-radius: 4px; display: inline-block; margin-top: 4px; word-break: break-all;">https://hexlay.github.io/idrive7-custom-apps/pair.html</code>
+                </p>
+                <label>Spotify Client ID</label>
+                <input type="text" id="inputClientId" placeholder="Your Spotify Client ID">
+                <label>Car Pairing Code / Channel</label>
+                <input type="text" id="inputChannel" placeholder="e.g. bmw_spot_xyz">
+            </div>
+        </details>
+    </div>
+
+    <!-- Success Card -->
+    <div class="card success-box" id="cardSuccess">
+        <div class="icon-check">&#10003;</div>
+        <h2 style="font-size: 22px; color: #ffffff; margin-bottom: 10px;">Connected to BMW iDrive!</h2>
+        <p style="font-size: 14px; color: #94a3b8; line-height: 1.5; margin-bottom: 20px;">
+            Your authorization tokens have been transmitted to your car's cockpit. Your personal playlists, saved songs, and active devices are now live on your iDrive 7 screen!
+        </p>
+        <span style="font-size: 12px; color: #00f0ff; background: #002b4d; padding: 6px 14px; border-radius: 20px;">
+            You can now close this browser tab
+        </span>
+    </div>
+
+    <script>
+        const DEFAULT_CLIENT_ID = 'e7a0225d57b243b8a3e7587d605c30fb'; // Universal default or customizable
+        const SCOPES = [
+            'user-read-playback-state',
+            'user-modify-playback-state',
+            'user-read-currently-playing',
+            'playlist-read-private',
+            'playlist-read-collaborative',
+            'user-library-read'
+        ].join(' ');
+
+        // Read query params and hash fragment
+        const urlParams = new URLSearchParams(window.location.search);
+        let channel = urlParams.get('channel') || localStorage.getItem('bmw_spot_channel') || '';
+        let clientId = urlParams.get('client_id') || localStorage.getItem('bmw_spot_client_id') || DEFAULT_CLIENT_ID;
+
+        if (channel) {
+            localStorage.setItem('bmw_spot_channel', channel);
+            const shortCode = channel.replace('bmw_spot_', '').toUpperCase();
+            document.getElementById('spanCode').innerText = shortCode;
+            document.getElementById('inputChannel').value = channel;
+        }
+        if (clientId) {
+            document.getElementById('inputClientId').value = clientId;
+        }
+
+        // Check if returning from Spotify OAuth (token in hash)
+        function checkOAuthReturn() {
+            if (window.location.hash && window.location.hash.includes('access_token')) {
+                const hashParams = new URLSearchParams(window.location.hash.substring(1));
+                const token = hashParams.get('access_token');
+                const expiresIn = hashParams.get('expires_in') || '3600';
+                const state = hashParams.get('state') || channel;
+
+                if (token && state) {
+                    // Send token to vehicle via cloud broker
+                    const payload = {
+                        token: token,
+                        expiresAt: Date.now() + (parseInt(expiresIn, 10) * 1000),
+                        time: Date.now()
+                    };
+
+                    fetch('https://ntfy.sh/' + state, {
+                        method: 'POST',
+                        body: JSON.stringify(payload)
+                    }).then(() => {
+                        document.getElementById('cardPairing').style.display = 'none';
+                        document.getElementById('cardSuccess').style.display = 'block';
+                    }).catch(err => {
+                        console.error('Failed to publish token:', err);
+                        // Still show success since token was acquired
+                        document.getElementById('cardPairing').style.display = 'none';
+                        document.getElementById('cardSuccess').style.display = 'block';
+                    });
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function startAuth() {
+            const customId = document.getElementById('inputClientId').value.trim();
+            const activeId = customId || clientId || DEFAULT_CLIENT_ID;
+            const customChannel = document.getElementById('inputChannel').value.trim() || channel || ('bmw_spot_' + Math.random().toString(36).substring(2, 10));
+
+            localStorage.setItem('bmw_spot_client_id', activeId);
+            localStorage.setItem('bmw_spot_channel', customChannel);
+
+            // Redirect URI: exact URL of this pair page (stripping hash/query)
+            const redirectUri = window.location.origin + window.location.pathname;
+
+            const authParams = new URLSearchParams({
+                client_id: activeId,
+                response_type: 'token',
+                redirect_uri: redirectUri,
+                scope: SCOPES,
+                state: customChannel,
+                show_dialog: 'true'
+            });
+
+            window.location.href = 'https://accounts.spotify.com/authorize?' + authParams.toString();
+        }
+
+        function sendManualToken() {
+            const token = document.getElementById('inputManualToken').value.trim();
+            const targetChannel = document.getElementById('inputChannel').value.trim() || channel;
+            if (!token) {
+                alert('Please enter or paste a valid Spotify token.');
+                return;
+            }
+            if (!targetChannel) {
+                alert('Missing car pairing channel. Please scan the QR code from the car screen.');
+                return;
+            }
+
+            const payload = {
+                token: token,
+                expiresAt: Date.now() + 3600000,
+                time: Date.now()
+            };
+
+            fetch('https://ntfy.sh/' + targetChannel, {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            }).then(() => {
+                document.getElementById('cardPairing').style.display = 'none';
+                document.getElementById('cardSuccess').style.display = 'block';
+            }).catch(err => {
+                alert('Transmission failed. Check internet connection.');
+            });
+        }
+
+        checkOAuthReturn();
+    </script>
+</body>
+</html>

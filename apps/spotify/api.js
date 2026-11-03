@@ -92,29 +92,110 @@ class SpotifyClient {
         this.clientSecret = null;
         this.paired = false;
         this.isOnline = false;
-        this.activeDevice = 'iPhone (BMW iDrive)';
+        this.activeDevice = 'BMW iDrive 7';
         this.lastSync = 0;
         this.syncing = false;
 
-        // Playlists cache
-        this.playlists = DEMO_PLAYLISTS;
-        this.devices = DEMO_DEVICES;
+        // Internet connection monitoring
+        this.hasInternet = (ctx.settings && ctx.settings.get('net') === 'off') ? false : true;
+        this.lastInternetCheck = 0;
+
+        // Mode: Default is Online (demo is off)
+        this.isDemoMode = ctx.settings ? (ctx.settings.get('demo') === 'on') : false;
+
+        // Playlists cache (In online mode, empty until authenticated)
+        this.playlists = this.isDemoMode ? DEMO_PLAYLISTS : [];
+        this.devices = this.isDemoMode ? DEMO_DEVICES : [];
 
         // Playback state
-        this.isPlaying = true;
-        this.currentPlaylist = this.playlists[0];
-        this.currentTrack = this.currentPlaylist.tracks[0];
+        this.isPlaying = false;
+        this.currentPlaylist = this.playlists[0] || null;
+        this.currentTrack = this.currentPlaylist && this.currentPlaylist.tracks ? this.currentPlaylist.tracks[0] : null;
         this.trackIndex = 0;
-        this.progressMs = 45000;
+        this.progressMs = 0;
         this.lastTickTime = Date.now();
         this.shuffle = false;
         this.repeat = 'off';
-        this.volume = 82;
+        this.volume = 80;
 
         this._loadAuth();
         if (this.token) {
             this.initialFetch();
         }
+
+        // Run initial internet check and schedule periodic check
+        this.checkInternetConnection().catch(() => {});
+        setInterval(() => {
+            this.checkInternetConnection().catch(() => {});
+        }, 12000);
+    }
+
+    async checkInternetConnection() {
+        if (this.ctx.settings && this.ctx.settings.get('net') === 'off') {
+            this.hasInternet = false;
+            this.lastInternetCheck = Date.now();
+            return false;
+        }
+        return new Promise((resolve) => {
+            const req = https.request({
+                hostname: 'api.spotify.com',
+                port: 443,
+                path: '/v1',
+                method: 'HEAD',
+                timeout: 4000
+            }, (res) => {
+                this.hasInternet = true;
+                this.lastInternetCheck = Date.now();
+                resolve(true);
+            });
+            req.on('error', () => {
+                this.hasInternet = false;
+                this.lastInternetCheck = Date.now();
+                resolve(false);
+            });
+            req.on('timeout', () => {
+                req.destroy();
+                this.hasInternet = false;
+                this.lastInternetCheck = Date.now();
+                resolve(false);
+            });
+            req.end();
+        });
+    }
+
+    saveAuthTokens(data) {
+        if (!data || !data.token) return;
+        this.token = data.token;
+        if (data.refreshToken) this.refreshToken = data.refreshToken;
+        if (data.expiresAt) this.expiresAt = data.expiresAt;
+        if (data.clientId) this.clientId = data.clientId;
+        this.paired = true;
+        this.isOnline = true;
+
+        const paths = [
+            this.ctx && this.ctx.dataDir ? path.join(this.ctx.dataDir, 'spotify_auth.json') : null,
+            path.join(__dirname, 'spotify_auth.json')
+        ].filter(Boolean);
+
+        const out = {
+            token: this.token,
+            refreshToken: this.refreshToken,
+            expiresAt: this.expiresAt,
+            clientId: this.clientId,
+            clientSecret: this.clientSecret,
+            savedAt: new Date().toISOString()
+        };
+
+        paths.forEach(p => {
+            try {
+                fs.writeFileSync(p, JSON.stringify(out, null, 2), 'utf8');
+                this.log.info('SpotifyClient: Saved auth tokens to ' + p);
+            } catch (e) {
+                this.log.warn('SpotifyClient: Could not save tokens to ' + p + ': ' + e.message);
+            }
+        });
+
+        this.initialFetch();
     }
 
     _loadAuth() {

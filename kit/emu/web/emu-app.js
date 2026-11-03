@@ -80,6 +80,113 @@ function onBinary(u8) {
   }
 }
 
+/* ---------------- Video Playback Overlay (Emulator Bridge) ---------------- */
+let videoLayer = null;
+let activeVideoElem = null;
+let currentYtId = null;
+
+function ensureVideoLayer() {
+  if (!videoLayer) {
+    videoLayer = el('div', { id: 'video-layer', hidden: true });
+    const picker = $('#picker');
+    if (picker) stage.insertBefore(videoLayer, picker);
+    else stage.append(videoLayer);
+  }
+  return videoLayer;
+}
+
+function handleVideoEvent(m) {
+  const layer = ensureVideoLayer();
+  switch (m.action) {
+  case 'play': {
+    layer.hidden = false;
+    const x = m.x || 64, y = m.y || 158, w = m.w || 992, h = m.h || 236, r = m.r || 8;
+    layer.style.left = `calc(var(--u) * ${x})`;
+    layer.style.top = `calc(var(--u) * ${y})`;
+    layer.style.width = `calc(var(--u) * ${w})`;
+    layer.style.height = `calc(var(--u) * ${h})`;
+    layer.style.borderRadius = `0 0 calc(var(--u) * ${r}) calc(var(--u) * ${r})`;
+
+    if (m.ytId) {
+      if (currentYtId !== m.ytId || !activeVideoElem || activeVideoElem.tagName !== 'IFRAME') {
+        currentYtId = m.ytId;
+        layer.replaceChildren();
+        const iframe = el('iframe', {
+          src: `https://www.youtube-nocookie.com/embed/${m.ytId}?enablejsapi=1&autoplay=1&controls=0&modestbranding=1&rel=0&playsinline=1&iv_load_policy=3`,
+          allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture',
+          allowfullscreen: 'true'
+        });
+        activeVideoElem = iframe;
+        layer.append(iframe);
+      } else {
+        try {
+          activeVideoElem.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: '' }), '*');
+        } catch (e) {}
+      }
+    } else if (m.url) {
+      currentYtId = null;
+      layer.replaceChildren();
+      const vid = el('video', {
+        src: m.url,
+        autoplay: true,
+        playsinline: true
+      });
+      activeVideoElem = vid;
+      layer.append(vid);
+    }
+    break;
+  }
+  case 'pause':
+    if (activeVideoElem) {
+      if (activeVideoElem.tagName === 'IFRAME') {
+        try {
+          activeVideoElem.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: '' }), '*');
+        } catch (e) {}
+      } else if (typeof activeVideoElem.pause === 'function') {
+        activeVideoElem.pause();
+      }
+    }
+    break;
+  case 'resume':
+    if (activeVideoElem) {
+      if (activeVideoElem.tagName === 'IFRAME') {
+        try {
+          activeVideoElem.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: '' }), '*');
+        } catch (e) {}
+      } else if (typeof activeVideoElem.play === 'function') {
+        activeVideoElem.play();
+      }
+    }
+    break;
+  case 'seek':
+    if (activeVideoElem && typeof m.time === 'number') {
+      if (activeVideoElem.tagName === 'IFRAME') {
+        try {
+          activeVideoElem.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [m.time, true] }), '*');
+        } catch (e) {}
+      } else {
+        activeVideoElem.currentTime = m.time;
+      }
+    }
+    break;
+  case 'hide':
+  case 'lock':
+    if (layer) layer.hidden = true;
+    break;
+  case 'show':
+    if (layer && activeVideoElem) layer.hidden = false;
+    break;
+  case 'stop':
+    currentYtId = null;
+    activeVideoElem = null;
+    if (layer) {
+      layer.hidden = true;
+      layer.replaceChildren();
+    }
+    break;
+  }
+}
+
 function onText(m) {
   switch (m.t) {
   case 'hello':
@@ -101,7 +208,11 @@ function onText(m) {
     break;
   case 'log': addLog(m.lines); break;
   case 'conn': S.conn = m; break;
-  case 'screens': S.stack = m.stack; S.closed = !!m.closed; renderHmi(); picker(); break;
+  case 'screens':
+    S.stack = m.stack; S.closed = !!m.closed; renderHmi(); picker();
+    if (m.closed) handleVideoEvent({ action: 'stop' });
+    break;
+  case 'video': handleVideoEvent(m); break;
   case 'focus': S.focus = m.id; renderHmi(); break;
   case 'soft': { const s = $('#soft'); if (m.png) { s.src = 'data:image/png;base64,' + m.png; s.hidden = false; } else { s.hidden = true; s.removeAttribute('src'); } break; }
   case 'sigmode': S.sig = m; syncSignals(); break;

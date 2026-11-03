@@ -74,6 +74,14 @@ mgu.run({
         let vehicleSpeed = 0;
         let statusMsg = null;
         let statusTime = 0;
+        let lastMotionLocked = false;
+
+        function setPage(idx) {
+            page = idx;
+            if (process.send) {
+                process.send({ t: 'video', action: page === 0 && isPlaying && !lastMotionLocked ? 'show' : 'hide' });
+            }
+        }
 
         // Native Hardware Video Engine (Protocol 4 OP_VIDEO)
         const player = new VideoPlayer(log, { shmPath: '/dev/shm/mgu-video-cinema' });
@@ -138,7 +146,7 @@ mgu.run({
         function playVideo(video) {
             video.quality = '720p HD';
             activeCastVideo = video;
-            page = 0; // jump directly to Now Playing
+            setPage(0); // jump directly to Now Playing
             isPlaying = true;
             currentTimeSec = 0;
             totalDurationSec = video.durationSec || parseDurationSec(video.duration);
@@ -151,7 +159,7 @@ mgu.run({
 
             // Start native video engine playback
             const streamUrl = video.streamUrl || video.url || ('https://youtube.com/watch?v=' + video.ytId);
-            player.play(streamUrl, totalDurationSec);
+            player.play(streamUrl, totalDurationSec, video);
 
             notify('Playing: ' + video.title);
             render().catch(() => {});
@@ -236,6 +244,13 @@ mgu.run({
             const interlock = settings.interlock || 'auto';
             const motionLocked = !isParked && interlock === 'strict';
 
+            if (motionLocked !== lastMotionLocked) {
+                lastMotionLocked = motionLocked;
+                if (process.send) {
+                    process.send({ t: 'video', action: motionLocked ? 'hide' : (isPlaying && page === 0 ? 'show' : 'hide') });
+                }
+            }
+
             // Left / Main Media Viewport (1040 x 410)
             G.panel(cv, t, 40, 52, 1040, 410, 'Video Display');
 
@@ -305,7 +320,7 @@ mgu.run({
             cv.strokeRoundRect(1124, 344, btnW, btnH, 8, 1, '#1e324c');
             cv.text('SEARCH VIDEOS IN IDRIVE  >', 1124 + btnW / 2, 375, 14, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
             cv.target(1124, 344, btnW, btnH, () => {
-                page = 1;
+                setPage(1);
                 render().catch(() => {});
             }, 'btn_go_search', 10);
 
@@ -636,7 +651,7 @@ mgu.run({
             if (cv.tabRects && Array.isArray(cv.tabRects)) {
                 cv.tabRects.forEach((tr) => {
                     cv.target(tr.x, tr.y, tr.w, tr.h, () => {
-                        page = tr.i;
+                        setPage(tr.i);
                         render().catch(() => {});
                     }, 'hdr_tab_' + tr.i, 15);
                 });
@@ -653,12 +668,12 @@ mgu.run({
         /* ---------- Tab Navigation & Interactions ---------- */
         ctx.hideButton('BTN_PAGE');
         ctx.onTab((idx) => {
-            page = idx;
+            setPage(idx);
             return render();
         });
 
         ui.onClick('BTN_PAGE', () => {
-            page = (page + 1) % PAGES.length;
+            setPage((page + 1) % PAGES.length);
             return render();
         });
 

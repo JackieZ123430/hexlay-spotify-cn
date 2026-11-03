@@ -49,12 +49,30 @@ class VideoPlayer {
         return null;
     }
 
-    play(streamUrl, durationSec) {
+    play(streamUrl, durationSec, videoMeta) {
         this.stop();
         this.activeUrl = streamUrl;
+        this.activeMeta = videoMeta || {};
         this.totalDurationSec = durationSec || 0;
         this.currentTimeSec = 0;
         this.isPlaying = true;
+
+        if (process.send) {
+            process.send({
+                t: 'video',
+                action: 'play',
+                url: streamUrl,
+                ytId: (videoMeta && videoMeta.ytId) || null,
+                title: (videoMeta && videoMeta.title) || '',
+                duration: this.totalDurationSec,
+                time: this.currentTimeSec,
+                x: 64,
+                y: 158,
+                w: 992,
+                h: 236,
+                r: 8
+            });
+        }
 
         const bin = this._findBinary();
         if (!bin) {
@@ -153,6 +171,9 @@ class VideoPlayer {
         if (this.proc) {
             this._sendCtrl('pause');
         }
+        if (process.send) {
+            process.send({ t: 'video', action: 'pause' });
+        }
     }
 
     resume() {
@@ -160,12 +181,18 @@ class VideoPlayer {
         if (this.proc) {
             this._sendCtrl('resume');
         }
+        if (process.send) {
+            process.send({ t: 'video', action: 'resume' });
+        }
     }
 
     seek(sec) {
         this.currentTimeSec = Math.max(0, sec);
         if (this.proc) {
             this._sendCtrl(`seek ${this.currentTimeSec}`);
+        }
+        if (process.send) {
+            process.send({ t: 'video', action: 'seek', time: this.currentTimeSec });
         }
     }
 
@@ -186,6 +213,9 @@ class VideoPlayer {
                 try { if (p && !p.killed) p.kill('SIGKILL'); } catch (e) {}
             }, 500);
             this.proc = null;
+        }
+        if (process.send) {
+            process.send({ t: 'video', action: 'stop' });
         }
     }
 

@@ -20,8 +20,8 @@
       "title": "M-Cinema",
       "buttons": [
         ["BTN_PLAY", "Play / Pause"],
-        ["BTN_MODE", "Aspect Mode"],
-        ["BTN_PAGE", "Cast QR / Player"],
+        ["BTN_SEARCH", "Search"],
+        ["BTN_PAGE", "Next Tab"],
         ["BTN_SETTINGS", "Settings"]
       ]
     }

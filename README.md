@@ -85,23 +85,23 @@ This repository is forked and built upon the foundational open-source BMW iDrive
 ---
 
 ### 3. M-Cinema (`m_cinema`)
-**Ultrawide 21:9 Cockpit Theater & Seamless YouTube Smartphone Video Cast for BMW iDrive 7.**
+**Ultrawide 21:9 Cockpit Theater & Seamless YouTube Video Cast for BMW iDrive 7.**
 
-| YouTube Cockpit Player (21:9) | Mobile Cloud Cast & YouTube Search |
-| :---: | :---: |
-| ![M-Cinema](docs/screenshots/m_cinema.png) | ![M-Cinema Cast](docs/screenshots/m_cinema_cast.png) |
+| YouTube Cockpit Player (21:9) | In-Car YouTube Search & Speller | Official YouTube TV Code & QR Cast |
+| :---: | :---: | :---: |
+| ![M-Cinema](docs/screenshots/m_cinema.png) | ![M-Cinema Search](docs/screenshots/m_cinema_search.png) | ![M-Cinema Cast](docs/screenshots/m_cinema_cast.png) |
 
-* **Zero 127.0.0.1 / Localhost Cloud Relay**:
-  - Replaces fragile local IP / port binding with public cloud relay (`https://hexlay.github.io/idrive7-custom-apps/cinema.html?channel=<CHANNEL>`).
-  - Works seamlessly from any iPhone or Android phone over 4G, 5G, or car Wi-Fi hotspot without AP isolation or NAT blockage.
-* **YouTube Search & 1-Tap Instant Cast**:
-  - Search any YouTube video directly from the phone remote without complex dashboards.
-  - Multi-instance search fallback with live duration, creator, and thumbnail previews.
-  - 1-Tap Paste & Cast button automatically parses YouTube URLs, Shorts, and video IDs.
-* **Cockpit Thumbnail Artwork & 21:9 Ultrawide**:
-  - Automatically loads and decodes official high-resolution YouTube video thumbnail art into the cockpit screen.
-  - Cinema ultrawide aspect ratio fill, live ambilight edge glow, and rotary controller knob scrubbing.
-* **Intel Atom A3960 Thermal Protection**:
+* **Direct YouTube Search in iDrive 7**:
+  - Search any video directly from the central display using touch or the iDrive rotary controller.
+  - Interactive on-screen BMW speller keyboard, 1-touch category chips (`BMW M3`, `Nürburgring`, `Car Reviews`, `Drag Race`), and live video results with instant playback.
+* **Official YouTube App Casting ("Link with TV Code")**:
+  - Connects with the official YouTube mobile app on iPhone and Android via Google's official **Lounge on TV** protocol.
+  - In YouTube mobile app: **Settings > Watch on TV > Link with TV code** — enter the 12-digit code displayed on your cockpit screen. The vehicle permanently appears as a Cast target (`BMW iDrive 7`) in the official YouTube app!
+* **Smartphone Web Remote & 1-Tap Paste (`cinema.html`)**:
+  - For passengers and quick casting over 4G, 5G, or car Wi-Fi (`https://hexlay.github.io/idrive7-custom-apps/cinema.html`). Zero 127.0.0.1 / localhost issues.
+* **Decoded Video Thumbnail Artwork & 21:9 Ultrawide**:
+  - Downloads and decodes official high-resolution YouTube video thumbnail art into the cockpit screen with ambient edge accents and rotary scrubbing.
+* **Intel Atom A3960 Hardware Thermal Safe Cap**:
   - Capped to thermal-safe **720p 60** (cool & efficient) or **1080p 60** max limit, rejecting 4K/2K streams to protect the head unit processor from overheating.
 
 ---

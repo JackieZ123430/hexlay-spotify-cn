@@ -43,11 +43,6 @@
     }
   ],
   "settings": [
-    {"key": "tier", "label": "AI Service Model", "type": "choice", "default": "gemini",
-     "options": [
-       ["gemini", "Google Gemini 1.5/2.0 Flash (Online Cloud)"],
-       ["custom_api", "Custom Cloud API (OpenAI / Claude / Groq)"]
-     ]},
     {"key": "persona", "label": "Co-Driver Persona", "type": "choice", "default": "m_engineer",
      "options": [
        ["m_engineer", "BMW M Track Engineer (Dynamic & Technical)"],

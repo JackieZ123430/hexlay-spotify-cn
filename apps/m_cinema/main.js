@@ -1,37 +1,32 @@
 'use strict';
 /**
- * M-Cinema - Native BMW iDrive 7 (MGU) YouTube Cockpit Theater & Video Cast.
+ * M-Cinema - Native BMW iDrive 7 (MGU) YouTube Cockpit Theater & Video Player.
  * Styled after BMW ConnectedDrive & Live Cockpit Professional design language.
  *
- * Capabilities:
+ * Operational Architecture:
  *   1. In-Car YouTube Search:
  *      Search YouTube videos directly from the iDrive 7 central display using an
  *      on-screen BMW speller keyboard, category chips, and live results list.
  *   2. Official YouTube App TV Casting ("Link with TV code"):
  *      Pairs with the official YouTube mobile app on iPhone & Android via Google's
- *      Lounge on TV protocol (Settings > Watch on TV > Link with TV code).
- *   3. Zero-127.0.0.1 Cloud Relay & Mobile Remote:
- *      QR code connects to https://hexlay.github.io/idrive7-custom-apps/cinema.html
- *      for instant 1-tap paste & cast over 4G, 5G, or Wi-Fi.
- *   4. Real YouTube Thumbnail Decoder:
- *      Downloads and renders high-resolution video artwork directly onto the cockpit canvas.
- *   5. Intel Atom A3960 Hardware Thermal Safe Cap:
+ *      official Lounge on TV protocol (Settings > Watch on TV > Link with TV code).
+ *      Vehicle permanently appears as a Cast target ("BMW iDrive 7") in the official YouTube app!
+ *   3. Real YouTube Thumbnail Decoder:
+ *      Downloads and decodes high-resolution video artwork directly onto the cockpit canvas.
+ *   4. Intel Atom A3960 Hardware Thermal Safe Cap:
  *      Clamps streams to 720p or 1080p 60 to protect head unit CPU/GPU.
  *
  * Pages:
  *   0: Now Playing - 21:9 Widescreen player with live ambient accent
  *   1: Search - In-car YouTube search, speller keyboard & video results
- *   2: Connect - YouTube TV Link Code & Smartphone QR remote
+ *   2: Connect - Official YouTube TV Link Code & Pairing Instructions
  */
 const mgu = require('./kit/mgu');
 const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
-const { CastServer } = require('./server');
-const { CloudCastManager, parseYouTubeId } = require('./cloud_cast');
 const { YouTubeSearchEngine } = require('./youtube_search');
 const { YouTubeLoungeReceiver } = require('./lounge');
 const { YouTubeThumbnailManager, THUMB_IMG_ID } = require('./thumbnail');
-const qrcodegen = require('./qrcodegen');
 
 const W = 1600, H = 520;
 const PAGES = ['Now Playing', 'Search', 'Connect'];
@@ -62,13 +57,13 @@ mgu.run({
 
         // Active YouTube video
         let activeCastVideo = {
-            title: 'Ready to Cast',
-            channel: 'YouTube Receiver',
+            title: 'Ready to Play',
+            channel: 'YouTube on TV',
             duration: '00:00',
             quality: (settings.quality === '1080p') ? '1080p 60' : '720p 60',
             glow: '#0066b1',
             views: 'Connected',
-            desc: 'Search YouTube directly from iDrive in Search tab or link phone in Connect tab.',
+            desc: 'Search YouTube directly from iDrive in Search tab or link YouTube mobile app in Connect tab.',
             ytId: null,
             url: null,
             thumbnail: null
@@ -142,55 +137,6 @@ mgu.run({
             }
         }, log);
         loungeReceiver.start().catch((e) => log.warn('Lounge start err: ' + e.message));
-
-        // Initialize Cloud Cast Relay
-        const cloudCast = new CloudCastManager(ctx, {
-            onCast(video) {
-                playVideo(video);
-            },
-            onControl(cmd, val) {
-                if (cmd === 'toggle') isPlaying = !isPlaying;
-                else if (cmd === 'play') isPlaying = true;
-                else if (cmd === 'pause') isPlaying = false;
-                else if (cmd === 'fullscreen') isFullscreen = !isFullscreen;
-                else if (cmd === 'seek') {
-                    playProgress = Math.max(0, Math.min(1, playProgress + (val || 0) * 0.02));
-                }
-                render().catch(() => {});
-            }
-        });
-        cloudCast.startPolling();
-
-        // Initialize Local In-Car Fallback Server
-        const castServer = new CastServer({
-            onCast(video) {
-                playVideo(video);
-            },
-            onControl(action, val) {
-                if (action === 'toggle') isPlaying = !isPlaying;
-                else if (action === 'fullscreen') isFullscreen = !isFullscreen;
-                else if (action === 'seek') playProgress = Math.max(0, Math.min(1, playProgress + (val || 0) * 0.02));
-                render().catch(() => {});
-            }
-        }, log);
-        castServer.setCloudUrl(cloudCast.getCastUrl());
-        castServer.start();
-
-        /* ---------- QR Code for Smartphone Cloud Cast ---------- */
-        let cachedQr = null;
-        let cachedQrUrl = null;
-        function getCastQr() {
-            const url = cloudCast.getCastUrl();
-            if (cachedQr && cachedQrUrl === url) return cachedQr;
-            try {
-                const qr = qrcodegen.QrCode.encodeText(url, qrcodegen.QrCode.Ecc.MEDIUM);
-                cachedQr = qr;
-                cachedQrUrl = url;
-                return cachedQr;
-            } catch (e) {
-                return null;
-            }
-        }
 
         /* ---------- Vector Play Icon ---------- */
         function drawPlayGlyph(cv, cx, cy, sz, col) {
@@ -270,9 +216,9 @@ mgu.run({
             cv.strokeRoundRect(1124, 114, 96, 24, 4, 1, '#1e324c');
             cv.text('YOUTUBE', 1172, 131, 11, '#00a3e0', { align: 'center', font: 'bold', spacing: 1 });
 
-            const titleText = trunc(video.title || 'Ready to Cast', 32);
+            const titleText = trunc(video.title || 'Ready to Play', 32);
             cv.text(titleText, 1124, 168, 20, '#ffffff', { font: 'bold' });
-            cv.text(video.channel || 'YouTube Receiver', 1124, 196, 16, '#00a3e0', { font: 'bold' });
+            cv.text(video.channel || 'YouTube on TV', 1124, 196, 16, '#00a3e0', { font: 'bold' });
             cv.text(video.views || 'Ready', 1124, 220, 14, t.dim);
 
             const descBoxX = 1124, descBoxY = 236, descBoxW = 412, descBoxH = 76;
@@ -423,7 +369,7 @@ mgu.run({
             drawKeyRow(r2, sx + 20, kbY + 46, 68, 38, 9);
             drawKeyRow(r3, sx + 40, kbY + 92, 68, 38, 9);
 
-            // Bottom Speller Actions (Space, Backspace, Search)
+            // Bottom Speller Actions (Space, Backspace)
             const bSpaceW = 420, bSpaceX = sx + 180, bSpaceY = kbY + 140;
             cv.roundRect(bSpaceX, bSpaceY, bSpaceW, 38, 6, '#131e2d');
             cv.strokeRoundRect(bSpaceX, bSpaceY, bSpaceW, 38, 6, 1, '#1f3047');
@@ -433,7 +379,6 @@ mgu.run({
                 render().catch(() => {});
             }, 'k_space', 10);
 
-            // Backspace Key
             const bBspX = bSpaceX + bSpaceW + 14, bBspW = 160;
             cv.roundRect(bBspX, bSpaceY, bBspW, 38, 6, '#16202e');
             cv.strokeRoundRect(bBspX, bSpaceY, bBspW, 38, 6, 1, '#25354c');
@@ -459,7 +404,6 @@ mgu.run({
                 return;
             }
 
-            // Render up to 4 results
             const visibleCount = 4;
             const items = searchResults.slice(searchScroll, searchScroll + visibleCount);
             let itemY = 110;
@@ -469,15 +413,12 @@ mgu.run({
                 cv.roundRect(1124, itemY, 412, itemH, 8, '#080d15');
                 cv.strokeRoundRect(1124, itemY, 412, itemH, 8, 1, '#182436');
 
-                // Mini thumbnail container
                 cv.roundRect(1132, itemY + 8, 86, 52, 4, '#000000');
                 drawPlayGlyph(cv, 1175, itemY + 34, 16, '#0066b1');
 
-                // Title & Details
                 cv.text(trunc(item.title, 30), 1228, itemY + 26, 14, '#ffffff', { font: 'bold' });
                 cv.text(trunc(item.channel, 20) + ' · ' + (item.duration || ''), 1228, itemY + 48, 12, '#94a3b8');
 
-                // Tap Target to play immediately
                 cv.target(1124, itemY, 412, itemH, () => {
                     playVideo({
                         ytId: item.id,
@@ -496,7 +437,6 @@ mgu.run({
                 itemY += itemH + 8;
             });
 
-            // Scroll Buttons if more results
             if (searchResults.length > visibleCount) {
                 const bScrollY = 416;
                 if (searchScroll > 0) {
@@ -518,72 +458,56 @@ mgu.run({
             }
         }
 
-        /* ---------- Page 2: Connect (Official YouTube TV Code & QR) ---------- */
+        /* ---------- Page 2: Connect (Official YouTube TV Link Code) ---------- */
         function drawConnect(cv, t) {
-            // Left Panel (740px): Official YouTube on TV "Link with TV Code"
-            G.panel(cv, t, 40, 52, 740, 410, 'Official YouTube App (Link with TV Code)');
+            // Left Panel (980px): Official YouTube on TV "Link with TV Code"
+            G.panel(cv, t, 40, 52, 980, 410, 'Link Official YouTube Mobile App (TV Code)');
 
             const lx = 64, ly = 114;
 
             // 12-Digit TV Code Card
-            cv.roundRect(lx, ly, 692, 92, 10, '#090e15');
-            cv.strokeRoundRect(lx, ly, 692, 92, 10, 1.5, '#0066b1');
+            cv.roundRect(lx, ly, 932, 96, 10, '#090e15');
+            cv.strokeRoundRect(lx, ly, 932, 96, 10, 1.5, '#0066b1');
 
-            cv.text('YOUTUBE TV PAIRING CODE', lx + 24, ly + 32, 13, '#00a3e0', { font: 'bold', spacing: 1 });
-            cv.text(loungeReceiver.getPairingCode(), lx + 24, ly + 68, 28, '#00f0ff', { font: 'num' });
+            cv.text('YOUTUBE TV LINK CODE', lx + 24, ly + 32, 13, '#00a3e0', { font: 'bold', spacing: 1 });
+            cv.text(loungeReceiver.getPairingCode(), lx + 24, ly + 72, 32, '#00f0ff', { font: 'num' });
 
             // Instructions to pair official YouTube mobile app
-            cv.roundRect(lx, ly + 108, 692, 210, 10, '#070c14');
-            cv.strokeRoundRect(lx, ly + 108, 692, 210, 10, 1, '#1e2d42');
+            cv.roundRect(lx, ly + 110, 932, 214, 10, '#070c14');
+            cv.strokeRoundRect(lx, ly + 110, 932, 214, 10, 1, '#1e2d42');
 
-            cv.text('HOW TO CAST FROM OFFICIAL YOUTUBE APP:', lx + 24, ly + 140, 16, '#ffffff', { font: 'bold' });
-            cv.text('1. Open official YouTube app on iPhone or Android', lx + 24, ly + 170, 14, '#cbd5e1');
-            cv.text('2. Tap Settings (gear icon) > Watch on TV', lx + 24, ly + 198, 14, '#cbd5e1');
-            cv.text('3. Tap "Link with TV code" and type the 12-digit code above', lx + 24, ly + 226, 14, '#00a3e0', { font: 'bold' });
-            cv.text('4. Tap Cast icon in YouTube app — vehicle appears as "BMW iDrive 7"!', lx + 24, ly + 254, 14, '#cbd5e1');
-            cv.text('5. Any video you tap on phone streams straight to your cockpit.', lx + 24, ly + 282, 14, '#2af575', { font: 'bold' });
+            cv.text('HOW TO CAST FROM OFFICIAL YOUTUBE APP (IPHONE / ANDROID):', lx + 24, ly + 144, 16, '#ffffff', { font: 'bold' });
+            cv.text('1. Open the official YouTube app on your smartphone', lx + 24, ly + 176, 15, '#cbd5e1');
+            cv.text('2. Tap Settings (gear icon) > Watch on TV', lx + 24, ly + 204, 15, '#cbd5e1');
+            cv.text('3. Tap "Link with TV code" and type the 12-digit code above', lx + 24, ly + 232, 15, '#00a3e0', { font: 'bold' });
+            cv.text('4. Tap Cast icon in YouTube app — vehicle appears as "BMW iDrive 7"!', lx + 24, ly + 260, 15, '#cbd5e1');
+            cv.text('5. Any video you tap on phone streams directly to your cockpit screen.', lx + 24, ly + 288, 15, '#2af575', { font: 'bold' });
 
-            // Right Panel (740px): Smartphone QR Remote (No App Needed)
-            G.panel(cv, t, 820, 52, 740, 410, 'Instant Web Remote (QR Code)');
+            // Right Panel (520px): System Status & Thermal Protection
+            G.panel(cv, t, 1040, 52, 520, 410, 'Status & Hardware');
 
-            const qr = getCastQr();
-            if (qr) {
-                const qrx = 850, qry = 120, qrsz = 200;
-                const modCount = qr.size;
-                const modPx = Math.floor(qrsz / modCount);
-                const actualSz = modPx * modCount;
-                const ox = qrx + Math.floor((qrsz - actualSz) / 2);
-                const oy = qry + Math.floor((qrsz - actualSz) / 2);
+            const rx = 1064;
 
-                cv.roundRect(ox - 10, oy - 10, actualSz + 20, actualSz + 20, 8, '#ffffff');
-                for (let r = 0; r < modCount; r++) {
-                    for (let c = 0; c < modCount; c++) {
-                        if (qr.getModule(c, r)) {
-                            cv.fillRect(ox + c * modPx, oy + r * modPx, modPx, modPx, '#000000');
-                        }
-                    }
-                }
+            // Receiver Active Status
+            cv.roundRect(rx, 114, 472, 96, 8, '#090e15');
+            cv.strokeRoundRect(rx, 114, 472, 96, 8, 1, '#0066b1');
+            cv.text('RECEIVER: ACTIVE (YOUTUBE ON TV)', rx + 20, 144, 15, '#00a3e0', { font: 'bold' });
+            cv.text('Direct Google Lounge Stream Protocol', rx + 20, 170, 13, '#94a3b8');
+            cv.text('Cast target: BMW iDrive 7', rx + 20, 192, 13, '#cbd5e1');
 
-                const sx = 1080, sy = 120;
-                cv.text('INSTANT WEB CAST', sx, sy + 18, 18, '#ffffff', { font: 'bold' });
-                cv.text('For passengers or quick paste:', sx, sy + 44, 14, '#cbd5e1');
-                cv.text('· Scan QR code with any camera', sx, sy + 70, 13, '#94a3b8');
-                cv.text('· 1-Tap Paste any YouTube link', sx, sy + 94, 13, '#94a3b8');
-                cv.text('· Works over 4G, 5G, or car Wi-Fi', sx, sy + 118, 13, '#00a3e0');
+            // Hardware Thermal Capping
+            cv.roundRect(rx, 224, 472, 96, 8, '#090e15');
+            cv.strokeRoundRect(rx, 224, 472, 96, 8, 1, '#1e2d42');
+            cv.text('THERMAL SAFE CAP (' + (settings.quality === '1080p' ? '1080P FHD' : '720P HD') + ')', rx + 20, 254, 15, '#cbd5e1', { font: 'bold' });
+            cv.text('Intel Atom A3960 CPU/GPU safe limit active.', rx + 20, 280, 13, '#94a3b8');
+            cv.text('High-bandwidth streams downsampled safely.', rx + 20, 302, 13, '#94a3b8');
 
-                // Short Code Pill
-                cv.roundRect(sx, sy + 144, 430, 34, 6, '#0b131f');
-                cv.strokeRoundRect(sx, sy + 144, 430, 34, 6, 1, '#0066b1');
-                cv.text('WEB CODE: ' + cloudCast.getShortCode(), sx + 215, sy + 167, 14, '#00f0ff', { align: 'center', font: 'num' });
-
-                cv.text('hexlay.github.io/idrive7-custom-apps/cinema.html', sx + 215, sy + 202, 12, '#64748b', { align: 'center' });
-            }
-
-            // Thermal Protection badge below QR
-            cv.roundRect(850, 336, 680, 80, 8, '#080d15');
-            cv.strokeRoundRect(850, 336, 680, 80, 8, 1, '#1e2d42');
-            cv.text('INTEL ATOM HARDWARE PROTECTION: ' + (settings.quality === '1080p' ? '1080P FHD MAX' : '720P HD COOL'), 874, 364, 14, '#cbd5e1', { font: 'bold' });
-            cv.text('Head unit safely downsamples high-bandwidth streams to prevent processor overheating.', 874, 390, 13, '#94a3b8');
+            // Vehicle Motion Interlock
+            const isParked = vehicleSpeed === 0;
+            cv.roundRect(rx, 334, 472, 90, 8, '#090e15');
+            cv.strokeRoundRect(rx, 334, 472, 90, 8, 1, isParked ? '#2af575' : '#ffb703');
+            cv.text('VEHICLE: ' + (isParked ? 'PARKED (0 KM/H)' : 'IN MOTION (' + vehicleSpeed + ' KM/H)'), rx + 20, 364, 15, isParked ? '#2af575' : '#ffb703', { font: 'bold' });
+            cv.text(isParked ? 'Video unlocked for central display' : 'Video interlock active while driving', rx + 20, 392, 13, isParked ? '#cbd5e1' : '#ffb703');
         }
 
         /* ---------- Master 60 fps Render Loop ---------- */
@@ -644,7 +568,6 @@ mgu.run({
                 playProgress = Math.max(0, Math.min(1, playProgress + ev.knobTicks * 0.02));
                 render().catch(() => {});
             } else if (page === 1 && ev.knobTicks) {
-                // Scroll search results
                 if (ev.knobTicks > 0) {
                     searchScroll = Math.min(Math.max(0, searchResults.length - 4), searchScroll + 1);
                 } else {
@@ -657,7 +580,6 @@ mgu.run({
                     isPlaying = !isPlaying;
                     notify(isPlaying ? 'Play' : 'Pause');
                 } else if (page === 1 && searchResults.length > 0) {
-                    // Play currently highlighted search result
                     const first = searchResults[searchScroll];
                     if (first) {
                         playVideo({

@@ -8,9 +8,7 @@
         // Automatic channel router
         const p = new URLSearchParams(window.location.search);
         const ch = p.get('channel') || '';
-        if (ch.startsWith('bmw_cinema_')) {
-            window.location.replace('cinema.html' + window.location.search);
-        } else if (ch.startsWith('bmw_copilot_')) {
+        if (ch.startsWith('bmw_copilot_')) {
             window.location.replace('copilot.html' + window.location.search);
         }
     </script>
@@ -192,7 +190,6 @@
         <div style="text-align: center; margin-top: 14px; font-size: 13px; color: #64748b;">
             <span>BMW iDrive 7 Custom Apps: </span>
             <a href="pair.html" style="color: #1ed760; text-decoration: none; font-weight: 600; margin: 0 4px;">Spotify</a> |
-            <a href="cinema.html" style="color: #ff4d4d; text-decoration: none; font-weight: 600; margin: 0 4px;">M-Cinema (YouTube)</a> |
             <a href="copilot.html" style="color: #00f0ff; text-decoration: none; font-weight: 600; margin: 0 4px;">M-Copilot AI</a>
         </div>
     </div>

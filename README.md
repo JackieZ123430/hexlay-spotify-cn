@@ -87,7 +87,7 @@ This repository is forked and built upon the foundational open-source BMW iDrive
 ### 3. M-Cinema (`m_cinema`)
 **Ultrawide 21:9 Cockpit Theater & Seamless YouTube Video Cast for BMW iDrive 7.**
 
-| YouTube Cockpit Player (21:9) | In-Car YouTube Search & Speller | Official YouTube TV Code & QR Cast |
+| YouTube Cockpit Player (21:9) | In-Car YouTube Search & Speller | Official YouTube TV Code Link |
 | :---: | :---: | :---: |
 | ![M-Cinema](docs/screenshots/m_cinema.png) | ![M-Cinema Search](docs/screenshots/m_cinema_search.png) | ![M-Cinema Cast](docs/screenshots/m_cinema_cast.png) |
 
@@ -97,8 +97,7 @@ This repository is forked and built upon the foundational open-source BMW iDrive
 * **Official YouTube App Casting ("Link with TV Code")**:
   - Connects with the official YouTube mobile app on iPhone and Android via Google's official **Lounge on TV** protocol.
   - In YouTube mobile app: **Settings > Watch on TV > Link with TV code** — enter the 12-digit code displayed on your cockpit screen. The vehicle permanently appears as a Cast target (`BMW iDrive 7`) in the official YouTube app!
-* **Smartphone Web Remote & 1-Tap Paste (`cinema.html`)**:
-  - For passengers and quick casting over 4G, 5G, or car Wi-Fi (`https://hexlay.github.io/idrive7-custom-apps/cinema.html`). Zero 127.0.0.1 / localhost issues.
+  - Any video tapped on iPhone or Android routes directly to the iDrive cockpit display.
 * **Decoded Video Thumbnail Artwork & 21:9 Ultrawide**:
   - Downloads and decodes official high-resolution YouTube video thumbnail art into the cockpit screen with ambient edge accents and rotary scrubbing.
 * **Intel Atom A3960 Hardware Thermal Safe Cap**:

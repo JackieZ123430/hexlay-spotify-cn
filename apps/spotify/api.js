@@ -114,9 +114,12 @@ class SpotifyClient {
         // Mode: Default is Online (demo is off)
         this.isDemoMode = ctx.settings ? (ctx.settings.get('demo') === 'on') : false;
 
-        // Playlists cache (In online mode, empty until authenticated)
+        // Playlists & Library cache
         this.playlists = this.isDemoMode ? DEMO_PLAYLISTS : [];
         this.devices = this.isDemoMode ? DEMO_DEVICES : [];
+        this.likedSongs = [];
+        this.likedTotal = 0;
+        this.remoteQueue = [];
 
         // Playback state
         this.isPlaying = false;
@@ -151,10 +154,11 @@ class SpotifyClient {
             const req = https.request({
                 hostname: 'api.spotify.com',
                 port: 443,
-                path: '/v1',
+                path: '/',
                 method: 'HEAD',
-                timeout: 4000
+                timeout: 3500
             }, (res) => {
+                res.resume();
                 this.hasInternet = true;
                 this.lastInternetCheck = Date.now();
                 resolve(true);
@@ -331,7 +335,9 @@ class SpotifyClient {
         try {
             await this.pollPlayer();
             await this.fetchPlaylists();
+            await this.fetchLikedSongs();
             await this.fetchDevices();
+            await this.fetchQueue();
         } catch (e) {
             this.log.warn('Initial fetch error: ' + e.message);
         }
@@ -491,6 +497,62 @@ class SpotifyClient {
             }
         } catch (e) {
             //
+        }
+    }
+
+    async fetchLikedSongs() {
+        if (!this.token) return;
+        try {
+            const res = await this._request('GET', '/v1/me/tracks?limit=50');
+            if (res && res.items) {
+                this.likedTotal = res.total || res.items.length;
+                this.likedSongs = res.items
+                    .filter((item) => item.track && item.track.id)
+                    .map((item) => ({
+                        id: item.track.id,
+                        title: decodeHtmlEntities(item.track.name),
+                        artist: decodeHtmlEntities((item.track.artists || []).map((a) => a.name).join(', ')),
+                        album: decodeHtmlEntities(item.track.album ? item.track.album.name : ''),
+                        durationMs: item.track.duration_ms,
+                        uri: item.track.uri
+                    }));
+            }
+        } catch (e) {
+            this.log.warn('Fetch liked songs error: ' + e.message);
+        }
+    }
+
+    async fetchQueue() {
+        if (!this.token) return;
+        try {
+            const res = await this._request('GET', '/v1/me/player/queue');
+            if (res && res.queue) {
+                this.remoteQueue = res.queue
+                    .filter((t) => t && t.id)
+                    .map((t) => ({
+                        id: t.id,
+                        title: decodeHtmlEntities(t.name),
+                        artist: decodeHtmlEntities((t.artists || []).map((a) => a.name).join(', ')),
+                        album: decodeHtmlEntities(t.album ? t.album.name : ''),
+                        durationMs: t.duration_ms,
+                        uri: t.uri
+                    }));
+            }
+        } catch (e) {
+            //
+        }
+    }
+
+    playLikedSong(index) {
+        if (!this.likedSongs || !this.likedSongs[index]) return;
+        const trk = this.likedSongs[index];
+        this.currentTrack = trk;
+        this.isPlaying = true;
+        this.progressMs = 0;
+        this.lastTickTime = Date.now();
+        if (this.isOnline) {
+            const uris = this.likedSongs.slice(index, index + 30).map((t) => t.uri);
+            this._request('PUT', '/v1/me/player/play', { uris }).catch(() => {});
         }
     }
 

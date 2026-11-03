@@ -68,6 +68,7 @@ mgu.run({
         let selectedPlaylistIdx = 0;
         let playlistScroll = 0;
         let trackScroll = 0;
+        let likedScroll = 0;
         let spectrumSeed = 0;
 
         /* ---------- Real Cloud Pairing QR Code Generation ---------- */
@@ -261,51 +262,88 @@ mgu.run({
             }
         }
 
-        /* ---------- Page 1: Library ---------- */
+        /* ---------- Page 1: Library (Liked Songs) ---------- */
         function drawLibrary(cv, t) {
-            const playlists = spotify.getPlaylists();
-            if (!playlists || playlists.length === 0) {
+            const isOnline = settings.get('demo') !== 'on';
+            if (isOnline && (!spotify.token || !spotify.paired)) {
                 drawRequireConnect(cv, t);
                 return;
             }
 
-            G.panel(cv, t, 40, 52, 1520, 410, 'Your Library & Saved Music');
+            const liked = (spotify.likedSongs && spotify.likedSongs.length)
+                ? spotify.likedSongs
+                : (spotify.isDemoMode ? require('./api').DEMO_PLAYLISTS[3].tracks : []);
 
-            const sections = [
-                { title: 'Liked Songs', count: '142 songs', icon: '+', col: '#1db954' },
-                { title: 'Heavy Rotation', count: 'Recent daily drivers', icon: 'R', col: '#e1001a' },
-                { title: 'Saved Albums', count: '28 albums', icon: 'O', col: '#81c4ff' },
-                { title: 'Followed Artists', count: '45 artists', icon: '*', col: '#ff9d00' },
-            ];
+            const total = spotify.likedTotal || liked.length;
+            const VISIBLE_LIKED = 7;
+            const startIdx = total > 0 ? likedScroll + 1 : 0;
+            const endIdx = Math.min(likedScroll + VISIBLE_LIKED, total);
+            const title = 'Liked Songs (' + (total > 0 ? (startIdx + '-' + endIdx + ' of ' + total) : '0') + ' tracks)';
 
-            sections.forEach((sec, idx) => {
-                const sx = 64 + idx * 370;
-                cv.roundRect(sx, 120, 350, 220, 14, t.track);
-                cv.strokeRoundRect(sx, 120, 350, 220, 14, 1, t.panelEdge);
+            G.panel(cv, t, 40, 52, 1520, 410, title);
 
-                cv.circle(sx + 50, 170, 26, withAlpha(sec.col, 0.22));
-                cv.text(sec.icon, sx + 50, 179, 24, sec.col, { align: 'center', font: 'bold' });
+            // Up / Down scroll buttons in header if more than 7 tracks
+            if (liked.length > VISIBLE_LIKED) {
+                if (likedScroll > 0) {
+                    cv.roundRect(1440, 64, 34, 26, 6, withAlpha(t.accent, 0.25));
+                    cv.text('^', 1457, 83, 18, t.accent, { align: 'center', font: 'bold' });
+                    cv.target(1440, 64, 34, 26, () => {
+                        likedScroll = Math.max(0, likedScroll - VISIBLE_LIKED);
+                    }, 'liked_up', 10);
+                }
+                if (likedScroll + VISIBLE_LIKED < liked.length) {
+                    cv.roundRect(1482, 64, 34, 26, 6, withAlpha(t.accent, 0.25));
+                    cv.text('v', 1499, 83, 16, t.accent, { align: 'center', font: 'bold' });
+                    cv.target(1482, 64, 34, 26, () => {
+                        likedScroll = Math.min(liked.length - VISIBLE_LIKED, likedScroll + VISIBLE_LIKED);
+                    }, 'liked_down', 10);
+                }
+            }
 
-                cv.text(sec.title, sx + 90, 168, 24, t.text, { font: 'bold' });
-                cv.text(sec.count, sx + 90, 192, 17, t.dim);
+            if (!liked || liked.length === 0) {
+                cv.roundRect(70, 150, 1460, 160, 12, t.track);
+                cv.text('LOADING LIKED SONGS...', 800, 215, 22, t.dim, { align: 'center', font: 'bold', spacing: 1 });
+                cv.text('Fetching your saved songs from Spotify cloud...', 800, 250, 16, t.dim, { align: 'center' });
+                return;
+            }
 
-                cv.roundRect(sx + 30, 270, 290, 48, 8, withAlpha(sec.col, 0.18));
-                cv.strokeRoundRect(sx + 30, 270, 290, 48, 8, 1, sec.col);
-                cv.text('PLAY COLLECTION', sx + 175, 300, 17, sec.col, { align: 'center', font: 'bold', spacing: 1 });
+            const visible = liked.slice(likedScroll, likedScroll + VISIBLE_LIKED);
+            visible.forEach((trk, vIdx) => {
+                const realIdx = likedScroll + vIdx;
+                const ty = 110 + vIdx * 49;
+                const isPlayingThis = spotify.isPlaying && spotify.currentTrack && spotify.currentTrack.id === trk.id;
 
-                cv.target(sx, 120, 350, 220, () => {
-                    if (playlists[idx % playlists.length]) {
-                        spotify.selectPlaylist(playlists[idx % playlists.length]);
-                        page = 0;
-                    }
-                }, 'lib_' + idx, 10);
+                if (isPlayingThis) {
+                    cv.roundRect(56, ty, 1488, 44, 8, withAlpha(t.accent, 0.22));
+                    cv.strokeRoundRect(56, ty, 1488, 44, 1.5, t.accent);
+                    drawMiniEqualizer(cv, 80, ty + 22, t.accent, spotify.isPlaying, spectrumSeed);
+                } else {
+                    cv.roundRect(56, ty, 1488, 44, 8, t.track);
+                    cv.text(String(realIdx + 1), 80, ty + 27, 16, t.dim, { align: 'center', font: 'num' });
+                }
+
+                // Heart tag
+                cv.text('*', 115, ty + 29, 20, '#1ed760', { align: 'center', font: 'bold' });
+
+                cv.text(trk.title.slice(0, 48), 145, ty + 28, 20, isPlayingThis ? t.accent : t.text, { font: 'bold' });
+                cv.text(trk.artist + (trk.album ? '  -  ' + trk.album : ''), 720, ty + 28, 17, t.dim);
+                cv.text(fmtTime(trk.durationMs), 1445, ty + 28, 16, t.dim, { align: 'right', font: 'num' });
+
+                if (isPlayingThis) {
+                    cv.roundRect(1470, ty + 8, 60, 28, 6, t.accent);
+                    cv.text('PLAYING', 1500, ty + 25, 11, '#000000', { align: 'center', font: 'bold' });
+                }
+
+                cv.target(56, ty, 1488, 44, () => {
+                    spotify.playLikedSong(realIdx);
+                }, 'liked_' + realIdx, 8);
             });
         }
 
         /* ---------- Page 2: Queue ---------- */
         function drawQueue(cv, t) {
-            const pl = spotify.currentPlaylist;
-            if (!pl || !pl.tracks || pl.tracks.length === 0) {
+            const isOnline = settings.get('demo') !== 'on';
+            if (isOnline && (!spotify.token || !spotify.paired)) {
                 drawRequireConnect(cv, t);
                 return;
             }
@@ -313,26 +351,61 @@ mgu.run({
             G.panel(cv, t, 40, 52, 1520, 410, 'Playback Queue (Up Next)');
 
             const curTrk = spotify.currentTrack;
+
+            // Card 1: Now Playing Card (h: 88)
+            cv.roundRect(60, 108, 1480, 88, 12, curTrk ? withAlpha(t.accent, 0.16) : t.track);
+            if (curTrk) cv.strokeRoundRect(60, 108, 1480, 88, 12, 1.5, t.accent);
+
             if (curTrk) {
-                cv.roundRect(64, 114, 1472, 60, 10, withAlpha(t.accent, 0.18));
-                cv.strokeRoundRect(64, 114, 1472, 60, 10, 1.5, t.accent);
-                cv.text('NOW PLAYING', 84, 149, 16, t.accent, { font: 'bold', spacing: 1 });
-                cv.text(curTrk.title, 220, 149, 22, t.text, { font: 'bold' });
-                cv.text(curTrk.artist, 540, 149, 18, t.dim);
-                drawMiniEqualizer(cv, 1490, 144, t.accent, spotify.isPlaying, spectrumSeed);
+                drawMiniEqualizer(cv, 95, 152, t.accent, spotify.isPlaying, spectrumSeed);
+                cv.text('NOW PLAYING', 125, 136, 13, t.accent, { font: 'bold', spacing: 1 });
+                cv.text(curTrk.title.slice(0, 45), 125, 165, 23, t.text, { font: 'bold' });
+                cv.text(curTrk.artist + (curTrk.album ? '  -  ' + curTrk.album : ''), 680, 164, 18, t.dim);
+                cv.text(fmtTime(spotify.progressMs) + ' / ' + fmtTime(curTrk.durationMs), 1500, 164, 16, t.accent, { align: 'right', font: 'num' });
+
+                // Live progress bar along the bottom of card
+                const pFrac = Math.min(1, Math.max(0, spotify.progressMs / (curTrk.durationMs || 1)));
+                cv.roundRect(125, 180, 1380, 4, 2, t.tick);
+                cv.roundRect(125, 180, 1380 * pFrac, 4, 2, t.accent);
+            } else {
+                cv.text('IDLE - NO TRACK PLAYING', 95, 152, 20, t.dim, { font: 'bold', spacing: 1 });
+                cv.text('Select any song from Playlists or Liked Songs to begin playback.', 420, 152, 16, t.dim);
             }
 
-            pl.tracks.slice(spotify.trackIndex + 1, spotify.trackIndex + 6).forEach((trk, idx) => {
-                const qy = 186 + idx * 52;
-                cv.roundRect(64, qy, 1472, 46, 8, t.track);
-                cv.text(String(idx + 1), 84, qy + 28, 17, t.dim, { align: 'center', font: 'num' });
-                cv.text(trk.title, 120, qy + 29, 22, t.text, { font: 'bold' });
-                cv.text(trk.artist, 440, qy + 29, 18, t.dim);
-                cv.text(fmtTime(trk.durationMs), 1490, qy + 29, 17, t.dim, { align: 'right', font: 'num' });
+            // Card 2: Up Next in Queue
+            let upcoming = (spotify.remoteQueue && spotify.remoteQueue.length) ? spotify.remoteQueue : [];
+            if (!upcoming.length && spotify.currentPlaylist && spotify.currentPlaylist.tracks) {
+                const trks = spotify.currentPlaylist.tracks;
+                const curIdx = trks.findIndex((x) => curTrk && x.id === curTrk.id);
+                if (curIdx >= 0 && curIdx < trks.length - 1) {
+                    upcoming = trks.slice(curIdx + 1);
+                }
+            } else if (!upcoming.length && spotify.likedSongs && spotify.likedSongs.length) {
+                const curIdx = spotify.likedSongs.findIndex((x) => curTrk && x.id === curTrk.id);
+                if (curIdx >= 0 && curIdx < spotify.likedSongs.length - 1) {
+                    upcoming = spotify.likedSongs.slice(curIdx + 1);
+                }
+            }
 
-                cv.target(64, qy, 1472, 46, () => {
-                    spotify.playTrack(pl, (spotify.trackIndex + 1 + idx) % pl.tracks.length);
-                }, 'q_trk_' + idx, 8);
+            const qCount = upcoming.length;
+            cv.text('UP NEXT IN QUEUE (' + qCount + ')', 62, 222, 14, t.dim, { font: 'bold', spacing: 1 });
+
+            if (!upcoming || upcoming.length === 0) {
+                cv.roundRect(60, 236, 1480, 120, 10, t.track);
+                cv.text('Queue is currently empty.', 800, 285, 19, t.dim, { align: 'center', font: 'bold' });
+                cv.text('Play any track from Playlists or Liked Songs to queue up songs.', 800, 315, 15, t.dim, { align: 'center' });
+                return;
+            }
+
+            const VISIBLE_Q = 4;
+            const visibleQ = upcoming.slice(0, VISIBLE_Q);
+            visibleQ.forEach((trk, idx) => {
+                const qy = 236 + idx * 52;
+                cv.roundRect(60, qy, 1480, 46, 8, t.track);
+                cv.text(String(idx + 1), 85, qy + 28, 16, t.dim, { align: 'center', font: 'num' });
+                cv.text(trk.title.slice(0, 45), 125, qy + 28, 20, t.text, { font: 'bold' });
+                cv.text(trk.artist + (trk.album ? '  -  ' + trk.album : ''), 700, qy + 28, 17, t.dim);
+                cv.text(fmtTime(trk.durationMs), 1500, qy + 28, 16, t.dim, { align: 'right', font: 'num' });
             });
         }
 

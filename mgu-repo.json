@@ -11,7 +11,7 @@
       "args": ["{id}"],
       "sdk": "oap-sdk",
       "output": "dist/{id}@{version}.tgz",
-      "network": ["doom"]
+      "network": ["doom", "spotify", "m_copilot", "m_cinema"]
     }
   },
   "tools": [

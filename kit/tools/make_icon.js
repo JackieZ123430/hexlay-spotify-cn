@@ -105,6 +105,27 @@ if (glyph === 'gauge') {
     // Switch 2: ACTIVE (accent red)
     c.roundRect(32, 82, 76, 16, 8, '#25352d');
     c.circle(52, 90, 14, A);
+} else if (glyph === 'copilot' || glyph === 'ai') {
+    // AI neural orb / voice soundwave with BMW M accents
+    c.circle(70, 70, 52, '#08121e');
+    c.arc(70, 70, 44, 48, 0, 360, '#00a3e0'); // M Light Blue
+    c.arc(70, 70, 30, 35, -45, 225, '#163a8a'); // M Dark Blue
+    c.arc(70, 70, 18, 23, 45, 315, A); // M Red
+    c.circle(70, 70, 9, W);
+    // Neural pulse nodes
+    for (let i = 0; i < 6; i++) {
+        const [nx, ny] = pt(70, 70, 46, i * 60 + 30);
+        c.circle(nx, ny, 4, W);
+    }
+} else if (glyph === 'cinema' || glyph === 'video') {
+    // Wide cinema screen with play triangle and M accent stripe
+    c.circle(70, 70, 52, '#0c1017');
+    c.strokeRoundRect(28, 38, 84, 56, 8, 4, W);
+    c.convex([[62, 54], [84, 66], [62, 78]], '#00a3e0'); // Cyan play button
+    // M stripe accents on bottom
+    c.fillRect(36, 102, 20, 5, '#00a3e0');
+    c.fillRect(60, 102, 20, 5, '#163a8a');
+    c.fillRect(84, 102, 20, 5, A);
 } else if (glyph === 'music' || glyph === 'spotify') {
     // Spotify icon: circle with curved sound waves in Spotify green
     c.circle(70, 70, 52, '#1db954');

@@ -33,6 +33,9 @@ kit/tools/.font-cache/
 # Local vehicle diagnostics and build packages (packages contain the owner's SDK)
 spotify_auth.json
 apps/spotify/spotify_auth.json
+copilot_auth.json
+apps/m_copilot/copilot_auth.json
+*_auth.json
 /work/
 /captures/
 /backups/

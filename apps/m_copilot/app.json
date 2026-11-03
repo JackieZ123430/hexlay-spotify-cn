@@ -1,0 +1,66 @@
+{
+  "id": "m_copilot",
+  "title": "M-Copilot",
+  "description": "AI Performance Co-Driver & Intelligent Vehicle Assistant for BMW iDrive 7",
+  "version": "1.0.0",
+  "vendor": "custom",
+  "loggingId": "OAMC",
+  "iconGlyph": "copilot",
+  "mguInternet": true,
+  "mguHmi": ["ID7"],
+  "signals": {
+    "de.bmw.infotainment.vehicle.CDS": {
+      "statusEngineSpeed2": "rs",
+      "statusEngineTemperature": "rs"
+    },
+    "de.bmw.infotainment.vehicle.CDS2": {
+      "statusLongitudinalAccelerationMassCenter": "rs",
+      "statusLateralAccelerationMassCenter": "rs"
+    },
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "statusCarSpeed2": "rs"
+    },
+    "de.bmw.infotainment.drivingexcitement.FES": {
+      "statusSwitchDriveDynamicSport2": "rs",
+      "statusVehicleDynamicEngine": "rs"
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "canvas",
+      "title": "M-Copilot",
+      "buttons": [
+        ["BTN_PROMPT", "Ask M-Copilot"],
+        ["BTN_TELEMETRY", "Telemetry Scan"],
+        ["BTN_SETTINGS", "Settings"]
+      ]
+    }
+  ],
+  "settings": [
+    {"key": "tier", "label": "AI Service Model", "type": "choice", "default": "subscription",
+     "options": [
+       ["subscription", "Subscription Connect (ChatGPT/Gemini Adv)"],
+       ["gemini_free", "Google Gemini Free Tier ($0/mo)"],
+       ["custom_api", "Custom API Key (OpenAI / Claude / Groq)"],
+       ["offline_expert", "Offline ECU Expert (No Internet)"]
+     ]},
+    {"key": "persona", "label": "Co-Driver Persona", "type": "choice", "default": "m_engineer",
+     "options": [
+       ["m_engineer", "BMW M Track Engineer (Dynamic & Technical)"],
+       ["concierge", "BMW Executive Concierge (Refined & Polite)"],
+       ["mechanic", "N63TU3 Master Tech (Diagnostics & Maintenance)"]
+     ]},
+    {"key": "theme", "label": "Colour theme", "type": "choice", "default": "m_tricolour",
+     "options": [
+       ["m_tricolour", "M Tricolour"],
+       ["m_cyan", "M Neon Cyan"],
+       ["ice", "Ice White"],
+       ["amber", "Night Amber"]
+     ]},
+    {"key": "layout", "label": "Screen layout", "type": "choice", "default": "full",
+     "options": [["full", "Full screen"], ["standard", "Standard"]]},
+    {"key": "renderer", "label": "Renderer", "type": "choice", "default": "auto",
+     "options": [["auto", "GPU 60 fps (default)"], ["software", "Software"]]}
+  ]
+}

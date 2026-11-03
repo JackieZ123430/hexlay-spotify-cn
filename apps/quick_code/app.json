@@ -1,0 +1,30 @@
+{
+  "id": "quick_code",
+  "title": "QuickCode",
+  "description": "One-tap cockpit coding for BMW iDrive 7: Ambient Lighting RGB, Auto Start/Stop memory, Sound Chimes & Warnings",
+  "version": "1.0.0",
+  "vendor": "custom",
+  "loggingId": "OAQC",
+  "iconGlyph": "code",
+  "mguHmi": ["ID7"],
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "canvas",
+      "title": "QuickCode",
+      "buttons": [
+        ["BTN_APPLY", "Apply Coding"],
+        ["BTN_PAGE", "Next Category"],
+        ["BTN_SETTINGS", "Settings"]
+      ]
+    }
+  ],
+  "settings": [
+    {"key": "theme", "label": "Colour theme", "type": "choice", "default": "m_tricolour",
+     "options": [["m_tricolour", "M Tricolour"], ["m_red", "M Red"], ["ice", "Ice White"], ["amber", "Night Amber"], ["spotify", "Spotify Green"]]},
+    {"key": "layout", "label": "Screen layout", "type": "choice", "default": "full",
+     "options": [["full", "Full screen"], ["standard", "Standard"]]},
+    {"key": "renderer", "label": "Renderer", "type": "choice", "default": "auto",
+     "options": [["auto", "GPU 60 fps (default)"], ["software", "Software"]]}
+  ]
+}

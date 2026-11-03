@@ -96,6 +96,15 @@ if (glyph === 'gauge') {
     c.circle(30, 110, 10, W);
     c.circle(38, 50, 16, A);
     c.line(38, 18, 26, 42, 5, A); c.line(38, 18, 50, 42, 5, A);
+} else if (glyph === 'code') {
+    // Slider switches / ECU coding icon
+    c.strokeRoundRect(20, 24, 100, 92, 14, 5, W);
+    // Switch 1: ON (right, green)
+    c.roundRect(32, 44, 76, 16, 8, '#25352d');
+    c.circle(88, 52, 14, '#1db954');
+    // Switch 2: ACTIVE (accent red)
+    c.roundRect(32, 82, 76, 16, 8, '#25352d');
+    c.circle(52, 90, 14, A);
 } else if (glyph === 'music' || glyph === 'spotify') {
     // Spotify icon: circle with curved sound waves in Spotify green
     c.circle(70, 70, 52, '#1db954');

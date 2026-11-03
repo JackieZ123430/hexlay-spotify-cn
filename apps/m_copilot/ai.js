@@ -19,9 +19,9 @@ const CONFIG_PATH = path.join(__dirname, 'copilot_auth.json');
 
 class AiBridge {
     constructor(ctxOrLog) {
-        if (ctxOrLog && ctxOrLog.log) {
+        if (ctxOrLog && (ctxOrLog.log || ctxOrLog.dataDir)) {
             this.ctx = ctxOrLog;
-            this.log = ctxOrLog.log;
+            this.log = ctxOrLog.log || console;
         } else {
             this.ctx = null;
             this.log = ctxOrLog || console;
@@ -310,64 +310,87 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
         return this.queryOpenAICompatible(prompt, telemetry, persona);
     }
 
-    queryGemini(prompt, telemetry, persona) {
-        return new Promise((resolve, reject) => {
-            const systemPrompt = this.buildVehicleContext(persona, telemetry, prompt);
-            const apiKey = this.config.geminiApiKey;
+    async queryGemini(prompt, telemetry, persona) {
+        const systemPrompt = this.buildVehicleContext(persona, telemetry, prompt);
+        const apiKey = this.config.geminiApiKey;
 
-            const body = JSON.stringify({
-                systemInstruction: {
-                    parts: [{ text: systemPrompt }]
-                },
-                contents: [
-                    {
-                        role: 'user',
-                        parts: [{ text: `Based on my current vehicle telemetry, answer this:\n${prompt}` }]
-                    }
-                ],
-                generationConfig: {
-                    maxOutputTokens: 380,
-                    temperature: 0.6
+        const body = JSON.stringify({
+            systemInstruction: {
+                parts: [{ text: systemPrompt }]
+            },
+            contents: [
+                {
+                    role: 'user',
+                    parts: [{ text: `Based on my current vehicle telemetry, answer this:\n${prompt}` }]
                 }
-            });
-
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-
-            const req = https.request(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Content-Length': Buffer.byteLength(body)
-                },
-                timeout: 8000
-            }, (res) => {
-                let data = '';
-                res.on('data', (chunk) => { data += chunk; });
-                res.on('end', () => {
-                    try {
-                        const json = JSON.parse(data);
-                        if (json.candidates && json.candidates[0] && json.candidates[0].content) {
-                            const text = json.candidates[0].content.parts[0].text;
-                            resolve(text.trim());
-                        } else if (json.error) {
-                            resolve(`[Gemini API Alert]\n${json.error.message || JSON.stringify(json.error)}`);
-                        } else {
-                            resolve(`[Gemini Response]\n${data.slice(0, 250)}`);
-                        }
-                    } catch (e) {
-                        resolve(`Parse error: ${e.message}`);
-                    }
-                });
-            });
-
-            req.on('error', (err) => resolve(`Uplink error: ${err.message}`));
-            req.on('timeout', () => {
-                req.destroy();
-                resolve('Gemini query timed out. Please check your phone hotspot connection.');
-            });
-            req.write(body);
-            req.end();
+            ],
+            generationConfig: {
+                maxOutputTokens: 380,
+                temperature: 0.6
+            }
         });
+
+        // Fast, high-availability Gemini models with automated fallback
+        const candidateModels = [
+            'gemini-3.1-flash-lite',
+            'gemini-3.5-flash',
+            'gemini-3.6-flash',
+            'gemini-3.8-flash',
+            'gemini-flash-latest'
+        ];
+
+        let lastError = null;
+
+        for (const model of candidateModels) {
+            try {
+                const res = await new Promise((resolve) => {
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+                    const req = https.request(url, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Content-Length': Buffer.byteLength(body)
+                        },
+                        timeout: 7000
+                    }, (res) => {
+                        let data = '';
+                        res.on('data', (chunk) => { data += chunk; });
+                        res.on('end', () => {
+                            try {
+                                const json = JSON.parse(data);
+                                if (res.statusCode >= 200 && res.statusCode < 300 && json.candidates && json.candidates[0] && json.candidates[0].content) {
+                                    resolve({ ok: true, text: json.candidates[0].content.parts[0].text.trim() });
+                                } else if (json.error) {
+                                    resolve({ ok: false, status: res.statusCode, error: json.error.message || JSON.stringify(json.error) });
+                                } else {
+                                    resolve({ ok: false, status: res.statusCode, error: data.slice(0, 200) });
+                                }
+                            } catch (e) {
+                                resolve({ ok: false, status: res.statusCode, error: e.message });
+                            }
+                        });
+                    });
+
+                    req.on('error', (err) => resolve({ ok: false, error: err.message }));
+                    req.on('timeout', () => {
+                        try { req.destroy(); } catch (e) {}
+                        resolve({ ok: false, error: 'Request timed out' });
+                    });
+                    req.write(body);
+                    req.end();
+                });
+
+                if (res.ok) {
+                    return res.text;
+                }
+                lastError = res.error;
+                this.log.warn(`AiBridge: Gemini model ${model} failed (${res.status || ''}: ${res.error}), trying fallback...`);
+            } catch (err) {
+                lastError = err.message;
+            }
+        }
+
+        return `[Gemini API Alert]\n${lastError || 'Failed to communicate with Google Gemini API.'}`;
     }
 
     queryOpenAICompatible(prompt, telemetry, persona) {

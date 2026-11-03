@@ -248,6 +248,41 @@ class VehicleSafety {
             steps: []
         };
     }
+
+    /**
+     * Read currently coded configuration from vehicle ECUs over UDS.
+     */
+    async readEcuConfiguration() {
+        if (!this.diag || !this.diag.available) {
+            this.log.info('QuickCode Safety: Diagnostic transport offline (Using cached/OEM defaults)');
+            return null;
+        }
+
+        const readData = {};
+        try {
+            // Read BDC (0x40) parameters (e.g. TC_MSA_MEMORY, KOMFORT_SCHLIESSEN)
+            const bdcRes = await this.diag.physical(0x40, 0x22, [0x20, 0x01], 1500).catch(() => null);
+            if (bdcRes && bdcRes.length >= 4 && bdcRes[0] === 0x62) {
+                readData.autoStartStopMem = bdcRes[3] === 0x01;
+                readData.instantMirrorFold = bdcRes[4] === 0x00;
+                readData.windowInterruptMuted = bdcRes[5] === 0x00;
+            }
+
+            // Read HU_MGU (0x63) parameters (BRAND sound theme, SPEEDLOCK VIM)
+            const mguRes = await this.diag.physical(0x63, 0x22, [0x30, 0x05], 1500).catch(() => null);
+            if (mguRes && mguRes.length >= 4 && mguRes[0] === 0x62) {
+                const brand = mguRes[3];
+                readData.soundThemeId = (brand === 0x01) ? 'rr' : (brand === 0x02 ? 'm' : (brand === 0x03 ? 'i' : 'oem'));
+                readData.videoInMotionUnlocked = (mguRes[4] === 0xFF);
+            }
+
+            this.log.info('QuickCode Safety: Successfully read live ECU configuration: ' + JSON.stringify(readData));
+            return readData;
+        } catch (e) {
+            this.log.warn('QuickCode Safety: Could not read ECU values: ' + e.message);
+            return null;
+        }
+    }
 }
 
 module.exports = { VehicleSafety };

@@ -13,6 +13,8 @@
  *   - DIAGNOSTIC MODE: Requires Terminal 15 Diagnostic Mode (3-press Start button, engine OFF)
  *     before writing any ECU parameters (matches BimmerCode & ISTA safety standards).
  */
+const fs = require('fs');
+const path = require('path');
 const mgu = require('./kit/mgu');
 const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
@@ -22,29 +24,87 @@ const { VehicleSafety } = require('./safety');
 const W = 1600, H = 520;
 
 const AMBIENT_PRESETS = [
-    { name: 'M Neon Cyan', hex: '#00f0ff', desc: 'Vibrant modern hypercar glow' },
-    { name: 'Miami Violet', hex: '#9b5de5', desc: 'Synthwave deep purple hue' },
-    { name: 'Acid Lime', hex: '#2af575', desc: 'Electric M Performance accent' },
-    { name: 'Rolls Pearl', hex: '#ffffff', desc: 'Pure ultra-luxury white' },
-    { name: 'Monaco Blue', hex: '#1d3557', desc: 'Deep subtle nocturnal blue' },
-    { name: 'M Crimson Red', hex: '#e1001a', desc: 'Aggressive sport cockpit mood' },
+    { name: 'BMW Bronze (OEM)', hex: '#c89650', desc: 'Standard BMW G-Series factory default warm tone', isOem: true },
+    { name: 'M Neon Cyan', hex: '#00f0ff', desc: 'Vibrant modern hypercar glow', isOem: false },
+    { name: 'Miami Violet', hex: '#9b5de5', desc: 'Synthwave deep purple hue', isOem: false },
+    { name: 'Acid Lime', hex: '#2af575', desc: 'Electric M Performance accent', isOem: false },
+    { name: 'BMW Blue (OEM)', hex: '#0066b2', desc: 'Classic factory M Sport cabin blue', isOem: true },
+    { name: 'M Crimson Red', hex: '#e1001a', desc: 'Aggressive sport cockpit mood', isOem: false },
 ];
 
 const SOUND_THEMES = [
-    { id: 'rr', name: 'Rolls-Royce Phantom', desc: 'Gentle orchestral harp & luxury chimes' },
-    { id: 'm', name: 'BMW M Performance', desc: 'Aggressive high-tempo sport acoustic alerts' },
-    { id: 'oem', name: 'BMW Modern (G-Series)', desc: 'Standard factory iDrive 7 chimes (G20/G30/G15/G05)' },
-    { id: 'i', name: 'BMW i-Series Electric', desc: 'Futuristic electronic harmonic tones' },
+    { id: 'oem', name: 'BMW Modern (G-Series)', isOem: true, desc: 'Factory standard iDrive 7 chimes and warning alerts' },
+    { id: 'm', name: 'BMW M Performance', isOem: false, desc: 'Aggressive high-tempo sport acoustic alerts' },
+    { id: 'rr', name: 'Rolls-Royce Phantom', isOem: false, desc: 'Gentle orchestral harp & luxury chimes' },
+    { id: 'i', name: 'BMW i-Series Electric', isOem: false, desc: 'Futuristic electronic harmonic tones' },
 ];
+
+// Factory OEM Stock Pre-conditions for BMW G-Series
+const OEM_DEFAULTS = {
+    autoStartStopMem: false,      // OEM: MSA active every start cycle
+    seatbeltChimeMuted: false,    // OEM: Standard audible cabin chime
+    instantMirrorFold: false,     // OEM: 1.5s delay when holding lock
+    windowInterruptMuted: false,  // OEM: Stops roll-up when door opens
+    soundThemeId: 'oem',          // OEM: BMW Modern factory chimes
+    videoInMotionUnlocked: false, // OEM: Speedlock cutoff above 3 km/h
+    tirePsiAndTemp: false,        // OEM: Pressure only (temp hidden)
+    ambientColorName: 'BMW Bronze (OEM)'
+};
 
 mgu.run({
     async start(ctx) {
-        const { ui, settings, log, signals } = ctx;
+        const { ui, settings, log, signals, dataDir } = ctx;
         const diag = new Diag(signals, log);
         diag.init().catch(() => {});
 
         const safety = new VehicleSafety(diag, log);
         safety.scanModules().catch(() => {});
+
+        // Persistent State File
+        const STATE_FILE = path.join(dataDir || process.cwd(), 'quick_code_state.json');
+
+        function saveState(st) {
+            try {
+                fs.writeFileSync(STATE_FILE, JSON.stringify(st, null, 2), 'utf8');
+            } catch (e) {
+                log.warn('QuickCode: Failed to save state: ' + e.message);
+            }
+        }
+
+        function loadSavedState() {
+            try {
+                if (fs.existsSync(STATE_FILE)) {
+                    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+                }
+            } catch (e) {
+                log.warn('QuickCode: Failed to load state: ' + e.message);
+            }
+            return null;
+        }
+
+        // Initialize state: start with authentic OEM factory defaults or saved configuration
+        const saved = loadSavedState() || {};
+        let autoStartStopMem = (saved.autoStartStopMem !== undefined) ? saved.autoStartStopMem : OEM_DEFAULTS.autoStartStopMem;
+        let seatbeltChimeMuted = (saved.seatbeltChimeMuted !== undefined) ? saved.seatbeltChimeMuted : OEM_DEFAULTS.seatbeltChimeMuted;
+        let instantMirrorFold = (saved.instantMirrorFold !== undefined) ? saved.instantMirrorFold : OEM_DEFAULTS.instantMirrorFold;
+        let windowInterruptMuted = (saved.windowInterruptMuted !== undefined) ? saved.windowInterruptMuted : OEM_DEFAULTS.windowInterruptMuted;
+        let currentSoundTheme = SOUND_THEMES.find(s => s.id === (saved.soundThemeId || OEM_DEFAULTS.soundThemeId)) || SOUND_THEMES[0];
+        let videoInMotionUnlocked = (saved.videoInMotionUnlocked !== undefined) ? saved.videoInMotionUnlocked : OEM_DEFAULTS.videoInMotionUnlocked;
+        let tirePsiAndTemp = (saved.tirePsiAndTemp !== undefined) ? saved.tirePsiAndTemp : OEM_DEFAULTS.tirePsiAndTemp;
+        let selectedColor = AMBIENT_PRESETS.find(p => p.name === (saved.ambientColorName || OEM_DEFAULTS.ambientColorName)) || AMBIENT_PRESETS[0];
+
+        function persistState() {
+            saveState({
+                autoStartStopMem,
+                seatbeltChimeMuted,
+                instantMirrorFold,
+                windowInterruptMuted,
+                soundThemeId: currentSoundTheme.id,
+                videoInMotionUnlocked,
+                tirePsiAndTemp,
+                ambientColorName: selectedColor.name
+            });
+        }
 
         // Monitor vehicle speed and engine RPM for safety interlock
         try {
@@ -58,16 +118,6 @@ mgu.run({
         }
 
         let page = 0;
-        let selectedColor = AMBIENT_PRESETS[0];
-
-        // Coding states
-        let autoStartStopMem = true;
-        let seatbeltChimeMuted = true;
-        let instantMirrorFold = true;
-        let windowInterruptMuted = true;
-        let currentSoundTheme = SOUND_THEMES[0];
-        let videoInMotionUnlocked = true;
-        let tirePsiAndTemp = true;
 
         // Feedback & Safety Dialog state
         let statusMsg = null;
@@ -79,6 +129,47 @@ mgu.run({
             statusTime = Date.now();
             log.info('QuickCode: ' + msg);
         }
+
+        // Read Live Coded Values directly from vehicle ECUs over UDS
+        async function readLiveEcuValues() {
+            notify('Reading current ECU coding from vehicle...');
+            const live = await safety.readEcuConfiguration();
+            if (live) {
+                if (live.autoStartStopMem !== undefined) autoStartStopMem = live.autoStartStopMem;
+                if (live.instantMirrorFold !== undefined) instantMirrorFold = live.instantMirrorFold;
+                if (live.windowInterruptMuted !== undefined) windowInterruptMuted = live.windowInterruptMuted;
+                if (live.soundThemeId !== undefined) {
+                    const found = SOUND_THEMES.find(s => s.id === live.soundThemeId);
+                    if (found) currentSoundTheme = found;
+                }
+                if (live.videoInMotionUnlocked !== undefined) videoInMotionUnlocked = live.videoInMotionUnlocked;
+                persistState();
+                notify('[OK] Successfully read current coded values from car');
+            } else {
+                notify('[OK] Using vehicle defaults: ' + (saved && Object.keys(saved).length ? 'Loaded from cache' : 'OEM Factory Stock'));
+            }
+            render().catch(() => {});
+        }
+
+        // Restore all parameters back to factory OEM stock settings
+        function restoreOemDefaults() {
+            autoStartStopMem = OEM_DEFAULTS.autoStartStopMem;
+            seatbeltChimeMuted = OEM_DEFAULTS.seatbeltChimeMuted;
+            instantMirrorFold = OEM_DEFAULTS.instantMirrorFold;
+            windowInterruptMuted = OEM_DEFAULTS.windowInterruptMuted;
+            currentSoundTheme = SOUND_THEMES.find(s => s.id === OEM_DEFAULTS.soundThemeId) || SOUND_THEMES[0];
+            videoInMotionUnlocked = OEM_DEFAULTS.videoInMotionUnlocked;
+            tirePsiAndTemp = OEM_DEFAULTS.tirePsiAndTemp;
+            selectedColor = AMBIENT_PRESETS.find(p => p.name === OEM_DEFAULTS.ambientColorName) || AMBIENT_PRESETS[0];
+            persistState();
+            notify('[OK] All settings restored to Factory OEM Stock');
+            render().catch(() => {});
+        }
+
+        // Attempt live ECU read once TASU connects
+        diag.on('available', (isAvail) => {
+            if (isAvail) readLiveEcuValues().catch(() => {});
+        });
 
         // Dynamically compute available pages according to detected modules
         function getPages() {
@@ -240,7 +331,8 @@ mgu.run({
             cv.roundRect(btnX, btnY, btnW, btnH, 12, canWrite ? selectedColor.hex : '#16202c');
             cv.strokeRoundRect(btnX, btnY, btnW, btnH, 12, 1.5, canWrite ? selectedColor.hex : safeCheck.badgeColor);
 
-            const btnLabel = canWrite ? 'WRITE COLOR TO BDC (0x40)' : `[LOCKED] ${safeCheck.title}`;
+            const isOemColor = !!selectedColor.isOem;
+            const btnLabel = canWrite ? (isOemColor ? 'RESTORE ' + selectedColor.name.toUpperCase() : 'WRITE ' + selectedColor.name.toUpperCase() + ' TO BDC') : `[LOCKED] ${safeCheck.title}`;
             cv.text(btnLabel, btnX + btnW / 2, btnY + 34, 18, canWrite ? '#000000' : safeCheck.badgeColor, { align: 'center', font: 'bold', spacing: 1.2 });
 
             cv.target(btnX, btnY, btnW, btnH, () => {
@@ -250,7 +342,8 @@ mgu.run({
                     notify('[!] ' + check.title);
                     return;
                 }
-                notify('BDC Updated: Ambient RGB set to ' + selectedColor.name);
+                persistState();
+                notify(isOemColor ? 'Restored ' + selectedColor.name : 'BDC Updated: Ambient RGB set to ' + selectedColor.name);
             }, 'btn_apply_amb', 12);
         }
 
@@ -311,32 +404,48 @@ mgu.run({
                     title: 'Auto Start/Stop Memory',
                     desc: 'Permanently remembers last button state across ignition cycles (Stays OFF)',
                     active: autoStartStopMem,
-                    stateLabel: autoStartStopMem ? 'MEMORY ACTIVE (OFF)' : 'FACTORY OEM',
-                    action: () => { autoStartStopMem = !autoStartStopMem; notify('Start/Stop Memory ' + (autoStartStopMem ? 'Enabled' : 'Disabled')); }
+                    stateLabel: autoStartStopMem ? 'CODED: MEMORY (OFF)' : 'OEM FACTORY (ACTIVE)',
+                    action: () => {
+                        autoStartStopMem = !autoStartStopMem;
+                        persistState();
+                        notify('Auto Start/Stop ' + (autoStartStopMem ? 'Set to Memory (OFF)' : 'Restored to OEM'));
+                    }
                 },
                 {
                     key: 'start_stop_mem',
                     title: 'Seatbelt Warning Chimes',
                     desc: 'Mutes repetitive initial cabin audio gong when parking or maneuvering',
                     active: seatbeltChimeMuted,
-                    stateLabel: seatbeltChimeMuted ? 'CHIME SILENCED' : 'FACTORY OEM',
-                    action: () => { seatbeltChimeMuted = !seatbeltChimeMuted; notify('Seatbelt Chime ' + (seatbeltChimeMuted ? 'Muted' : 'Restored')); }
+                    stateLabel: seatbeltChimeMuted ? 'CODED: SILENCED' : 'OEM FACTORY (ACTIVE)',
+                    action: () => {
+                        seatbeltChimeMuted = !seatbeltChimeMuted;
+                        persistState();
+                        notify('Seatbelt Chimes ' + (seatbeltChimeMuted ? 'Muted' : 'Restored to OEM'));
+                    }
                 },
                 {
                     key: 'mirror_fold',
                     title: 'Instant Mirror Fold on Lock',
                     desc: 'Folds exterior side mirrors immediately when pressing lock (0.0s vs 1.5s delay)',
                     active: instantMirrorFold,
-                    stateLabel: instantMirrorFold ? 'INSTANT (0.0s)' : 'OEM (1.5s DELAY)',
-                    action: () => { instantMirrorFold = !instantMirrorFold; notify('Mirror Fold Delay set to ' + (instantMirrorFold ? '0.0s' : '1.5s')); }
+                    stateLabel: instantMirrorFold ? 'CODED: INSTANT (0.0s)' : 'OEM FACTORY (1.5s DELAY)',
+                    action: () => {
+                        instantMirrorFold = !instantMirrorFold;
+                        persistState();
+                        notify('Mirror Fold Delay ' + (instantMirrorFold ? 'Set to 0.0s Instant' : 'Restored to OEM 1.5s'));
+                    }
                 },
                 {
                     key: 'window_roll',
                     title: 'Door Open Window Roll Protection',
                     desc: 'Power windows continue rolling up without interrupting when car door is opened',
                     active: windowInterruptMuted,
-                    stateLabel: windowInterruptMuted ? 'CONTINUOUS UP' : 'OEM INTERRUPT',
-                    action: () => { windowInterruptMuted = !windowInterruptMuted; notify('Window Roll Protection set to Continuous'); }
+                    stateLabel: windowInterruptMuted ? 'CODED: CONTINUOUS UP' : 'OEM FACTORY (INTERRUPT)',
+                    action: () => {
+                        windowInterruptMuted = !windowInterruptMuted;
+                        persistState();
+                        notify('Window Roll Protection ' + (windowInterruptMuted ? 'Continuous Up' : 'Restored to OEM'));
+                    }
                 }
             ];
 
@@ -440,6 +549,7 @@ mgu.run({
                         return;
                     }
                     currentSoundTheme = theme;
+                    persistState();
                     notify('System Chimes set to ' + theme.name);
                 }, 'snd_' + idx, 12);
             });
@@ -455,16 +565,24 @@ mgu.run({
                     title: 'Video in Motion (VIM)',
                     desc: 'Enables continuous passenger media & cinema playback regardless of speed limit (Lock at 3 km/h disabled)',
                     active: videoInMotionUnlocked,
-                    status: videoInMotionUnlocked ? 'PERMANENTLY UNLOCKED' : 'FACTORY OEM (LOCKED)',
-                    action: () => { videoInMotionUnlocked = !videoInMotionUnlocked; notify('Video In Motion ' + (videoInMotionUnlocked ? 'Unlocked' : 'Locked')); }
+                    status: videoInMotionUnlocked ? 'CODED: VIM UNLOCKED' : 'OEM FACTORY (3 KM/H LOCK)',
+                    action: () => {
+                        videoInMotionUnlocked = !videoInMotionUnlocked;
+                        persistState();
+                        notify('Video In Motion ' + (videoInMotionUnlocked ? 'Unlocked' : 'Restored to OEM 3 km/h Lock'));
+                    }
                 },
                 {
                     key: 'tpms_display',
                     title: 'Tire Pressure & Temperature Display',
                     desc: 'Forces real-time bar/PSI AND live compound Celsius temperature readout simultaneously on Live Cockpit Kombi',
                     active: tirePsiAndTemp,
-                    status: tirePsiAndTemp ? 'PSI + DEG C FORCED ALWAYS' : 'OEM STANDARD',
-                    action: () => { tirePsiAndTemp = !tirePsiAndTemp; notify('TPMS Kombi Display ' + (tirePsiAndTemp ? 'Forced PSI+Temp' : 'OEM')); }
+                    status: tirePsiAndTemp ? 'CODED: PSI + TEMP FORCED' : 'OEM FACTORY (PRESSURE ONLY)',
+                    action: () => {
+                        tirePsiAndTemp = !tirePsiAndTemp;
+                        persistState();
+                        notify('TPMS Display ' + (tirePsiAndTemp ? 'Forced PSI+Temp' : 'Restored to OEM Pressure Only'));
+                    }
                 }
             ];
 
@@ -547,16 +665,35 @@ mgu.run({
             const mainW = cv.textWidth(mainLabel, 15, { font: 'bold', spacing: 1 });
             cv.text(' |  ' + subLabel, dockX + 46 + mainW, dockY + 24, 14, t.dim);
 
-            // Right-side Simulation / Guide Action Button
-            const btnW = 210, btnH = 26;
-            const btnX = dockX + dockW - btnW - 6, btnY = dockY + 6;
-            cv.roundRect(btnX, btnY, btnW, btnH, 6, isDiag ? '#0e241b' : '#261214');
-            cv.strokeRoundRect(btnX, btnY, btnW, btnH, 6, 1, stateColor);
+            // Right-side Action Buttons: [READ ECU] [RESTORE OEM] [TEST DIAG]
+            const b3W = 190, b2W = 125, b1W = 105, bH = 26;
+            const b3X = dockX + dockW - b3W - 6, bY = dockY + 6;
+            const b2X = b3X - b2W - 8;
+            const b1X = b2X - b1W - 8;
 
-            const btnText = isDiag ? 'TEST: LOCK (ENGINE ON)' : 'TEST: ENTER DIAG MODE';
-            cv.text(btnText, btnX + btnW / 2, btnY + 18, 12, stateColor, { align: 'center', font: 'bold', spacing: 0.8 });
+            // Button 1: READ ECU
+            cv.roundRect(b1X, bY, b1W, bH, 6, '#0c1724');
+            cv.strokeRoundRect(b1X, bY, b1W, bH, 6, 1, '#00a3e0');
+            cv.text('READ ECU', b1X + b1W / 2, bY + 18, 12, '#00a3e0', { align: 'center', font: 'bold', spacing: 0.8 });
+            cv.target(b1X, bY, b1W, bH, () => {
+                readLiveEcuValues();
+            }, 'btn_dock_read_ecu', 15);
 
-            cv.target(btnX, btnY, btnW, btnH, () => {
+            // Button 2: RESTORE OEM
+            cv.roundRect(b2X, bY, b2W, bH, 6, '#181b22');
+            cv.strokeRoundRect(b2X, bY, b2W, bH, 6, 1, '#94a3b8');
+            cv.text('RESTORE OEM', b2X + b2W / 2, bY + 18, 12, '#cbd5e1', { align: 'center', font: 'bold', spacing: 0.8 });
+            cv.target(b2X, bY, b2W, bH, () => {
+                restoreOemDefaults();
+            }, 'btn_dock_restore_oem', 15);
+
+            // Button 3: TEST DIAG MODE
+            cv.roundRect(b3X, bY, b3W, bH, 6, isDiag ? '#0e241b' : '#261214');
+            cv.strokeRoundRect(b3X, bY, b3W, bH, 6, 1, stateColor);
+            const btnText = isDiag ? 'TEST: LOCK (ENG ON)' : 'TEST: ENTER DIAG';
+            cv.text(btnText, b3X + b3W / 2, bY + 18, 12, stateColor, { align: 'center', font: 'bold', spacing: 0.8 });
+
+            cv.target(b3X, bY, b3W, bH, () => {
                 safety.toggleSimulatedDiagMode();
                 if (safety.vehicleState.diagnosticMode) {
                     activeSafetyAlert = null;

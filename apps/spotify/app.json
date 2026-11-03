@@ -14,9 +14,6 @@
       "kind": "canvas",
       "title": "Spotify",
       "buttons": [
-        ["BTN_PLAY", "Play / Pause"],
-        ["BTN_PREV", "Previous"],
-        ["BTN_NEXT", "Next"],
         ["BTN_PAGE", "Next page"],
         ["BTN_SETTINGS", "Settings"]
       ]

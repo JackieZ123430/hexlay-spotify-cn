@@ -13,11 +13,17 @@
  *      Vehicle permanently appears as a Cast target ("BMW iDrive 7") in the official YouTube app!
  *   3. Real YouTube Thumbnail Decoder:
  *      Downloads and decodes high-resolution video artwork directly onto the cockpit canvas.
- *   4. Intel Atom A3960 Hardware Thermal Safe Cap:
+ *   4. Active Cockpit Playback & Telemetry:
+ *      Dynamic live timecode, smooth seeking scrubber, animated ambilight pulse, and
+ *      live audio spectrum visualizer.
+ *   5. Intel Atom A3960 Hardware Thermal Safe Cap:
  *      Clamps streams to 720p or 1080p 60 to protect head unit CPU/GPU.
  *
+ * Audio Routing:
+ *   Audio streams through the vehicle stereo via Bluetooth Audio or Apple CarPlay / Android Auto.
+ *
  * Pages:
- *   0: Now Playing - 21:9 Widescreen player with live ambient accent
+ *   0: Now Playing - 21:9 Widescreen player with live ambient accent & spectrum visualizer
  *   1: Search - In-car YouTube search, speller keyboard & video results
  *   2: Connect - Official YouTube TV Link Code & Pairing Instructions
  */
@@ -31,10 +37,28 @@ const { YouTubeThumbnailManager, THUMB_IMG_ID } = require('./thumbnail');
 const W = 1600, H = 520;
 const PAGES = ['Now Playing', 'Search', 'Connect'];
 
-// String truncation with clean ellipsis
 function trunc(str, maxLen) {
     if (!str || typeof str !== 'string') return '';
     return str.length > maxLen ? str.slice(0, maxLen - 1) + '..' : str;
+}
+
+function parseDurationSec(durStr) {
+    if (!durStr || typeof durStr !== 'string') return 180;
+    const parts = durStr.trim().split(':').map(Number);
+    if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+        return parts[0] * 60 + parts[1];
+    }
+    if (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+        return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    }
+    return 180;
+}
+
+function formatTime(sec) {
+    const s = Math.max(0, Math.floor(sec || 0));
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    return `${m}:${rem < 10 ? '0' : ''}${rem}`;
 }
 
 mgu.run({
@@ -42,8 +66,10 @@ mgu.run({
         const { ui, settings, log, signals } = ctx;
 
         let page = 0;
-        let isPlaying = true;
-        let playProgress = 0.25;
+        let isPlaying = false;
+        let currentTimeSec = 0;
+        let totalDurationSec = 0;
+        let playProgress = 0;
         let isFullscreen = false;
         let vehicleSpeed = 0;
         let statusMsg = null;
@@ -60,6 +86,7 @@ mgu.run({
             title: 'Ready to Play',
             channel: 'YouTube on TV',
             duration: '00:00',
+            durationSec: 0,
             quality: (settings.quality === '1080p') ? '1080p 60' : '720p 60',
             glow: '#0066b1',
             views: 'Connected',
@@ -120,20 +147,53 @@ mgu.run({
             activeCastVideo = video;
             page = 0; // jump directly to Now Playing
             isPlaying = true;
+            currentTimeSec = 0;
+            totalDurationSec = video.durationSec || parseDurationSec(video.duration);
             playProgress = 0;
 
             if (video.ytId || video.thumbnail) {
                 thumbnailManager.load(video.ytId, video.thumbnail);
             }
 
+            // If connected to YouTube on TV Lounge, notify session
+            if (video.ytId && loungeReceiver && loungeReceiver.isConnected) {
+                loungeReceiver.sendPlayVideo(video.ytId);
+            }
+
             notify('Playing: ' + video.title);
             render().catch(() => {});
         }
+
+        // Active Playback Progress Ticker (1 second interval)
+        const playbackTimer = setInterval(() => {
+            if (isPlaying && totalDurationSec > 0) {
+                currentTimeSec++;
+                playProgress = Math.min(1, currentTimeSec / totalDurationSec);
+                if (currentTimeSec >= totalDurationSec) {
+                    currentTimeSec = 0;
+                    playProgress = 0;
+                }
+                render().catch(() => {});
+            }
+        }, 1000);
 
         // Initialize Official YouTube on TV Lounge Receiver
         const loungeReceiver = new YouTubeLoungeReceiver({
             onCast(video) {
                 playVideo(video);
+            },
+            onControl(cmd) {
+                if (cmd === 'pause') {
+                    isPlaying = false;
+                    notify('Paused');
+                } else if (cmd === 'play') {
+                    isPlaying = true;
+                    notify('Playing');
+                }
+                render().catch(() => {});
+            },
+            onCodeUpdated() {
+                render().catch(() => {});
             }
         }, log);
         loungeReceiver.start().catch((e) => log.warn('Lounge start err: ' + e.message));
@@ -188,7 +248,9 @@ mgu.run({
             const vx = 64, vy = 114, vw = 992, vh = 280;
 
             if (settings.ambilight !== 'off' && !motionLocked) {
-                cv.roundRect(vx - 2, vy - 2, vw + 4, vh + 4, 12, withAlpha('#0066b1', 0.25));
+                const pulse = (Math.sin(now / 400) + 1) * 0.5;
+                const glowAlpha = isPlaying ? (0.22 + pulse * 0.14) : 0.08;
+                cv.roundRect(vx - 2, vy - 2, vw + 4, vh + 4, 12, withAlpha('#0066b1', glowAlpha));
             }
 
             drawVideoScreen(cv, vx, vy, vw, vh, video, false, now, motionLocked);
@@ -202,11 +264,18 @@ mgu.run({
             cv.target(vx, sy - 10, sw, 28, (x) => {
                 const rel = Math.max(0, Math.min(1, (x - vx) / sw));
                 playProgress = rel;
-                notify(`Seek: ${Math.floor(rel * 100)}%`);
+                if (totalDurationSec > 0) {
+                    currentTimeSec = Math.floor(rel * totalDurationSec);
+                }
+                notify(`Seek: ${formatTime(currentTimeSec)}`);
+                render().catch(() => {});
             }, 'scrub', 8);
 
-            cv.text('02:15 / ' + (video.duration || '00:00'), vx, 442, 15, t.dim, { font: 'num' });
+            const durDisplay = totalDurationSec > 0 ? formatTime(totalDurationSec) : (video.duration || '0:00');
+            const timeStr = `${formatTime(currentTimeSec)} / ${durDisplay}`;
+            cv.text(timeStr, vx, 442, 15, t.dim, { font: 'num' });
             cv.text(video.quality, vx + 160, 442, 13, '#00a3e0', { font: 'bold' });
+            cv.text('Audio: Bluetooth / CarPlay Stereo', vx + 300, 442, 13, '#64748b');
             cv.text(isPlaying ? 'PLAYING' : 'PAUSED', vx + sw - 120, 442, 15, isPlaying ? '#2af575' : '#ffb703', { font: 'bold', align: 'right' });
 
             // Right Panel (460px): Track Info & Controls
@@ -238,6 +307,7 @@ mgu.run({
             cv.target(1124, 326, btnW, btnH, () => {
                 isPlaying = !isPlaying;
                 notify(isPlaying ? 'Resumed' : 'Paused');
+                render().catch(() => {});
             }, 'btn_play_toggle', 10);
 
             cv.roundRect(1340, 326, btnW, btnH, 8, '#162233');
@@ -246,6 +316,7 @@ mgu.run({
             cv.target(1340, 326, btnW, btnH, () => {
                 isFullscreen = !isFullscreen;
                 notify(isFullscreen ? '21:9 Fullscreen' : 'Standard View');
+                render().catch(() => {});
             }, 'btn_fs_toggle', 10);
 
             // In-Car Search Tab Shortcut
@@ -254,6 +325,7 @@ mgu.run({
             cv.text('SEARCH YOUTUBE IN IDRIVE  >', 1124 + 206, 411, 14, '#00f0ff', { align: 'center', font: 'bold' });
             cv.target(1124, 384, 412, 44, () => {
                 page = 1;
+                render().catch(() => {});
             }, 'btn_go_search', 10);
         }
 
@@ -278,6 +350,17 @@ mgu.run({
                 cv.fillRect(x, y, w, 44, withAlpha('#000000', 0.65));
                 cv.fillRect(x, y + h - 44, w, 44, withAlpha('#000000', 0.65));
                 cv.text(trunc(video.title, 48), x + 20, y + 28, 14, '#ffffff', { font: 'bold' });
+
+                // Dynamic Audio Spectrum Equalizer (reacts when playing)
+                if (isPlaying) {
+                    const eqX = x + w - 128, eqY = y + h - 14;
+                    for (let bi = 0; bi < 12; bi++) {
+                        const wave = Math.abs(Math.sin((now / 160) + bi * 0.65));
+                        const barH = 5 + Math.floor(wave * 20);
+                        const col = bi < 4 ? '#0066b1' : (bi < 8 ? '#00a3e0' : '#e1001a');
+                        cv.roundRect(eqX + bi * 9, eqY - barH, 6, barH, 2, col);
+                    }
+                }
             } else {
                 cv.fillRect(x, y, w, h, '#070b12');
                 cv.circle(cx, cy - 14, 40, '#0e1724');
@@ -297,6 +380,7 @@ mgu.run({
             cv.target(x, y, w, h, () => {
                 if (isFs) isFullscreen = false;
                 else isPlaying = !isPlaying;
+                render().catch(() => {});
             }, 'vid_screen', 10);
         }
 
@@ -308,127 +392,140 @@ mgu.run({
             const sx = 64, sy = 106, sw = 992;
 
             // Search Bar Input Box
-            cv.roundRect(sx, sy, sw - 120, 42, 8, '#080d15');
-            cv.strokeRoundRect(sx, sy, sw - 120, 42, 8, 1, searchQuery ? '#0066b1' : '#1e2d42');
+            cv.roundRect(sx, sy, sw, 48, 8, '#0b111a');
+            cv.strokeRoundRect(sx, sy, sw, 48, 8, 1, '#1e2d42');
+            const displayText = searchQuery ? (searchQuery + '_') : 'Type search query or select quick tag...';
+            cv.text(displayText, sx + 18, sy + 31, 16, searchQuery ? '#ffffff' : '#64748b', { font: searchQuery ? 'bold' : 'normal' });
 
-            const displayQuery = searchQuery ? searchQuery : 'Type with keyboard below or tap a category...';
-            cv.text(displayQuery, sx + 16, sy + 27, 16, searchQuery ? '#ffffff' : '#64748b', { font: searchQuery ? 'bold' : 'normal' });
-
-            // Clear Button [ X ]
-            if (searchQuery) {
-                cv.roundRect(sx + sw - 165, sy + 7, 34, 28, 6, '#131e2d');
-                cv.text('X', sx + sw - 148, sy + 26, 14, '#cbd5e1', { align: 'center', font: 'bold' });
-                cv.target(sx + sw - 165, sy + 7, 34, 28, () => {
-                    searchQuery = '';
-                    render().catch(() => {});
-                }, 'btn_clear_q', 10);
-            }
-
-            // Search Trigger Button [ SEARCH ]
-            cv.roundRect(sx + sw - 110, sy, 110, 42, 8, '#0066b1');
-            cv.text('SEARCH', sx + sw - 55, sy + 26, 15, '#ffffff', { align: 'center', font: 'bold' });
-            cv.target(sx + sw - 110, sy, 110, 42, () => {
-                runInCarSearch(searchQuery);
-            }, 'btn_do_search', 10);
-
-            // Category Chips Row (1-Tap Search)
-            const chips = ['BMW M3', 'Nürburgring', 'Car Reviews', 'Drag Race', 'Top Gear', 'Lofi Drive'];
+            // Category Chips (1-Touch Instant Search)
+            const categories = ['BMW M3', 'Nürburgring', 'Car Reviews', 'Drag Race', 'Top Gear', 'Lofi Drive'];
             let chipX = sx;
-            chips.forEach((ch, idx) => {
-                const cW = 152;
-                cv.roundRect(chipX, sy + 54, cW, 32, 6, '#101a28');
-                cv.strokeRoundRect(chipX, sy + 54, cW, 32, 6, 1, '#1e2e44');
-                cv.text(ch, chipX + cW / 2, sy + 75, 13, '#00a3e0', { align: 'center', font: 'bold' });
-                cv.target(chipX, sy + 54, cW, 32, () => {
-                    searchQuery = ch;
-                    runInCarSearch(ch);
+            const chipY = sy + 60;
+            const chipH = 34;
+
+            categories.forEach((cat, idx) => {
+                const isSelected = searchQuery === cat;
+                const chipW = cat.length * 9 + 28;
+                cv.roundRect(chipX, chipY, chipW, chipH, 17, isSelected ? '#0066b1' : '#101a28');
+                cv.strokeRoundRect(chipX, chipY, chipW, chipH, 17, 1, isSelected ? '#00a3e0' : '#1e324c');
+                cv.text(cat, chipX + chipW / 2, chipY + 22, 13, isSelected ? '#ffffff' : '#cbd5e1', { align: 'center', font: 'bold' });
+
+                cv.target(chipX, chipY, chipW, chipH, () => {
+                    searchQuery = cat;
+                    runInCarSearch(cat);
                 }, 'chip_' + idx, 10);
-                chipX += cW + 16;
+
+                chipX += chipW + 12;
             });
 
-            // On-Screen Speller Keyboard (QWERTY + Numbers)
-            const kbY = sy + 102;
-            const r1 = ['Q','W','E','R','T','Y','U','I','O','P','1','2','3'];
-            const r2 = ['A','S','D','F','G','H','J','K','L','4','5','6'];
-            const r3 = ['Z','X','C','V','B','N','M','7','8','9','0'];
+            // BMW Speller Keyboard
+            const kbY = chipY + 48;
+            const keyRows = [
+                ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', '1', '2', '3'],
+                ['K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', '4', '5', '6'],
+                ['U', 'V', 'W', 'X', 'Y', 'Z', '-', '.', ' ', 'DEL', 'CLR', 'GO']
+            ];
 
-            function drawKeyRow(row, startX, y, keyW, keyH, gap) {
-                row.forEach((k, idx) => {
-                    const kx = startX + idx * (keyW + gap);
-                    cv.roundRect(kx, y, keyW, keyH, 6, '#0e1724');
-                    cv.strokeRoundRect(kx, y, keyW, keyH, 6, 1, '#1a2738');
-                    cv.text(k, kx + keyW / 2, y + 25, 16, '#cbd5e1', { align: 'center', font: 'bold' });
-                    cv.target(kx, y, keyW, keyH, () => {
-                        searchQuery += k;
-                        render().catch(() => {});
-                    }, 'k_' + k, 8);
+            const keyH = 40;
+            const keyMargin = 6;
+            const totalRowW = sw;
+
+            keyRows.forEach((row, rIdx) => {
+                const y = kbY + rIdx * (keyH + keyMargin);
+                const count = row.length;
+                const keyW = Math.floor((totalRowW - (count - 1) * keyMargin) / count);
+
+                row.forEach((k, cIdx) => {
+                    const x = sx + cIdx * (keyW + keyMargin);
+                    let bg = '#0f1724';
+                    let border = '#1a293d';
+                    let textCol = '#ffffff';
+
+                    if (k === 'GO') {
+                        bg = '#0066b1';
+                        border = '#00a3e0';
+                    } else if (k === 'DEL' || k === 'CLR') {
+                        bg = '#1a1f2c';
+                        border = '#2c3547';
+                        textCol = '#94a3b8';
+                    } else if (k === ' ') {
+                        bg = '#131e2e';
+                    }
+
+                    cv.roundRect(x, y, keyW, keyH, 6, bg);
+                    cv.strokeRoundRect(x, y, keyW, keyH, 6, 1, border);
+                    cv.text(k === ' ' ? 'SPACE' : k, x + keyW / 2, y + 25, 14, textCol, { align: 'center', font: 'bold' });
+
+                    cv.target(x, y, keyW, keyH, () => {
+                        if (k === 'GO') {
+                            runInCarSearch(searchQuery);
+                        } else if (k === 'DEL') {
+                            searchQuery = searchQuery.slice(0, -1);
+                            render().catch(() => {});
+                        } else if (k === 'CLR') {
+                            searchQuery = '';
+                            render().catch(() => {});
+                        } else {
+                            if (searchQuery.length < 40) {
+                                searchQuery += k;
+                                render().catch(() => {});
+                            }
+                        }
+                    }, `key_${rIdx}_${cIdx}`, 10);
                 });
-            }
+            });
 
-            drawKeyRow(r1, sx, kbY, 68, 38, 9);
-            drawKeyRow(r2, sx + 20, kbY + 46, 68, 38, 9);
-            drawKeyRow(r3, sx + 40, kbY + 92, 68, 38, 9);
-
-            // Bottom Speller Actions (Space, Backspace)
-            const bSpaceW = 420, bSpaceX = sx + 180, bSpaceY = kbY + 140;
-            cv.roundRect(bSpaceX, bSpaceY, bSpaceW, 38, 6, '#131e2d');
-            cv.strokeRoundRect(bSpaceX, bSpaceY, bSpaceW, 38, 6, 1, '#1f3047');
-            cv.text('SPACE', bSpaceX + bSpaceW / 2, bSpaceY + 24, 14, '#cbd5e1', { align: 'center', font: 'bold' });
-            cv.target(bSpaceX, bSpaceY, bSpaceW, 38, () => {
-                searchQuery += ' ';
-                render().catch(() => {});
-            }, 'k_space', 10);
-
-            const bBspX = bSpaceX + bSpaceW + 14, bBspW = 160;
-            cv.roundRect(bBspX, bSpaceY, bBspW, 38, 6, '#16202e');
-            cv.strokeRoundRect(bBspX, bSpaceY, bBspW, 38, 6, 1, '#25354c');
-            cv.text('⌫ BACK', bBspX + bBspW / 2, bSpaceY + 24, 14, '#ff4d4d', { align: 'center', font: 'bold' });
-            cv.target(bBspX, bSpaceY, bBspW, 38, () => {
-                if (searchQuery.length > 0) {
-                    searchQuery = searchQuery.slice(0, -1);
+            // Clear search shortcut
+            if (searchQuery) {
+                const clrW = 90;
+                cv.roundRect(sx + sw - clrW - 6, sy + 6, clrW, 36, 6, '#182434');
+                cv.text('CLEAR', sx + sw - clrW / 2 - 6, sy + 28, 12, '#94a3b8', { align: 'center', font: 'bold' });
+                cv.target(sx + sw - clrW - 6, sy + 6, clrW, 36, () => {
+                    searchQuery = '';
                     render().catch(() => {});
-                }
-            }, 'k_bsp', 10);
+                }, 'btn_clear_input', 10);
+            }
 
             // Right Panel (460px): Search Results List
-            G.panel(cv, t, 1100, 52, 460, 410, 'Results (Tap to Play)');
+            G.panel(cv, t, 1100, 52, 460, 410, 'Video Results');
 
-            if (searchEngine.isSearching) {
-                cv.text('Searching YouTube...', 1330, 240, 16, '#00a3e0', { align: 'center', font: 'bold' });
-                return;
-            }
-
-            if (!searchResults || searchResults.length === 0) {
-                cv.text('No results found.', 1330, 220, 15, '#94a3b8', { align: 'center' });
-                cv.text('Try another query above.', 1330, 246, 13, t.dim, { align: 'center' });
-                return;
-            }
-
+            const listX = 1124;
+            let itemY = 114;
+            const itemW = 412;
+            const itemH = 68;
             const visibleCount = 4;
-            const items = searchResults.slice(searchScroll, searchScroll + visibleCount);
-            let itemY = 110;
 
-            items.forEach((item, idx) => {
-                const itemH = 68;
-                cv.roundRect(1124, itemY, 412, itemH, 8, '#080d15');
-                cv.strokeRoundRect(1124, itemY, 412, itemH, 8, 1, '#182436');
+            const visibleResults = searchResults.slice(searchScroll, searchScroll + visibleCount);
 
-                cv.roundRect(1132, itemY + 8, 86, 52, 4, '#000000');
-                drawPlayGlyph(cv, 1175, itemY + 34, 16, '#0066b1');
+            if (visibleResults.length === 0) {
+                cv.text('No results to display.', listX + itemW / 2, 240, 15, '#64748b', { align: 'center' });
+                cv.text('Use keyboard or category chips to search.', listX + itemW / 2, 268, 13, '#475569', { align: 'center' });
+            }
 
-                cv.text(trunc(item.title, 30), 1228, itemY + 26, 14, '#ffffff', { font: 'bold' });
-                cv.text(trunc(item.channel, 20) + ' · ' + (item.duration || ''), 1228, itemY + 48, 12, '#94a3b8');
+            visibleResults.forEach((item, idx) => {
+                cv.roundRect(listX, itemY, itemW, itemH, 8, '#0b111a');
+                cv.strokeRoundRect(listX, itemY, itemW, itemH, 8, 1, '#1b2a3f');
 
-                cv.target(1124, itemY, 412, itemH, () => {
+                // Small thumbnail box / play icon
+                cv.roundRect(listX + 8, itemY + 8, 72, 52, 6, '#141e2c');
+                drawPlayGlyph(cv, listX + 44, itemY + 34, 16, '#00a3e0');
+
+                // Title, channel and duration
+                cv.text(trunc(item.title, 26), listX + 90, itemY + 28, 14, '#ffffff', { font: 'bold' });
+                cv.text(trunc(item.channel, 22), listX + 90, itemY + 50, 12, '#94a3b8');
+                cv.text(item.duration, listX + itemW - 14, itemY + 50, 12, '#00a3e0', { align: 'right', font: 'num' });
+
+                cv.target(listX, itemY, itemW, itemH, () => {
                     playVideo({
                         ytId: item.id,
                         title: item.title,
                         channel: item.channel,
                         duration: item.duration,
+                        durationSec: item.durationSec || parseDurationSec(item.duration),
                         views: item.views,
                         quality: (settings.quality === '1080p') ? '1080p 60' : '720p 60',
                         glow: '#0066b1',
-                        desc: item.url,
+                        desc: item.channel ? `${item.channel} • ${item.duration} • ${item.views}` : item.url,
                         url: item.url,
                         thumbnail: item.thumbnail
                     });
@@ -469,7 +566,7 @@ mgu.run({
             cv.roundRect(lx, ly, 932, 96, 10, '#090e15');
             cv.strokeRoundRect(lx, ly, 932, 96, 10, 1.5, '#0066b1');
 
-            cv.text('YOUTUBE TV LINK CODE', lx + 24, ly + 32, 13, '#00a3e0', { font: 'bold', spacing: 1 });
+            cv.text('OFFICIAL YOUTUBE TV PAIRING CODE', lx + 24, ly + 32, 13, '#00a3e0', { font: 'bold', spacing: 1 });
             cv.text(loungeReceiver.getPairingCode(), lx + 24, ly + 72, 32, '#00f0ff', { font: 'num' });
 
             // Instructions to pair official YouTube mobile app
@@ -477,14 +574,15 @@ mgu.run({
             cv.strokeRoundRect(lx, ly + 110, 932, 214, 10, 1, '#1e2d42');
 
             cv.text('HOW TO CAST FROM OFFICIAL YOUTUBE APP (IPHONE / ANDROID):', lx + 24, ly + 144, 16, '#ffffff', { font: 'bold' });
-            cv.text('1. Open the official YouTube app on your smartphone', lx + 24, ly + 176, 15, '#cbd5e1');
-            cv.text('2. Tap Settings (gear icon) > Watch on TV', lx + 24, ly + 204, 15, '#cbd5e1');
-            cv.text('3. Tap "Link with TV code" and type the 12-digit code above', lx + 24, ly + 232, 15, '#00a3e0', { font: 'bold' });
-            cv.text('4. Tap Cast icon in YouTube app — vehicle appears as "BMW iDrive 7"!', lx + 24, ly + 260, 15, '#cbd5e1');
-            cv.text('5. Any video you tap on phone streams directly to your cockpit screen.', lx + 24, ly + 288, 15, '#2af575', { font: 'bold' });
+            cv.text('1. Open the official YouTube app on your smartphone', lx + 24, ly + 174, 15, '#cbd5e1');
+            cv.text('2. Tap Settings (gear icon) > Watch on TV', lx + 24, ly + 200, 15, '#cbd5e1');
+            cv.text('3. Tap "Link with TV code" and type the 12-digit code above', lx + 24, ly + 226, 15, '#00a3e0', { font: 'bold' });
+            cv.text('4. Tap Cast icon in YouTube app — vehicle appears as "BMW iDrive 7"!', lx + 24, ly + 252, 15, '#cbd5e1');
+            cv.text('5. Connect smartphone to car Bluetooth / CarPlay for vehicle stereo audio.', lx + 24, ly + 278, 15, '#2af575', { font: 'bold' });
+            cv.text('6. Any video you tap on phone streams directly to your cockpit screen.', lx + 24, ly + 304, 14, '#94a3b8');
 
-            // Right Panel (520px): System Status & Thermal Protection
-            G.panel(cv, t, 1040, 52, 520, 410, 'Status & Hardware');
+            // Right Panel (520px): System Status & Audio Routing
+            G.panel(cv, t, 1040, 52, 520, 410, 'Status & Audio');
 
             const rx = 1064;
 
@@ -495,12 +593,12 @@ mgu.run({
             cv.text('Direct Google Lounge Stream Protocol', rx + 20, 170, 13, '#94a3b8');
             cv.text('Cast target: BMW iDrive 7', rx + 20, 192, 13, '#cbd5e1');
 
-            // Hardware Thermal Capping
+            // Stereo Audio Routing Notice
             cv.roundRect(rx, 224, 472, 96, 8, '#090e15');
             cv.strokeRoundRect(rx, 224, 472, 96, 8, 1, '#1e2d42');
-            cv.text('THERMAL SAFE CAP (' + (settings.quality === '1080p' ? '1080P FHD' : '720P HD') + ')', rx + 20, 254, 15, '#cbd5e1', { font: 'bold' });
-            cv.text('Intel Atom A3960 CPU/GPU safe limit active.', rx + 20, 280, 13, '#94a3b8');
-            cv.text('High-bandwidth streams downsampled safely.', rx + 20, 302, 13, '#94a3b8');
+            cv.text('STEREO AUDIO: BLUETOOTH / CARPLAY', rx + 20, 254, 15, '#2af575', { font: 'bold' });
+            cv.text('Phone streams audio via BMW RAM stereo DSP.', rx + 20, 280, 13, '#94a3b8');
+            cv.text('Select Bluetooth or CarPlay source in iDrive Media.', rx + 20, 302, 13, '#cbd5e1');
 
             // Vehicle Motion Interlock
             const isParked = vehicleSpeed === 0;
@@ -556,16 +654,19 @@ mgu.run({
             return render();
         });
 
-        ctx.onTab((idx) => {
-            page = idx;
-            return render();
+        ui.onClick('BTN_SETTINGS', () => {
+            return ctx.openSettings ? ctx.openSettings() : null;
         });
 
         // Controller rotary knob & tilt
         ctx.controller.grab(true);
         ctx.controller.onInput((ev) => {
             if (page === 0 && ev.knobTicks) {
-                playProgress = Math.max(0, Math.min(1, playProgress + ev.knobTicks * 0.02));
+                if (totalDurationSec > 0) {
+                    currentTimeSec = Math.max(0, Math.min(totalDurationSec, currentTimeSec + ev.knobTicks * 5));
+                    playProgress = currentTimeSec / totalDurationSec;
+                    notify(`Seek: ${formatTime(currentTimeSec)}`);
+                }
                 render().catch(() => {});
             } else if (page === 1 && ev.knobTicks) {
                 if (ev.knobTicks > 0) {
@@ -587,10 +688,11 @@ mgu.run({
                             title: first.title,
                             channel: first.channel,
                             duration: first.duration,
+                            durationSec: first.durationSec || parseDurationSec(first.duration),
                             views: first.views,
                             quality: (settings.quality === '1080p') ? '1080p 60' : '720p 60',
                             glow: '#0066b1',
-                            desc: first.url,
+                            desc: first.channel ? `${first.channel} • ${first.duration} • ${first.views}` : first.url,
                             url: first.url,
                             thumbnail: first.thumbnail
                         });
@@ -600,8 +702,7 @@ mgu.run({
             }
         });
 
-        // Start 60 fps render loop
-        ctx.loop('MAIN', 15, render);
-        render().then(() => log.info('M-Cinema ready')).catch((e) => log.warn('M-Cinema render error: ' + e));
+        notify('M-Cinema Ready');
+        await render();
     }
 });

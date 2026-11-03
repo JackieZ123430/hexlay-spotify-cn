@@ -374,23 +374,26 @@ mgu.run({
             // Panel 1 (Left): AI Neural Core
             G.panel(cv, t, 40, 52, 380, 410, 'M Neural Core');
 
-            drawNeuralOrb(cv, 230, 180, 76, now);
+            drawNeuralOrb(cv, 230, 168, 70, now);
 
             // Live Engine Vitals (real vehicle signals)
-            cv.text(`${telemetry.oilTemp}°C OIL  ·  ${telemetry.coolantTemp}°C COOLANT`, 230, 286, 14, t.dim, { align: 'center', font: 'num' });
-            cv.text(`${telemetry.batteryVoltage}V BATT  ·  ${telemetry.boost} BAR BOOST`, 230, 310, 13, t.dim, { align: 'center', font: 'num' });
+            cv.text(`${telemetry.oilTemp}°C OIL  ·  ${telemetry.coolantTemp}°C COOLANT`, 230, 264, 14, t.dim, { align: 'center', font: 'num' });
+            cv.text(`${telemetry.batteryVoltage}V BATT  ·  ${telemetry.boost} BAR BOOST`, 230, 286, 13, t.dim, { align: 'center', font: 'num' });
 
-            // Ask button
-            const askW = 300, askH = 48, askX = 80, askY = 344;
+            // Primary Ask button
+            const askW = 300, askH = 46, askX = 80, askY = 318;
             cv.roundRect(askX, askY, askW, askH, 10, isThinking ? '#1e293b' : '#00a3e0');
-            cv.text(isThinking ? 'THINKING...' : 'ASK M-COPILOT', askX + askW / 2, askY + 30, 17, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+            cv.text(isThinking ? 'THINKING...' : 'ASK M-COPILOT', askX + askW / 2, askY + 29, 17, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
             cv.target(askX, askY, askW, askH, () => {
                 askCopilot(PROMPTS[0].query, PROMPTS[0].title);
             }, 'btn_ask', 10);
 
-            // Tap to Re-pair Phone link at bottom
-            cv.text('Tap to Re-pair Phone', 230, 420, 12, withAlpha(t.dim, 0.7), { align: 'center', font: 'label' });
-            cv.target(80, 406, 300, 24, () => {
+            // Secondary Re-pair / QR Code button (Clean, high-visibility outlined pill)
+            const pairW = 300, pairH = 38, pairX = 80, pairY = 380;
+            cv.roundRect(pairX, pairY, pairW, pairH, 8, withAlpha('#00a3e0', 0.12));
+            cv.strokeRoundRect(pairX, pairY, pairW, pairH, 8, 1.5, '#00a3e0');
+            cv.text('PAIR PHONE / QR CODE', pairX + pairW / 2, pairY + 24, 14, '#00a3e0', { align: 'center', font: 'bold', spacing: 1 });
+            cv.target(pairX, pairY, pairW, pairH, () => {
                 showPairing = true;
                 render(true);
             }, 'btn_relink', 8);

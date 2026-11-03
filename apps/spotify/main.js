@@ -176,6 +176,34 @@ mgu.run({
             }, 'btn_goto_connect', 15);
         }
 
+        /* ---------- Now Playing Sub-Header Pill ---------- */
+        function drawNowPlayingPill(cv, t, x, y, w, h) {
+            const curTrk = spotify.currentTrack;
+            if (!curTrk) return;
+
+            const isPlaying = spotify.isPlaying;
+            cv.roundRect(x, y, w, h, 8, withAlpha(t.panelEdge, 0.7));
+            cv.strokeRoundRect(x, y, w, h, 8, 1, isPlaying ? withAlpha(t.accent, 0.45) : withAlpha(t.panelEdge, 0.9));
+
+            // Animated Equalizer icon
+            drawMiniEqualizer(cv, x + 18, y + Math.floor(h / 2), isPlaying ? t.accent : t.dim, isPlaying, spectrumSeed);
+
+            // "PLAYING:" or "PAUSED:" tag
+            const stateStr = isPlaying ? 'PLAYING:' : 'PAUSED:';
+            cv.text(stateStr, x + 34, y + Math.floor(h / 2) + 5, 13, isPlaying ? t.accent : t.dim, { font: 'bold', spacing: 0.5 });
+
+            // Track title & artist
+            const trackStr = curTrk.title + (curTrk.artist ? '  -  ' + curTrk.artist : '');
+            cv.text(trunc(trackStr, 34), x + 104, y + Math.floor(h / 2) + 5, 15, isPlaying ? t.text : t.dim);
+
+            // Tap cue to switch to Queue
+            cv.text('QUEUE >', x + w - 12, y + Math.floor(h / 2) + 5, 12, isPlaying ? t.accent : t.dim, { align: 'right', font: 'bold' });
+
+            cv.target(x, y, w, h, () => {
+                page = 2; // Jump to Queue / Now Playing tab
+            }, 'np_pill', 10);
+        }
+
         /* ---------- Page 0: Playlists & Tracks ---------- */
         function drawPlaylists(cv, t) {
             const playlists = spotify.getPlaylists();
@@ -240,7 +268,8 @@ mgu.run({
             const isThisPlPlaying = spotify.currentPlaylist && spotify.currentPlaylist.id === curPl.id;
             const trackTotal = curPl.trackCount || (curPl.tracks ? curPl.tracks.length : 0);
 
-            G.panel(cv, t, 560, 52, 1000, 410, trunc(curPl.name, 36) + ' (' + trackTotal + ' tracks)');
+            G.panel(cv, t, 560, 52, 1000, 410, trunc(curPl.name, 22) + ' (' + trackTotal + ' tracks)');
+            drawNowPlayingPill(cv, t, 960, 62, 570, 34);
 
             if (!curPl.tracks || curPl.tracks.length === 0) {
                 cv.roundRect(576, 160, 968, 140, 12, t.track);
@@ -310,6 +339,7 @@ mgu.run({
             const title = 'Liked Songs (' + (total > 0 ? (startIdx + '-' + endIdx + ' of ' + total) : '0') + ' tracks)';
 
             G.panel(cv, t, 40, 52, 1520, 410, title);
+            drawNowPlayingPill(cv, t, 960, 62, 570, 34);
 
             // Liked Songs Scrollbar (replaces old ^/v buttons)
             drawScrollbar(cv, t, 1538, 110, 338, liked.length, VISIBLE_LIKED, likedScroll, () => {
@@ -576,11 +606,10 @@ mgu.run({
             else if (page === 2) drawQueue(cv, t);
             else if (page === 3) drawConnect(cv, t);
 
-            // G20 Live Cockpit frame tabs along the top
+            // G20 Live Cockpit frame tabs along the top: keep badges compact so tabs & Settings are never crowded out
             G.frame(cv, t, PAGES, page, [
-                { text: 'SPOTIFY' },
-                { text: spotify.activeDevice },
-                { text: (spotify.isPlaying ? 'PLAYING: ' : 'PAUSED: ') + (spotify.currentTrack ? spotify.currentTrack.title.toUpperCase() : 'IDLE') }
+                { text: spotify.activeDevice ? trunc(spotify.activeDevice, 16) : 'SPOTIFY' },
+                { text: spotify.isPlaying ? 'PLAYING' : 'PAUSED', color: spotify.isPlaying ? '#1ed760' : t.dim }
             ]);
 
             await ui.image('MAIN_GFX', cv);

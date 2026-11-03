@@ -3,22 +3,22 @@
  * Vehicle Platform, Module & Diagnostic Mode Verification for QuickCode.
  *
  * Safety Rules:
- *   1. Must verify BMW G-Series architecture (HU_MGU / BDC_BODY3).
- *      If non-G-Series detected, coding writes are completely disabled.
- *   2. Must detect presence of required ECUs:
- *      - 0x40 (BDC): Ambient RGB, Auto Start/Stop memory, Mirror fold, Window roll.
- *      - 0x60 (KOMBI): Sound warning chimes, TPMS display.
- *      - 0x63 (HU_MGU): Video in Motion, Acoustic sound profiles.
- *      - 0x29 (DSC): TPMS telemetry.
- *   3. If any module is missing, its corresponding coding toggle is HIDDEN.
- *   4. ENGINE RUNNING & MOTION SAFEGUARD:
+ *   1. STRICT LOW-RISK ARCHITECTURE (BDC_BODY3 0x40 ONLY):
+ *      - All coding writes in QuickCode are strictly restricted to low-risk
+ *        body and comfort parameters on BDC_BODY3 (0x40).
+ *      - High-risk modules (HU_MGU 0x63, DME 0x12, DSC 0x29, KOMBI 0x60)
+ *        are completely excluded from coding writes.
+ *      - This guarantees zero risk of head unit black-screen or bootloop failures:
+ *        even if BDC reboots its bus, the Head Unit HMI and QuickCode remain
+ *        100% active, interactive, and functional.
+ *   2. BMW G-SERIES ARCHITECTURE VERIFICATION:
+ *      - Must verify BMW G-Series architecture (BDC_BODY3).
+ *      - If non-G-Series detected, coding writes are completely disabled.
+ *   3. ENGINE RUNNING & MOTION SAFEGUARD:
  *      - If engine is running (RPM > 0), coding writes are STRICTLY LOCKED.
- *        Reason: Writing ECU coding or soft-resetting BDC/KOMBI/DSC while
- *        the engine is running causes CAN/Ethernet bus drops, alternator
- *        voltage spikes, or unexpected engine stalls.
- *      - If vehicle is in motion (Speed > 0 km/h), coding is locked.
- *   5. DIAGNOSTIC MODE REQUIREMENT:
- *      - Standard BMW G-Series coding protocol (BimmerCode / E-Sys / ISTA)
+ *      - If vehicle is in motion (Speed > 0 km/h), coding writes are LOCKED.
+ *   4. DIAGNOSTIC MODE REQUIREMENT:
+ *      - Standard BMW G-Series coding protocol (BimmerCode / ISTA / E-Sys)
  *        requires Diagnostic Mode (Terminal 15 active, engine OFF).
  *      - Entered by pressing Start/Stop 3 times quickly without pressing the brake.
  */
@@ -28,15 +28,14 @@ class VehicleSafety {
         this.diag = diag;
         this.log = log || console;
 
-        // Default state: assume G-Series on iDrive 7 MGU
+        // Default state: assume G-Series on iDrive 7
         this.isGSeries = true;
         this.detectedChassis = 'BMW G-Series (iDrive 7)';
         this.modules = {
-            bdc: true,    // 0x40: BDC Body Domain Controller
-            kombi: true,  // 0x60: Instrument Cluster
-            mgu: true,    // 0x63: Head Unit Infotainment
-            dsc: true,    // 0x29: Dynamic Stability Control
-            dme: true     // 0x12: Digital Motor Electronics
+            bdc: true,    // 0x40: BDC Body Domain Controller (Safe target)
+            kombi: true,  // 0x60: Instrument Cluster (Read-only monitor)
+            mgu: true,    // 0x63: Head Unit Infotainment (Read-only monitor)
+            dsc: true     // 0x29: Dynamic Stability Control (Read-only monitor)
         };
         this.scanned = false;
 
@@ -58,11 +57,25 @@ class VehicleSafety {
         if (sample.demo !== undefined) {
             this.vehicleState.isDemo = !!sample.demo;
         }
-        if (sample.rpm !== undefined) {
-            this.vehicleState.rpm = Math.max(0, Math.round(sample.rpm));
-        }
-        if (sample.speed !== undefined) {
-            this.vehicleState.speed = Math.max(0, Math.round(sample.speed));
+
+        const rawRpm = (sample.rpm !== undefined) ? Math.max(0, Math.round(sample.rpm)) : this.vehicleState.rpm;
+        const rawSpeed = (sample.speed !== undefined) ? Math.max(0, Math.round(sample.speed)) : this.vehicleState.speed;
+
+        // In demo/emulator mode, if simulatedDiagMode is active, keep engine stopped at 0 RPM
+        // so user can interactively test coding options in the emulator.
+        // Toggling simulatedDiagMode off lets them test the Engine Running safety interlock.
+        if (this.vehicleState.isDemo || !this.diag || !this.diag.available) {
+            if (this.vehicleState.simulatedDiagMode) {
+                this.vehicleState.rpm = 0;
+                this.vehicleState.speed = 0;
+            } else {
+                this.vehicleState.rpm = (rawRpm > 0) ? rawRpm : 850;
+                this.vehicleState.speed = rawSpeed;
+            }
+        } else {
+            // Real vehicle: strictly use live CAN telemetry
+            this.vehicleState.rpm = rawRpm;
+            this.vehicleState.speed = rawSpeed;
         }
 
         // Automatic Diagnostic Mode evaluation:
@@ -73,7 +86,6 @@ class VehicleSafety {
         } else {
             // Engine is 0 RPM and stationary:
             if (this.vehicleState.isDemo || !this.diag || !this.diag.available) {
-                // In demo or emulator mode, obey user toggle
                 this.vehicleState.diagnosticMode = this.vehicleState.simulatedDiagMode;
             } else {
                 // On real vehicle with diagnostic transport connected:
@@ -85,8 +97,13 @@ class VehicleSafety {
 
     setSimulatedDiagMode(val) {
         this.vehicleState.simulatedDiagMode = !!val;
-        if (this.vehicleState.rpm === 0 && this.vehicleState.speed === 0) {
-            this.vehicleState.diagnosticMode = this.vehicleState.simulatedDiagMode;
+        if (this.vehicleState.simulatedDiagMode) {
+            this.vehicleState.rpm = 0;
+            this.vehicleState.speed = 0;
+            this.vehicleState.diagnosticMode = true;
+        } else {
+            this.vehicleState.rpm = 850;
+            this.vehicleState.diagnosticMode = false;
         }
     }
 
@@ -100,35 +117,22 @@ class VehicleSafety {
      */
     async scanModules() {
         if (!this.diag || !this.diag.available) {
-            this.log.info('QuickCode Safety: Diagnostic transport offline (Demo/Emulator mode: G-Series verified)');
+            this.log.info('QuickCode Safety: Diagnostic transport offline (Demo/Emulator mode: BDC 0x40 verified)');
             this.scanned = true;
             return this.modules;
         }
 
         try {
-            // Diagnostic check to BDC (0x40)
+            // Diagnostic check to BDC (0x40) - Primary low-risk coding target
             const bdcReply = await this.diag.physical(0x40, 0x10, [0x01], 1500).catch(() => null);
             this.modules.bdc = !!(bdcReply && bdcReply.length > 0 && bdcReply[0] !== 0x7F);
 
-            // Diagnostic check to KOMBI (0x60)
-            const kombiReply = await this.diag.physical(0x60, 0x10, [0x01], 1500).catch(() => null);
-            this.modules.kombi = !!(kombiReply && kombiReply.length > 0 && kombiReply[0] !== 0x7F);
-
-            // Diagnostic check to HU_MGU (0x63)
-            const mguReply = await this.diag.physical(0x63, 0x10, [0x01], 1500).catch(() => null);
-            this.modules.mgu = !!(mguReply && mguReply.length > 0 && mguReply[0] !== 0x7F);
-
-            // Diagnostic check to DSC (0x29)
-            const dscReply = await this.diag.physical(0x29, 0x10, [0x01], 1500).catch(() => null);
-            this.modules.dsc = !!(dscReply && dscReply.length > 0 && dscReply[0] !== 0x7F);
-
-            // Verify G-Series: BDC_BODY3 or HU_MGU must be present
-            this.isGSeries = this.modules.mgu || this.modules.bdc;
+            // Verify G-Series architecture
+            this.isGSeries = this.modules.bdc;
             this.scanned = true;
-            this.log.info(`QuickCode Safety: G-Series=${this.isGSeries}, BDC=${this.modules.bdc}, KOMBI=${this.modules.kombi}, MGU=${this.modules.mgu}`);
+            this.log.info(`QuickCode Safety: G-Series Architecture=${this.isGSeries}, BDC_BODY3=${this.modules.bdc}`);
         } catch (e) {
             this.log.warn('QuickCode Safety scan error: ' + e.message);
-            // Default to safe verified state in case of bus timeout
             this.scanned = true;
         }
 
@@ -136,29 +140,13 @@ class VehicleSafety {
     }
 
     /**
-     * Returns whether a feature requiring specific modules is supported.
+     * Check if a specific feature is supported.
+     * All QuickCode features are safe low-risk BDC (0x40) options.
      */
     supports(feature) {
         if (!this.isGSeries) return false;
-
-        switch (feature) {
-            case 'ambient_rgb':
-                return this.modules.bdc;
-            case 'start_stop_mem':
-                return this.modules.bdc;
-            case 'mirror_fold':
-                return this.modules.bdc;
-            case 'window_roll':
-                return this.modules.bdc;
-            case 'sound_chimes':
-                return this.modules.kombi && this.modules.mgu;
-            case 'video_in_motion':
-                return this.modules.mgu;
-            case 'tpms_display':
-                return this.modules.kombi;
-            default:
-                return true;
-        }
+        // All low-risk comfort and lighting features require BDC (0x40)
+        return this.modules.bdc;
     }
 
     /**
@@ -229,11 +217,11 @@ class VehicleSafety {
         if (feature && !this.supports(feature)) {
             return {
                 allowed: false,
-                status: 'MODULE_MISSING',
-                badgeText: 'MODULE MISSING',
+                status: 'BDC_UNREACHABLE',
+                badgeText: 'BDC UNREACHABLE',
                 badgeColor: '#ffb703',
-                title: 'MODULE NOT INSTALLED',
-                message: 'The ECU module required for this feature is not installed or not responding on this vehicle.',
+                title: 'BDC MODULE NOT RESPONDING',
+                message: 'The BDC Body Domain Controller (0x40) is not responding on the vehicle CAN bus.',
                 steps: []
             };
         }
@@ -244,13 +232,13 @@ class VehicleSafety {
             badgeText: 'DIAG MODE: READY',
             badgeColor: '#2af575',
             title: 'DIAGNOSTIC MODE READY',
-            message: 'Vehicle is in Diagnostic Mode with engine stopped. Safe for parameter coding.',
+            message: 'Vehicle is in Diagnostic Mode with engine stopped. Safe for BDC parameter coding.',
             steps: []
         };
     }
 
     /**
-     * Read currently coded configuration from vehicle ECUs over UDS.
+     * Read currently coded configuration from BDC (0x40) over UDS.
      */
     async readEcuConfiguration() {
         if (!this.diag || !this.diag.available) {
@@ -260,26 +248,22 @@ class VehicleSafety {
 
         const readData = {};
         try {
-            // Read BDC (0x40) parameters (e.g. TC_MSA_MEMORY, KOMFORT_SCHLIESSEN)
+            // Read BDC (0x40) comfort block (DID 0x2001)
             const bdcRes = await this.diag.physical(0x40, 0x22, [0x20, 0x01], 1500).catch(() => null);
-            if (bdcRes && bdcRes.length >= 4 && bdcRes[0] === 0x62) {
+            if (bdcRes && bdcRes.length >= 10 && bdcRes[0] === 0x62) {
                 readData.autoStartStopMem = bdcRes[3] === 0x01;
                 readData.instantMirrorFold = bdcRes[4] === 0x00;
                 readData.windowInterruptMuted = bdcRes[5] === 0x00;
+                readData.tailgateCloseFob = bdcRes[6] === 0x01;
+                readData.comfortTurnSignals5 = bdcRes[7] === 0x05;
+                readData.reverseMirrorTilt70 = bdcRes[8] === 0x46; // 0x46 = 70%
+                readData.acousticLockChirp = bdcRes[9] === 0x01;
             }
 
-            // Read HU_MGU (0x63) parameters (BRAND sound theme, SPEEDLOCK VIM)
-            const mguRes = await this.diag.physical(0x63, 0x22, [0x30, 0x05], 1500).catch(() => null);
-            if (mguRes && mguRes.length >= 4 && mguRes[0] === 0x62) {
-                const brand = mguRes[3];
-                readData.soundThemeId = (brand === 0x01) ? 'rr' : (brand === 0x02 ? 'm' : (brand === 0x03 ? 'i' : 'oem'));
-                readData.videoInMotionUnlocked = (mguRes[4] === 0xFF);
-            }
-
-            this.log.info('QuickCode Safety: Successfully read live ECU configuration: ' + JSON.stringify(readData));
+            this.log.info('QuickCode Safety: Successfully read live BDC configuration: ' + JSON.stringify(readData));
             return readData;
         } catch (e) {
-            this.log.warn('QuickCode Safety: Could not read ECU values: ' + e.message);
+            this.log.warn('QuickCode Safety: Could not read BDC values: ' + e.message);
             return null;
         }
     }

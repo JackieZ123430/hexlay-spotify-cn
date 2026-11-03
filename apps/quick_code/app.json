@@ -1,7 +1,7 @@
 {
   "id": "quick_code",
   "title": "QuickCode",
-  "description": "One-tap cockpit coding for all BMW G-Series (iDrive 7): Ambient Lighting RGB, Auto Start/Stop memory, Sound Chimes & Warnings",
+  "description": "Safe one-tap cockpit coding with automated backups for BMW G-Series (BDC 0x40): Ambient RGB, Comfort Access, Auto Start/Stop, 5-Flash Signals & Mirror Fold",
   "version": "1.0.0",
   "vendor": "custom",
   "loggingId": "OAQC",

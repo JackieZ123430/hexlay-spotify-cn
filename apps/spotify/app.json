@@ -1,0 +1,37 @@
+{
+  "id": "spotify",
+  "title": "Spotify",
+  "description": "Spotify Connect cockpit player and library browser for BMW iDrive 7",
+  "version": "1.0.0",
+  "vendor": "custom",
+  "loggingId": "OASP",
+  "iconGlyph": "music",
+  "mguInternet": true,
+  "mguHmi": ["ID7"],
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "canvas",
+      "title": "Spotify",
+      "buttons": [
+        ["BTN_PLAY", "Play / Pause"],
+        ["BTN_PREV", "Previous"],
+        ["BTN_NEXT", "Next"],
+        ["BTN_PAGE", "Next page"],
+        ["BTN_SETTINGS", "Settings"]
+      ]
+    }
+  ],
+  "settings": [
+    {"key": "theme", "label": "Colour theme", "type": "choice", "default": "spotify",
+     "options": [["spotify", "Spotify Green"], ["m_tricolour", "M Tricolour"], ["m_red", "M Red"], ["ice", "Ice White"], ["amber", "Night Amber"]]},
+    {"key": "demo", "label": "Demo mode", "type": "choice", "default": "auto",
+     "options": [["auto", "Auto (Demo if offline)"], ["on", "Always Demo"], ["off", "Online Only"]]},
+    {"key": "layout", "label": "Screen layout", "type": "choice", "default": "full",
+     "options": [["full", "Full screen"], ["standard", "Standard"]]},
+    {"key": "renderer", "label": "Renderer", "type": "choice", "default": "auto",
+     "options": [["auto", "GPU 60 fps (default)"], ["software", "Software"]]},
+    {"key": "pollRate", "label": "Playback sync rate", "type": "number", "unit": "s", "default": 2,
+     "steps": [1, 2, 3, 5, 10]}
+  ]
+}

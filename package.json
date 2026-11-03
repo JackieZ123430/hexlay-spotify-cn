@@ -1,0 +1,12 @@
+{
+  "name": "idrive7-spotify",
+  "version": "1.0.0",
+  "description": "Native Spotify Connect player and library browser for BMW iDrive 7 (MGU)",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build": "python3 kit/tools/build.py spotify",
+    "emu": "node kit/tools/emu.js spotify",
+    "auth": "node apps/spotify/auth.js"
+  }
+}

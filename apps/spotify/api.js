@@ -484,16 +484,22 @@ class SpotifyClient {
         if (!this.token) return;
         try {
             const res = await this._request('GET', '/v1/me/player/devices');
-            if (res && res.devices && res.devices.length) {
+            if (res && Array.isArray(res.devices)) {
                 this.devices = res.devices.map((d) => ({
                     id: d.id,
-                    name: d.name,
+                    name: decodeHtmlEntities(d.name),
                     type: d.type,
                     isActive: d.is_active,
                     volume: d.volume_percent
                 }));
                 const active = this.devices.find((d) => d.isActive);
-                if (active) this.activeDevice = active.name + ' (' + active.type + ')';
+                if (active) {
+                    this.activeDevice = active.name + ' (' + active.type + ')';
+                } else if (this.devices.length > 0) {
+                    this.activeDevice = this.devices[0].name;
+                } else {
+                    this.activeDevice = 'No Active Target';
+                }
             }
         } catch (e) {
             //
@@ -551,8 +557,12 @@ class SpotifyClient {
         this.progressMs = 0;
         this.lastTickTime = Date.now();
         if (this.isOnline) {
+            const targetDev = this.devices.find((d) => d.isActive) || this.devices[0];
+            const deviceParam = (targetDev && targetDev.id) ? `?device_id=${targetDev.id}` : '';
             const uris = this.likedSongs.slice(index, index + 30).map((t) => t.uri);
-            this._request('PUT', '/v1/me/player/play', { uris }).catch(() => {});
+            this._request('PUT', `/v1/me/player/play${deviceParam}`, { uris }).then(() => {
+                setTimeout(() => this.pollPlayer(), 400);
+            }).catch(() => {});
         }
     }
 
@@ -566,7 +576,10 @@ class SpotifyClient {
         if (this.token && now - this.lastSync > 2500 && !this.syncing) {
             this.lastSync = now;
             this.syncing = true;
-            this.pollPlayer().finally(() => { this.syncing = false; });
+            Promise.all([
+                this.pollPlayer(),
+                this.fetchDevices()
+            ]).finally(() => { this.syncing = false; });
         }
 
         // Local progress interpolation between poll ticks
@@ -680,7 +693,9 @@ class SpotifyClient {
                 const body = playlist.uri && !playlist.uri.startsWith('spotify:playlist:demo')
                     ? { context_uri: playlist.uri, offset: { position: index } }
                     : { uris: [this.currentTrack.uri] };
-                this._request('PUT', '/v1/me/player/play', body).then(() => {
+                const targetDev = this.devices.find((d) => d.isActive) || this.devices[0];
+                const deviceParam = (targetDev && targetDev.id) ? `?device_id=${targetDev.id}` : '';
+                this._request('PUT', `/v1/me/player/play${deviceParam}`, body).then(() => {
                     setTimeout(() => this.pollPlayer(), 400);
                 }).catch(() => {});
             }

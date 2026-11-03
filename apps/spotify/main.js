@@ -469,23 +469,44 @@ mgu.run({
             G.panel(cv, t, 640, 52, 920, 410, 'Spotify Connect Devices');
             const devices = spotify.getDevices();
 
-            devices.forEach((dev, idx) => {
-                const dy = 124 + idx * 84;
-                const isCur = dev.name === spotify.activeDevice;
-                cv.roundRect(664, dy, 872, 70, 12, isCur ? withAlpha(t.accent, 0.22) : t.track);
-                if (isCur) cv.strokeRoundRect(664, dy, 872, 70, 12, 2, t.accent);
+            if (!devices || devices.length === 0) {
+                cv.roundRect(664, 124, 872, 230, 14, t.track);
+                cv.strokeRoundRect(664, 124, 872, 230, 14, 1, t.panelEdge);
 
-                cv.circle(694, dy + 35, 10, isCur ? '#1db954' : t.tick);
-                cv.text(dev.name, 724, dy + 33, 24, isCur ? t.text : '#dddddd', { font: 'bold' });
-                cv.text(dev.type + (isCur ? '  -  CURRENT ACTIVE TARGET' : '  -  Available'), 724, dy + 55, 18, isCur ? t.accent : t.dim);
+                cv.circle(734, 195, 34, withAlpha(t.accent, 0.22));
+                cv.text('!', 734, 206, 30, t.accent, { align: 'center', font: 'bold' });
 
-                cv.roundRect(1410, dy + 16, 106, 38, 8, isCur ? t.accent : withAlpha(t.tick, 0.5));
-                cv.text(isCur ? 'CONNECTED' : 'TRANSFER', 1463, dy + 40, 16, '#ffffff', { align: 'center', font: 'bold' });
+                cv.text('NO ACTIVE SPOTIFY DEVICES FOUND', 790, 178, 22, t.text, { font: 'bold' });
+                cv.text('Open Spotify on your iPhone, Mac, or car to connect playback.', 790, 208, 16, '#cbd5e1');
+                cv.text('Spotify Connect routes audio to an active device running Spotify.', 790, 234, 14, t.dim);
 
-                cv.target(664, dy, 872, 70, () => {
-                    spotify.transferToDevice(dev.id);
-                }, 'dev_' + idx, 12);
-            });
+                // Refresh Button
+                const rfW = 240, rfH = 46, rfX = 790, rfY = 268;
+                cv.roundRect(rfX, rfY, rfW, rfH, 8, withAlpha(t.accent, 0.22));
+                cv.strokeRoundRect(rfX, rfY, rfW, rfH, 8, 1.5, t.accent);
+                cv.text('REFRESH DEVICES', rfX + rfW / 2, rfY + 29, 15, t.accent, { align: 'center', font: 'bold', spacing: 1 });
+                cv.target(rfX, rfY, rfW, rfH, () => {
+                    spotify.fetchDevices().then(() => render());
+                }, 'btn_refresh_devs', 12);
+            } else {
+                devices.forEach((dev, idx) => {
+                    const dy = 124 + idx * 84;
+                    const isCur = dev.isActive || dev.name === spotify.activeDevice;
+                    cv.roundRect(664, dy, 872, 70, 12, isCur ? withAlpha(t.accent, 0.22) : t.track);
+                    if (isCur) cv.strokeRoundRect(664, dy, 872, 70, 12, 2, t.accent);
+
+                    cv.circle(694, dy + 35, 10, isCur ? '#1db954' : t.tick);
+                    cv.text(dev.name, 724, dy + 33, 24, isCur ? t.text : '#dddddd', { font: 'bold' });
+                    cv.text(dev.type + (isCur ? '  -  CURRENT ACTIVE TARGET' : '  -  Available'), 724, dy + 55, 18, isCur ? t.accent : t.dim);
+
+                    cv.roundRect(1410, dy + 16, 106, 38, 8, isCur ? t.accent : withAlpha(t.tick, 0.5));
+                    cv.text(isCur ? 'ACTIVE' : 'TRANSFER', 1463, dy + 40, 16, '#ffffff', { align: 'center', font: 'bold' });
+
+                    cv.target(664, dy, 872, 70, () => {
+                        spotify.transferToDevice(dev.id);
+                    }, 'dev_' + idx, 12);
+                });
+            }
 
             // Status indicator
             cv.roundRect(664, 380, 280, 42, 8, withAlpha(t.panelEdge, 0.8));

@@ -62,6 +62,13 @@ function formatTime(sec) {
     return `${m}:${rem < 10 ? '0' : ''}${rem}`;
 }
 
+function extractYouTubeId(urlOrId) {
+    if (!urlOrId) return null;
+    if (/^[A-Za-z0-9_-]{11}$/.test(urlOrId)) return urlOrId;
+    const m = String(urlOrId).match(/(?:v=|youtu\.be\/|embed\/|v\/|shorts\/)([A-Za-z0-9_-]{11})/);
+    return m ? m[1] : null;
+}
+
 mgu.run({
     async start(ctx) {
         const { ui, settings, log, signals } = ctx;
@@ -145,6 +152,7 @@ mgu.run({
         // Common handler for playing any video (cast or searched)
         function playVideo(video) {
             video.quality = '720p HD';
+            video.ytId = video.ytId || video.id || extractYouTubeId(video.url) || null;
             activeCastVideo = video;
             setPage(0); // jump directly to Now Playing
             isPlaying = true;
@@ -158,7 +166,7 @@ mgu.run({
             }
 
             // Start native video engine playback
-            const streamUrl = video.streamUrl || video.url || ('https://youtube.com/watch?v=' + video.ytId);
+            const streamUrl = video.streamUrl || video.url || ('https://youtube.com/watch?v=' + (video.ytId || ''));
             player.play(streamUrl, totalDurationSec, video);
 
             notify('Playing: ' + video.title);

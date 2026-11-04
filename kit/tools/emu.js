@@ -666,6 +666,7 @@ function start(id) {
             else if (m.t === 'video') {
                 if (m.action === 'stop') App.video = null;
                 else App.video = m;
+                appLog('info', 'emu: video ' + m.action + (m.ytId ? ' [' + m.ytId + ']' : ''));
                 toPages(m);
             }
         });

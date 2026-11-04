@@ -85,9 +85,17 @@ let videoLayer = null;
 let activeVideoElem = null;
 let currentYtId = null;
 
+function extractYtId(s) {
+  if (!s) return null;
+  if (/^[A-Za-z0-9_-]{11}$/.test(s)) return s;
+  const m = String(s).match(/(?:v=|youtu\.be\/|embed\/|v\/|shorts\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
 function ensureVideoLayer() {
   if (!videoLayer) {
     videoLayer = el('div', { id: 'video-layer', hidden: true });
+    videoLayer.style.display = 'none';
     const picker = $('#picker');
     if (picker) stage.insertBefore(videoLayer, picker);
     else stage.append(videoLayer);
@@ -95,29 +103,53 @@ function ensureVideoLayer() {
   return videoLayer;
 }
 
+function tryUnmute() {
+  if (activeVideoElem && activeVideoElem.tagName === 'IFRAME') {
+    try {
+      activeVideoElem.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: '' }), '*');
+      activeVideoElem.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
+    } catch (e) {}
+  }
+}
+stage.addEventListener('pointerdown', tryUnmute, { capture: true });
+
 function handleVideoEvent(m) {
   const layer = ensureVideoLayer();
   switch (m.action) {
   case 'play': {
-    layer.hidden = false;
-    const x = m.x || 64, y = m.y || 158, w = m.w || 992, h = m.h || 236, r = m.r || 8;
-    layer.style.left = `calc(var(--u) * ${x})`;
-    layer.style.top = `calc(var(--u) * ${y})`;
-    layer.style.width = `calc(var(--u) * ${w})`;
-    layer.style.height = `calc(var(--u) * ${h})`;
-    layer.style.borderRadius = `0 0 calc(var(--u) * ${r}) calc(var(--u) * ${r})`;
+    const pl = S.conn?.place || { x: 0, y: 0, s: 1, ox: 0, oy: 0 };
+    const s = pl.s || pl.scale || 1;
+    const ox = pl.ox || 0, oy = pl.oy || 0;
+    const px = pl.x || 0, py = pl.y || 0;
 
-    if (m.ytId) {
-      if (currentYtId !== m.ytId || !activeVideoElem || activeVideoElem.tagName !== 'IFRAME') {
-        currentYtId = m.ytId;
+    const lx = m.x || 64, ly = m.y || 158, lw = m.w || 992, lh = m.h || 236, lr = m.r || 8;
+    const screenX = Math.round(px + (lx * s + ox));
+    const screenY = Math.round(py + (ly * s + oy));
+    const screenW = Math.round(lw * s);
+    const screenH = Math.round(lh * s);
+    const screenR = Math.round(lr * s);
+
+    layer.style.display = 'flex';
+    layer.hidden = false;
+    layer.style.left = `calc(var(--u) * ${screenX})`;
+    layer.style.top = `calc(var(--u) * ${screenY})`;
+    layer.style.width = `calc(var(--u) * ${screenW})`;
+    layer.style.height = `calc(var(--u) * ${screenH})`;
+    layer.style.borderRadius = `0 0 calc(var(--u) * ${screenR}) calc(var(--u) * ${screenR})`;
+
+    const ytId = m.ytId || extractYtId(m.url);
+    if (ytId) {
+      if (currentYtId !== ytId || !activeVideoElem || activeVideoElem.tagName !== 'IFRAME') {
+        currentYtId = ytId;
         layer.replaceChildren();
         const iframe = el('iframe', {
-          src: `https://www.youtube-nocookie.com/embed/${m.ytId}?enablejsapi=1&autoplay=1&controls=0&modestbranding=1&rel=0&playsinline=1&iv_load_policy=3`,
+          src: `https://www.youtube.com/embed/${ytId}?enablejsapi=1&autoplay=1&mute=1&controls=0&modestbranding=1&rel=0&playsinline=1&iv_load_policy=3&origin=${encodeURIComponent(location.origin)}`,
           allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture',
           allowfullscreen: 'true'
         });
         activeVideoElem = iframe;
         layer.append(iframe);
+        setTimeout(tryUnmute, 1000);
       } else {
         try {
           activeVideoElem.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: '' }), '*');
@@ -171,15 +203,22 @@ function handleVideoEvent(m) {
     break;
   case 'hide':
   case 'lock':
-    if (layer) layer.hidden = true;
+    if (layer) {
+      layer.style.display = 'none';
+      layer.hidden = true;
+    }
     break;
   case 'show':
-    if (layer && activeVideoElem) layer.hidden = false;
+    if (layer && activeVideoElem) {
+      layer.style.display = 'flex';
+      layer.hidden = false;
+    }
     break;
   case 'stop':
     currentYtId = null;
     activeVideoElem = null;
     if (layer) {
+      layer.style.display = 'none';
       layer.hidden = true;
       layer.replaceChildren();
     }

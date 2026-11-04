@@ -12,6 +12,13 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
+function extractYouTubeId(urlOrId) {
+    if (!urlOrId) return null;
+    if (/^[A-Za-z0-9_-]{11}$/.test(urlOrId)) return urlOrId;
+    const m = String(urlOrId).match(/(?:v=|youtu\.be\/|embed\/|v\/|shorts\/)([A-Za-z0-9_-]{11})/);
+    return m ? m[1] : null;
+}
+
 const BIN_CANDIDATES = [
     '/var/opt/mgu-renderd/mgu-vidplay',
     path.join(__dirname, 'bin', 'mgu-vidplay'),
@@ -57,12 +64,13 @@ class VideoPlayer {
         this.currentTimeSec = 0;
         this.isPlaying = true;
 
+        const ytId = (videoMeta && (videoMeta.ytId || videoMeta.id)) || extractYouTubeId(streamUrl) || null;
         if (process.send) {
             process.send({
                 t: 'video',
                 action: 'play',
                 url: streamUrl,
-                ytId: (videoMeta && videoMeta.ytId) || null,
+                ytId: ytId,
                 title: (videoMeta && videoMeta.title) || '',
                 duration: this.totalDurationSec,
                 time: this.currentTimeSec,

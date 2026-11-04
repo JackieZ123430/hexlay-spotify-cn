@@ -20,7 +20,7 @@
             width: 100%;
             max-width: 440px;
             text-align: center;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
         }
         .badge {
             display: inline-block;
@@ -39,10 +39,12 @@
             font-weight: 800;
             color: #ffffff;
             margin-bottom: 6px;
+            letter-spacing: -0.5px;
         }
         p.subtitle {
-            font-size: 14px;
+            font-size: 13px;
             color: #94a3b8;
+            line-height: 1.4;
         }
         .card {
             background: #0e1522;
@@ -54,42 +56,68 @@
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
             margin-bottom: 20px;
         }
-        .btn-connect {
-            display: block;
-            width: 100%;
-            background: #00a3e0;
-            color: #ffffff;
-            font-size: 16px;
-            font-weight: 700;
-            text-align: center;
-            padding: 16px 0;
-            border-radius: 30px;
-            text-decoration: none;
-            cursor: pointer;
-            border: none;
-            transition: transform 0.1s ease, background 0.2s ease;
-            margin-top: 20px;
-            margin-bottom: 8px;
-        }
-        .btn-connect:active {
-            transform: scale(0.98);
-            background: #0088ba;
-        }
         .pair-code {
             display: flex;
             align-items: center;
-            justify-content: center;
-            gap: 8px;
+            justify-content: space-between;
             background: #141f2e;
             border: 1px solid #23354d;
-            padding: 12px;
+            padding: 12px 16px;
             border-radius: 10px;
-            font-size: 16px;
+            font-size: 14px;
             margin-bottom: 16px;
+            color: #94a3b8;
+            font-weight: 600;
+        }
+        .pair-code strong {
             color: #00f0ff;
-            font-weight: 700;
-            letter-spacing: 2px;
             font-family: monospace;
+            font-size: 16px;
+            letter-spacing: 2px;
+        }
+        .pulse-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #2af575;
+            box-shadow: 0 0 8px #2af575;
+            margin-right: 6px;
+        }
+        .alert-box {
+            background: rgba(225, 0, 26, 0.15);
+            border: 1px solid #e1001a;
+            color: #ff8080;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.4;
+            margin-bottom: 16px;
+            display: none;
+            text-align: center;
+        }
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        .tab {
+            flex: 1;
+            padding: 10px 0;
+            text-align: center;
+            font-size: 13px;
+            font-weight: 700;
+            background: #141f2e;
+            border: 1px solid #253347;
+            border-radius: 8px;
+            cursor: pointer;
+            color: #94a3b8;
+            transition: all 0.2s;
+        }
+        .tab.active {
+            background: #004e8c;
+            color: #00f0ff;
+            border-color: #00a3e0;
         }
         label {
             display: block;
@@ -119,63 +147,79 @@
             line-height: 1.4;
         }
         .helper-text a {
-            color: #2af575;
+            color: #00f0ff;
             text-decoration: underline;
+        }
+        .btn-connect {
+            display: block;
+            width: 100%;
+            background: #00a3e0;
+            color: #ffffff;
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            text-align: center;
+            padding: 15px 0;
+            border-radius: 28px;
+            cursor: pointer;
+            border: none;
+            transition: transform 0.1s ease, background 0.2s ease;
+            margin-top: 22px;
+            margin-bottom: 6px;
+        }
+        .btn-connect:active {
+            transform: scale(0.98);
+            background: #0088ba;
+        }
+        .btn-unpair {
+            display: block;
+            width: 100%;
+            background: rgba(225, 0, 26, 0.15);
+            border: 1px solid #e1001a;
+            color: #ff6b6b;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            text-align: center;
+            padding: 13px 0;
+            border-radius: 28px;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: all 0.2s;
+        }
+        .btn-unpair:active {
+            transform: scale(0.98);
+            background: rgba(225, 0, 26, 0.3);
         }
         .success-box {
             display: none;
             text-align: center;
-            padding: 24px 0;
+            padding: 28px 16px;
         }
         .icon-check {
-            width: 64px;
-            height: 64px;
+            width: 68px;
+            height: 68px;
             background: #2af575;
             color: #000;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 32px;
+            font-size: 36px;
             font-weight: bold;
             margin: 0 auto 20px;
+            box-shadow: 0 0 24px rgba(42, 245, 117, 0.35);
         }
-        .tabs {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 16px;
-        }
-        .tab {
-            flex: 1;
-            padding: 10px 0;
-            text-align: center;
-            font-size: 13px;
-            font-weight: 700;
+        .status-pill {
+            display: inline-block;
             background: #141f2e;
-            border: 1px solid #253347;
-            border-radius: 8px;
-            cursor: pointer;
-            color: #94a3b8;
-        }
-        .tab.active {
-            background: #004e8c;
-            color: #00f0ff;
-            border-color: #00a3e0;
-        }
-        .btn-reconfigure {
-            background: #141f2e;
-            border: 1px solid #253347;
-            color: #94a3b8;
-            padding: 10px 18px;
-            border-radius: 8px;
+            border: 1px solid #23354d;
+            padding: 8px 16px;
+            border-radius: 20px;
             font-size: 13px;
+            color: #2af575;
             font-weight: 600;
-            cursor: pointer;
-            margin-top: 18px;
-        }
-        .btn-reconfigure:hover {
-            color: #00f0ff;
-            border-color: #00a3e0;
+            margin-bottom: 18px;
         }
     </style>
 </head>
@@ -183,28 +227,36 @@
     <div class="header">
         <div class="badge">BMW iDrive 7 Cockpit</div>
         <h1>M-Copilot AI Setup</h1>
-        <p class="subtitle">Connect Google Gemini to your BMW Live Cockpit</p>
+        <p class="subtitle">Universal AI Performance Co-Driver for BMW G-Series</p>
     </div>
 
+    <!-- Disconnect / Unpair Notification Banner -->
+    <div class="card alert-box" id="disconnectNotice">
+        ⚠️ BMW Live Cockpit was unpaired. Enter API key below or scan new QR code to re-pair.
+    </div>
+
+    <!-- Pairing Form Card -->
     <div class="card" id="cardPairing">
-        <div class="pair-code">PAIRING CODE: <span id="spanCode">COP-CONNECT</span></div>
+        <div class="pair-code">
+            <span><span class="pulse-dot"></span>RELAY CHANNEL</span>
+            <strong id="spanCode">------</strong>
+        </div>
 
         <div class="tabs">
             <div class="tab active" id="tabGemini" onclick="switchTab('gemini')">Google Gemini (Free)</div>
-            <div class="tab" id="tabCustom" onclick="switchTab('custom')">OpenAI / Claude</div>
+            <div class="tab" id="tabCustom" onclick="switchTab('custom')">Custom API</div>
         </div>
 
-        <!-- Google Gemini Tab -->
+        <!-- Google Gemini Form -->
         <div id="sectionGemini">
             <label for="inputGeminiKey">Google Gemini API Key</label>
-            <input type="text" id="inputGeminiKey" placeholder="AIzaSy..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+            <input type="password" id="inputGeminiKey" placeholder="AIzaSy..." autocomplete="off">
             <p class="helper-text">
-                ✓ <strong>100% Free Forever</strong> (15 requests/min) from Google AI Studio.<br>
-                ✓ <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Get Free Key at aistudio.google.com</a> (No credit card needed).
+                Free personal tier with high rate limits. Get one instantly in <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio ↗</a>.
             </p>
         </div>
 
-        <!-- Custom API Tab -->
+        <!-- Custom API Form -->
         <div id="sectionCustom" style="display: none;">
             <label for="selectProvider">AI Provider</label>
             <select id="selectProvider">
@@ -226,30 +278,54 @@
             <option value="mechanic">N63/S63/B58 Master Tech (Diagnostics)</option>
         </select>
 
-        <button class="btn-connect" onclick="connectCopilot()">CONNECT M-COPILOT</button>
-        <p id="errorMsg" style="color: #ff4d4d; font-size: 13px; text-align: center; margin-top: 10px; display: none;"></p>
+        <button class="btn-connect" onclick="connectCopilot()">CONNECT TO BMW iDRIVE</button>
+        <p id="errorMsg" style="color: #ff4d4d; font-size: 13px; text-align: center; margin-top: 12px; display: none;"></p>
     </div>
 
-    <!-- Success Screen -->
+    <!-- Paired Success Screen -->
     <div class="card success-box" id="cardSuccess">
         <div class="icon-check">✓</div>
         <h2 style="font-size: 20px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">CONNECTED TO BMW iDRIVE 7!</h2>
-        <p style="font-size: 14px; color: #94a3b8; line-height: 1.5; margin-bottom: 16px;">
+        <div class="status-pill">● Safe Read-Only CAN Telemetry Uplink Active</div>
+        <p style="font-size: 14px; color: #94a3b8; line-height: 1.5; margin-bottom: 12px;">
             Your AI credentials have been transferred securely to your car.<br>
-            Your M-Copilot screen is now live.
+            All prompts and questions are controlled directly from your vehicle's touchscreen and iDrive controller.
         </p>
-        <div style="background: #141f2e; padding: 12px; border-radius: 8px; font-size: 13px; color: #2af575;">
-            ✓ Safe Read-Only CAN Telemetry Uplink Active
-        </div>
-        <button class="btn-reconfigure" onclick="reconfigure()">Change API Key</button>
+        <p style="font-size: 13px; color: #64748b; margin-bottom: 20px;">
+            You can safely lock your phone or close this browser tab.
+        </p>
+        <button class="btn-unpair" onclick="unpairFromPhone()">UNPAIR / RE-PAIR</button>
     </div>
 
     <script>
+        // Clean up any legacy voice assistant local storage
+        localStorage.removeItem('copilot_tts_enabled');
+        localStorage.removeItem('copilot_voice_lang');
+
         const urlParams = new URLSearchParams(window.location.search);
-        const channel = urlParams.get('channel') || localStorage.getItem('copilot_channel') || 'bmw_copilot_default';
+        const urlChannel = urlParams.get('channel');
+        const storedChannel = localStorage.getItem('copilot_channel');
+
+        // If user scans a new QR code (new channel), force reset of previous pairing
+        if (urlChannel && urlChannel !== storedChannel) {
+            localStorage.removeItem('copilot_paired');
+            localStorage.setItem('copilot_channel', urlChannel);
+        }
+
+        const channel = urlChannel || storedChannel || 'bmw_copilot_default';
         let currentTab = 'gemini';
+        let evtSource = null;
 
         document.getElementById('spanCode').innerText = channel.replace('bmw_copilot_', '').toUpperCase();
+
+        // Restore paired view if already paired on this channel
+        if (localStorage.getItem('copilot_paired') === 'true') {
+            document.getElementById('cardPairing').style.display = 'none';
+            document.getElementById('cardSuccess').style.display = 'block';
+        }
+
+        // Start real-time connection / disconnection listener
+        initRelayListener();
 
         function switchTab(t) {
             currentTab = t;
@@ -260,9 +336,58 @@
             document.getElementById('errorMsg').style.display = 'none';
         }
 
-        function reconfigure() {
-            document.getElementById('cardPairing').style.display = 'block';
+        function handleCarDisconnected() {
+            localStorage.removeItem('copilot_paired');
             document.getElementById('cardSuccess').style.display = 'none';
+            document.getElementById('cardPairing').style.display = 'block';
+            const alertBox = document.getElementById('disconnectNotice');
+            alertBox.style.display = 'block';
+            alertBox.innerText = 'BMW Live Cockpit was unpaired. Enter API key below or scan new QR code to re-pair.';
+        }
+
+        function handleCarConnected() {
+            localStorage.setItem('copilot_paired', 'true');
+            document.getElementById('disconnectNotice').style.display = 'none';
+            document.getElementById('cardPairing').style.display = 'none';
+            document.getElementById('cardSuccess').style.display = 'block';
+        }
+
+        function initRelayListener() {
+            if (evtSource) {
+                try { evtSource.close(); } catch (e) {}
+            }
+            try {
+                evtSource = new EventSource('https://ntfy.sh/' + channel + '/sse');
+                evtSource.onmessage = (e) => {
+                    try {
+                        const data = JSON.parse(e.data);
+                        if (data.event === 'message' && data.message) {
+                            let msg = null;
+                            try { msg = JSON.parse(data.message); } catch (err) {}
+                            if (!msg) return;
+
+                            if (msg.type === 'copilot_unpaired') {
+                                handleCarDisconnected();
+                            } else if (msg.type === 'copilot_pair_ack') {
+                                handleCarConnected();
+                            }
+                        }
+                    } catch (err) {}
+                };
+            } catch (err) {
+                console.warn('SSE relay listener error:', err);
+            }
+        }
+
+        async function unpairFromPhone() {
+            try {
+                await fetch('https://ntfy.sh/' + channel, {
+                    method: 'POST',
+                    headers: { 'Title': 'BMW M-Copilot Unpair' },
+                    body: JSON.stringify({ type: 'phone_unpair', time: Date.now() })
+                });
+            } catch (e) {}
+            handleCarDisconnected();
         }
 
         async function connectCopilot() {
@@ -305,9 +430,7 @@
                     body: JSON.stringify(payload)
                 });
                 if (res.ok) {
-                    localStorage.setItem('copilot_channel', channel);
-                    document.getElementById('cardPairing').style.display = 'none';
-                    document.getElementById('cardSuccess').style.display = 'block';
+                    handleCarConnected();
                 } else {
                     err.innerText = 'Transmission error. Check phone internet connection.';
                     err.style.display = 'block';

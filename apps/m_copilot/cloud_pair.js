@@ -33,6 +33,7 @@ class CloudPairManager {
         this.lastSince = Math.floor(Date.now() / 1000) - (this.ai && this.ai.isConfigured() ? 2 : 7200);
 
         this.onPaired = null;
+        this.onUnpaired = null;
     }
 
     getPairingUrl() {
@@ -41,6 +42,43 @@ class CloudPairManager {
 
     getShortCode() {
         return this.shortCode;
+    }
+
+    notifyUnpair() {
+        if (!this.channel) return;
+        try {
+            const req = https.request(`https://ntfy.sh/${this.channel}`, {
+                method: 'POST',
+                headers: {
+                    'Title': 'BMW M-Copilot Unpaired',
+                    'Content-Type': 'application/json'
+                },
+                timeout: 3000
+            });
+            req.on('error', () => {});
+            req.write(JSON.stringify({ type: 'copilot_unpaired', time: Date.now() }));
+            req.end();
+            this.log.info('CloudPair: Broadcasted unpair to channel', this.channel);
+        } catch (e) {
+            this.log.error('CloudPair: notifyUnpair error', e);
+        }
+    }
+
+    notifyAck() {
+        if (!this.channel) return;
+        try {
+            const req = https.request(`https://ntfy.sh/${this.channel}`, {
+                method: 'POST',
+                headers: {
+                    'Title': 'BMW M-Copilot Paired',
+                    'Content-Type': 'application/json'
+                },
+                timeout: 3000
+            });
+            req.on('error', () => {});
+            req.write(JSON.stringify({ type: 'copilot_pair_ack', time: Date.now() }));
+            req.end();
+        } catch (e) {}
     }
 
     reset() {
@@ -124,10 +162,18 @@ class CloudPairManager {
 
         if (!parsed) return;
 
+        // Disconnection event from phone
+        if (parsed.type === 'phone_unpair') {
+            this.log.info('CloudPair: Received phone unpair request');
+            if (this.onUnpaired) this.onUnpaired();
+            return;
+        }
+
         // Credentials Pairing Event
         if (parsed.geminiApiKey || parsed.apiKey || parsed.sessionToken) {
             this.log.info('CloudPair: Received AI credentials via cloud relay!');
             this.ai.saveCredentials(parsed);
+            this.notifyAck();
             this.stopPolling();
             if (this.onPaired) this.onPaired();
         }

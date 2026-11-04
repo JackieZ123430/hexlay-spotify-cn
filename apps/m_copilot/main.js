@@ -180,6 +180,21 @@ mgu.run({
             render(true).catch(() => {});
         };
 
+        cloudPair.onUnpaired = () => {
+            ai.config.geminiApiKey = null;
+            ai.config.apiKey = null;
+            ai.config.sessionToken = null;
+            ai.config.paired = false;
+            ai.saveConfig();
+            cachedQr = null;
+            cachedQrUrl = null;
+            cloudPair.reset();
+            cloudPair.startPolling();
+            showPairing = true;
+            notify('Phone disconnected AI. Scan QR code to re-pair.');
+            render(true).catch(() => {});
+        };
+
         function notify(msg) {
             statusMsg = msg;
             statusTime = Date.now();
@@ -582,6 +597,7 @@ mgu.run({
             cv.text(pairLabel, pairX + pairW / 2, pairY + 25, 14, pairTextCol, { align: 'center', font: 'bold', spacing: 1 });
             cv.target(pairX, pairY, pairW, pairH, () => {
                 if (isPaired) {
+                    cloudPair.notifyUnpair();
                     ai.config.geminiApiKey = null;
                     ai.config.apiKey = null;
                     ai.config.sessionToken = null;

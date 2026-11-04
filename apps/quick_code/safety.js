@@ -101,17 +101,10 @@ class VehicleSafety {
 
         // In demo/emulator mode, if simulatedDiagMode is active, keep engine stopped at 0 RPM
         // so user can interactively test coding options in the emulator.
-        // Toggling simulatedDiagMode off lets them test the Engine Running safety interlock.
-        if (this.vehicleState.isDemo || !this.diag || !this.diag.available) {
-            if (this.vehicleState.simulatedDiagMode) {
-                this.vehicleState.rpm = 0;
-                this.vehicleState.speed = 0;
-            } else {
-                this.vehicleState.rpm = (rawRpm > 0) ? rawRpm : 850;
-                this.vehicleState.speed = rawSpeed;
-            }
-        } else {
-            // Real vehicle: strictly use live CAN telemetry
+        if (this.vehicleState.isDemo && this.vehicleState.simulatedDiagMode) {
+            this.vehicleState.rpm = 0;
+            this.vehicleState.speed = 0;
+        } else if (hasValidRpm || hasValidSpeed) {
             this.vehicleState.rpm = rawRpm;
             this.vehicleState.speed = rawSpeed;
         }
@@ -123,14 +116,13 @@ class VehicleSafety {
             this.vehicleState.diagnosticMode = false;
         } else {
             // Engine is 0 RPM and stationary:
-            if (this.vehicleState.isDemo || !this.diag || !this.diag.available) {
-                this.vehicleState.diagnosticMode = this.vehicleState.simulatedDiagMode;
-            } else {
-                // On real vehicle with diagnostic transport connected:
-                // Terminal 15 / Diagnostic Mode is evaluated
-                this.vehicleState.diagnosticMode = true;
-            }
+            this.vehicleState.diagnosticMode = this.vehicleState.simulatedDiagMode;
         }
+    }
+
+    setDiagnosticMode(val) {
+        this.vehicleState.diagnosticMode = !!val;
+        this.vehicleState.simulatedDiagMode = !!val;
     }
 
     setSimulatedDiagMode(val) {

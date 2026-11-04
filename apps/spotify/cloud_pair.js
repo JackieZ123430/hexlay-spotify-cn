@@ -13,13 +13,36 @@
  */
 const https = require('https');
 
+let crypto;
+try { crypto = require('crypto'); } catch (e) {}
+
+function generateEntropyHex(bytes) {
+    if (crypto && crypto.randomBytes) {
+        return crypto.randomBytes(bytes).toString('hex');
+    }
+    let s = '';
+    while (s.length < bytes * 2) {
+        s += Math.random().toString(36).substring(2);
+    }
+    return s.substring(0, bytes * 2);
+}
+
+function formatShortCode(channel) {
+    if (!channel) return '--------';
+    const raw = channel.replace('bmw_spot_', '').toUpperCase();
+    if (raw.length >= 8) {
+        return raw.substring(0, 4) + '-' + raw.substring(4, 8);
+    }
+    return raw;
+}
+
 class CloudPairManager {
     constructor(ctx, spotifyClient) {
         this.ctx = ctx;
         this.log = ctx.log || console;
         this.spotify = spotifyClient;
-        this.channel = 'bmw_spot_' + Math.random().toString(36).substring(2, 10);
-        this.shortCode = this.channel.replace('bmw_spot_', '').toUpperCase();
+        this.channel = 'bmw_spot_' + generateEntropyHex(12);
+        this.shortCode = formatShortCode(this.channel);
         this.pollInterval = null;
         this.isPolling = false;
     }
@@ -35,8 +58,8 @@ class CloudPairManager {
     }
 
     reset() {
-        this.channel = 'bmw_spot_' + Math.random().toString(36).substring(2, 10);
-        this.shortCode = this.channel.replace('bmw_spot_', '').toUpperCase();
+        this.channel = 'bmw_spot_' + generateEntropyHex(12);
+        this.shortCode = formatShortCode(this.channel);
     }
 
     startPolling() {

@@ -6,18 +6,24 @@
  * Safety Architecture:
  *   1. STRICT LOW-RISK ARCHITECTURE (BDC_BODY3 0x40 ONLY):
  *      - All coding writes strictly target safe body and comfort parameters on BDC (0x40).
- *      - High-risk modules (HU_MGU 0x63, DME 0x12, DSC 0x29) are completely excluded.
+ *      - High-risk modules (HU_MGU 0x63, DME 0x12, DSC 0x29, KOMBI 0x60) are completely excluded.
  *      - Physically eliminates any risk of head unit black-screen, bootloops, or OS crashes.
  *   2. AUTOMATED PRE-CODING BACKUPS & 1-TAP ROLLBACK:
- *      - Every parameter change automatically creates a timestamped snapshot before writing.
- *      - Backups are stored in persistent head unit storage and can be restored anytime.
+ *      - Every parameter change automatically creates a crash-proof timestamped snapshot before writing.
+ *      - Backups are stored in atomic, self-healing head unit storage and can be restored anytime.
  *   3. BMW G-SERIES VEHICLE VERIFICATION:
  *      - Verifies presence of BDC_BODY3 architecture before unlocking coding writes.
  *   4. ENGINE RUNNING & MOTION SAFEGUARD:
  *      - Coding is strictly locked if engine RPM > 0 or vehicle Speed > 0.
+ *      - Strict validation prevents NaN telemetry bypasses.
  *   5. DIAGNOSTIC MODE INTERLOCK:
  *      - Requires Terminal 15 Diagnostic Mode (Start/Stop 3 times, engine OFF)
  *        matching authentic BimmerCode and ISTA safety protocols.
+ *   6. TRIPLE-CHECK WRITES WITH LIVE READ-BACK:
+ *      - Parameters written over ISO 14229 Service 0x2E are verified immediately
+ *        via Service 0x22 to ensure ECU EEPROM confirmation.
+ *   7. CONCURRENCY MUTEX:
+ *      - Prevents overlapping or concurrent write transactions.
  */
 const fs = require('fs');
 const path = require('path');
@@ -49,7 +55,8 @@ const OEM_DEFAULTS = {
     reverseMirrorTilt70: false,   // OEM: 100% downward tilt (stares at floor)
     acousticLockChirp: false,     // OEM: Silent lock (no acoustic chirp)
     emergencyBrakeBfd: false,     // OEM: Steady brake lamp under heavy deceleration
-    ambientColorName: 'BMW Bronze (OEM)'
+    ambientColorName: 'BMW Bronze (OEM)',
+    ambientHex: '#c89650'
 };
 
 mgu.run({
@@ -63,51 +70,83 @@ mgu.run({
 
         const backupMgr = new BackupManager(dataDir, log);
 
-        // Persistent State File
-        const STATE_FILE = path.join(dataDir || process.cwd(), 'quick_code_state.json');
+        // Persistent State File with Atomic Mirror
+        const baseDir = dataDir || process.cwd();
+        const STATE_FILE = path.join(baseDir, 'quick_code_state.json');
+        const STATE_BAK = STATE_FILE + '.bak';
 
         function saveState(st) {
+            if (!st || typeof st !== 'object') return;
+            const dir = path.dirname(STATE_FILE);
+            const tempPath = path.join(dir, `.tmp_qc_st_${process.pid}_${Date.now()}`);
             try {
-                fs.writeFileSync(STATE_FILE, JSON.stringify(st, null, 2), 'utf8');
+                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                const jsonStr = JSON.stringify(st, null, 2);
+                fs.writeFileSync(tempPath, jsonStr, 'utf8');
+                if (fs.existsSync(STATE_FILE)) {
+                    try { fs.copyFileSync(STATE_FILE, STATE_BAK); } catch (_) {}
+                }
+                fs.renameSync(tempPath, STATE_FILE);
             } catch (e) {
-                log.warn('QuickCode: Failed to save state: ' + e.message);
+                log.warn('QuickCode: Failed to save state atomically: ' + e.message);
+                try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch (_) {}
             }
         }
 
         function loadSavedState() {
             try {
                 if (fs.existsSync(STATE_FILE)) {
-                    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+                    const content = fs.readFileSync(STATE_FILE, 'utf8');
+                    if (content && content.trim().length > 0) {
+                        const parsed = JSON.parse(content);
+                        if (parsed && typeof parsed === 'object') return parsed;
+                    }
                 }
             } catch (e) {
-                log.warn('QuickCode: Failed to load state: ' + e.message);
+                log.warn('QuickCode: Failed to load primary state: ' + e.message);
+            }
+
+            try {
+                if (fs.existsSync(STATE_BAK)) {
+                    const bakContent = fs.readFileSync(STATE_BAK, 'utf8');
+                    if (bakContent && bakContent.trim().length > 0) {
+                        const parsed = JSON.parse(bakContent);
+                        if (parsed && typeof parsed === 'object') {
+                            log.info('QuickCode: Recovered state from backup mirror');
+                            return parsed;
+                        }
+                    }
+                }
+            } catch (e) {
+                log.warn('QuickCode: Failed to load mirror state: ' + e.message);
             }
             return null;
         }
 
         // Initialize state: start with authentic OEM factory defaults or saved configuration
         const saved = loadSavedState() || {};
-        let autoStartStopMem = (saved.autoStartStopMem !== undefined) ? saved.autoStartStopMem : OEM_DEFAULTS.autoStartStopMem;
-        let instantMirrorFold = (saved.instantMirrorFold !== undefined) ? saved.instantMirrorFold : OEM_DEFAULTS.instantMirrorFold;
-        let windowInterruptMuted = (saved.windowInterruptMuted !== undefined) ? saved.windowInterruptMuted : OEM_DEFAULTS.windowInterruptMuted;
-        let tailgateCloseFob = (saved.tailgateCloseFob !== undefined) ? saved.tailgateCloseFob : OEM_DEFAULTS.tailgateCloseFob;
-        let comfortTurnSignals5 = (saved.comfortTurnSignals5 !== undefined) ? saved.comfortTurnSignals5 : OEM_DEFAULTS.comfortTurnSignals5;
-        let reverseMirrorTilt70 = (saved.reverseMirrorTilt70 !== undefined) ? saved.reverseMirrorTilt70 : OEM_DEFAULTS.reverseMirrorTilt70;
-        let acousticLockChirp = (saved.acousticLockChirp !== undefined) ? saved.acousticLockChirp : OEM_DEFAULTS.acousticLockChirp;
-        let emergencyBrakeBfd = (saved.emergencyBrakeBfd !== undefined) ? saved.emergencyBrakeBfd : OEM_DEFAULTS.emergencyBrakeBfd;
-        let selectedColor = AMBIENT_PRESETS.find(p => p.name === (saved.ambientColorName || OEM_DEFAULTS.ambientColorName)) || AMBIENT_PRESETS[0];
+        let autoStartStopMem = (typeof saved.autoStartStopMem === 'boolean') ? saved.autoStartStopMem : OEM_DEFAULTS.autoStartStopMem;
+        let instantMirrorFold = (typeof saved.instantMirrorFold === 'boolean') ? saved.instantMirrorFold : OEM_DEFAULTS.instantMirrorFold;
+        let windowInterruptMuted = (typeof saved.windowInterruptMuted === 'boolean') ? saved.windowInterruptMuted : OEM_DEFAULTS.windowInterruptMuted;
+        let tailgateCloseFob = (typeof saved.tailgateCloseFob === 'boolean') ? saved.tailgateCloseFob : OEM_DEFAULTS.tailgateCloseFob;
+        let comfortTurnSignals5 = (typeof saved.comfortTurnSignals5 === 'boolean') ? saved.comfortTurnSignals5 : OEM_DEFAULTS.comfortTurnSignals5;
+        let reverseMirrorTilt70 = (typeof saved.reverseMirrorTilt70 === 'boolean') ? saved.reverseMirrorTilt70 : OEM_DEFAULTS.reverseMirrorTilt70;
+        let acousticLockChirp = (typeof saved.acousticLockChirp === 'boolean') ? saved.acousticLockChirp : OEM_DEFAULTS.acousticLockChirp;
+        let emergencyBrakeBfd = (typeof saved.emergencyBrakeBfd === 'boolean') ? saved.emergencyBrakeBfd : OEM_DEFAULTS.emergencyBrakeBfd;
+        let selectedColor = AMBIENT_PRESETS.find(p => p.name === saved.ambientColorName) || AMBIENT_PRESETS[0];
 
         function getCurrentStateSnapshot() {
             return {
-                autoStartStopMem,
-                instantMirrorFold,
-                windowInterruptMuted,
-                tailgateCloseFob,
-                comfortTurnSignals5,
-                reverseMirrorTilt70,
-                acousticLockChirp,
-                emergencyBrakeBfd,
-                ambientColorName: selectedColor.name
+                autoStartStopMem: !!autoStartStopMem,
+                instantMirrorFold: !!instantMirrorFold,
+                windowInterruptMuted: !!windowInterruptMuted,
+                tailgateCloseFob: !!tailgateCloseFob,
+                comfortTurnSignals5: !!comfortTurnSignals5,
+                reverseMirrorTilt70: !!reverseMirrorTilt70,
+                acousticLockChirp: !!acousticLockChirp,
+                emergencyBrakeBfd: !!emergencyBrakeBfd,
+                ambientColorName: selectedColor ? selectedColor.name : OEM_DEFAULTS.ambientColorName,
+                ambientHex: selectedColor ? selectedColor.hex : OEM_DEFAULTS.ambientHex
             };
         }
 
@@ -132,6 +171,7 @@ mgu.run({
         let statusMsg = null;
         let statusTime = 0;
         let activeSafetyAlert = null;
+        let isCodingInProgress = false;
 
         function notify(msg) {
             statusMsg = msg;
@@ -139,8 +179,20 @@ mgu.run({
             log.info('QuickCode: ' + msg);
         }
 
-        // Safe coding modification wrapper: checks safety, creates pre-coding backup, and persists
-        function applyCodingChange(actionTitle, paramKey, oldValue, newValue, mutateFn) {
+        /**
+         * Safe coding modification wrapper:
+         *   1. Safety interlock validation
+         *   2. Automated pre-coding backup snapshot
+         *   3. UDS write to BDC (0x40) with session control
+         *   4. Triple-Check read-back verification
+         *   5. State mutation and atomic disk persistence
+         */
+        async function applyCodingChange(actionTitle, paramKey, oldValue, newValue, candidateState) {
+            if (isCodingInProgress) {
+                notify('[!] Coding in progress, please wait...');
+                return false;
+            }
+
             const check = safety.checkCodingSafety(paramKey);
             if (!check.allowed) {
                 activeSafetyAlert = check;
@@ -148,39 +200,94 @@ mgu.run({
                 return false;
             }
 
-            // Create automated backup before any parameter change!
-            backupMgr.createBackup(actionTitle, paramKey, oldValue, newValue, getCurrentStateSnapshot());
+            isCodingInProgress = true;
+            notify(`[..] Coding BDC 0x40: ${actionTitle}...`);
+            render().catch(() => {});
 
-            // Apply modification
-            mutateFn();
-            persistState();
+            try {
+                // 1. Create automated pre-coding backup snapshot
+                const preSnapshot = getCurrentStateSnapshot();
+                backupMgr.createBackup(actionTitle, paramKey, oldValue, newValue, preSnapshot);
 
-            notify('[OK] Backed up & coded: ' + actionTitle);
-            return true;
+                // 2. Prepare candidate configuration to write
+                const targetState = Object.assign({}, preSnapshot, candidateState);
+
+                // 3. Perform write to ECU with Triple-Check Read-Back Verification
+                const writeResult = await safety.writeEcuConfiguration(targetState);
+
+                if (!writeResult || !writeResult.success) {
+                    const errMsg = (writeResult && writeResult.error) ? writeResult.error : 'ECU rejected write command';
+                    notify('[ERR] Coding failed: ' + errMsg);
+                    log.error(`QuickCode: Coding write failed for "${actionTitle}": ${errMsg}`);
+                    return false;
+                }
+
+                // 4. Update memory state with verified values
+                if (targetState.autoStartStopMem !== undefined) autoStartStopMem = targetState.autoStartStopMem;
+                if (targetState.instantMirrorFold !== undefined) instantMirrorFold = targetState.instantMirrorFold;
+                if (targetState.windowInterruptMuted !== undefined) windowInterruptMuted = targetState.windowInterruptMuted;
+                if (targetState.tailgateCloseFob !== undefined) tailgateCloseFob = targetState.tailgateCloseFob;
+                if (targetState.comfortTurnSignals5 !== undefined) comfortTurnSignals5 = targetState.comfortTurnSignals5;
+                if (targetState.reverseMirrorTilt70 !== undefined) reverseMirrorTilt70 = targetState.reverseMirrorTilt70;
+                if (targetState.acousticLockChirp !== undefined) acousticLockChirp = targetState.acousticLockChirp;
+                if (targetState.emergencyBrakeBfd !== undefined) emergencyBrakeBfd = targetState.emergencyBrakeBfd;
+                if (targetState.ambientColorName) {
+                    const p = AMBIENT_PRESETS.find(x => x.name === targetState.ambientColorName);
+                    if (p) selectedColor = p;
+                }
+
+                // 5. Persist state to disk
+                persistState();
+
+                notify(`[OK] Backed up, coded & verified: ${actionTitle}`);
+                return true;
+            } catch (e) {
+                notify('[ERR] Unexpected error: ' + e.message);
+                log.error(`QuickCode: Exception during coding change: ` + (e.stack || e.message));
+                return false;
+            } finally {
+                isCodingInProgress = false;
+                render().catch(() => {});
+            }
         }
 
         // Read Live Coded Values directly from vehicle BDC (0x40) over UDS
         async function readLiveEcuValues() {
+            if (isCodingInProgress) return;
             notify('Reading live BDC configuration from vehicle...');
-            const live = await safety.readEcuConfiguration();
-            if (live) {
-                if (live.autoStartStopMem !== undefined) autoStartStopMem = live.autoStartStopMem;
-                if (live.instantMirrorFold !== undefined) instantMirrorFold = live.instantMirrorFold;
-                if (live.windowInterruptMuted !== undefined) windowInterruptMuted = live.windowInterruptMuted;
-                if (live.tailgateCloseFob !== undefined) tailgateCloseFob = live.tailgateCloseFob;
-                if (live.comfortTurnSignals5 !== undefined) comfortTurnSignals5 = live.comfortTurnSignals5;
-                if (live.reverseMirrorTilt70 !== undefined) reverseMirrorTilt70 = live.reverseMirrorTilt70;
-                if (live.acousticLockChirp !== undefined) acousticLockChirp = live.acousticLockChirp;
-                persistState();
-                notify('[OK] Successfully read current coded values from BDC (0x40)');
-            } else {
-                notify('[OK] Using vehicle defaults: ' + (saved && Object.keys(saved).length ? 'Loaded from cache' : 'OEM Factory Stock'));
-            }
             render().catch(() => {});
+
+            try {
+                const live = await safety.readEcuConfiguration(AMBIENT_PRESETS);
+                if (live) {
+                    if (typeof live.autoStartStopMem === 'boolean') autoStartStopMem = live.autoStartStopMem;
+                    if (typeof live.instantMirrorFold === 'boolean') instantMirrorFold = live.instantMirrorFold;
+                    if (typeof live.windowInterruptMuted === 'boolean') windowInterruptMuted = live.windowInterruptMuted;
+                    if (typeof live.tailgateCloseFob === 'boolean') tailgateCloseFob = live.tailgateCloseFob;
+                    if (typeof live.comfortTurnSignals5 === 'boolean') comfortTurnSignals5 = live.comfortTurnSignals5;
+                    if (typeof live.reverseMirrorTilt70 === 'boolean') reverseMirrorTilt70 = live.reverseMirrorTilt70;
+                    if (typeof live.acousticLockChirp === 'boolean') acousticLockChirp = live.acousticLockChirp;
+                    if (typeof live.emergencyBrakeBfd === 'boolean') emergencyBrakeBfd = live.emergencyBrakeBfd;
+                    if (live.ambientColorName) {
+                        const found = AMBIENT_PRESETS.find(p => p.name === live.ambientColorName);
+                        if (found) selectedColor = found;
+                    }
+                    persistState();
+                    notify('[OK] Successfully read & verified current coded values from BDC (0x40)');
+                } else {
+                    notify('[OK] Using vehicle defaults: ' + (saved && Object.keys(saved).length ? 'Loaded from cache' : 'OEM Factory Stock'));
+                }
+            } catch (e) {
+                notify('[ERR] Read BDC error: ' + e.message);
+                log.warn('QuickCode: readLiveEcuValues error: ' + e.message);
+            } finally {
+                render().catch(() => {});
+            }
         }
 
-        // Restore all parameters back to factory OEM stock settings (with backup)
-        function restoreOemDefaults() {
+        // Restore all parameters back to factory OEM stock settings (with backup and ECU write)
+        async function restoreOemDefaults() {
+            if (isCodingInProgress) return;
             const check = safety.checkCodingSafety();
             if (!check.allowed) {
                 activeSafetyAlert = check;
@@ -188,26 +295,18 @@ mgu.run({
                 return;
             }
 
-            // Create pre-restore safety backup
-            backupMgr.createBackup('Restore Factory OEM Defaults', 'all_oem', 'custom', 'oem', getCurrentStateSnapshot());
+            const oemPreset = AMBIENT_PRESETS.find(p => p.name === OEM_DEFAULTS.ambientColorName) || AMBIENT_PRESETS[0];
+            const candidate = Object.assign({}, OEM_DEFAULTS, {
+                ambientColorName: oemPreset.name,
+                ambientHex: oemPreset.hex
+            });
 
-            autoStartStopMem = OEM_DEFAULTS.autoStartStopMem;
-            instantMirrorFold = OEM_DEFAULTS.instantMirrorFold;
-            windowInterruptMuted = OEM_DEFAULTS.windowInterruptMuted;
-            tailgateCloseFob = OEM_DEFAULTS.tailgateCloseFob;
-            comfortTurnSignals5 = OEM_DEFAULTS.comfortTurnSignals5;
-            reverseMirrorTilt70 = OEM_DEFAULTS.reverseMirrorTilt70;
-            acousticLockChirp = OEM_DEFAULTS.acousticLockChirp;
-            emergencyBrakeBfd = OEM_DEFAULTS.emergencyBrakeBfd;
-            selectedColor = AMBIENT_PRESETS.find(p => p.name === OEM_DEFAULTS.ambientColorName) || AMBIENT_PRESETS[0];
-
-            persistState();
-            notify('[OK] All settings restored to Factory OEM Stock');
-            render().catch(() => {});
+            await applyCodingChange('Restore Factory OEM Defaults', 'all_oem', 'custom', 'oem', candidate);
         }
 
-        // Restore a specific historical backup snapshot
-        function restoreBackupSnapshot(backupId) {
+        // Restore a specific historical backup snapshot with ECU write and verification
+        async function restoreBackupSnapshot(backupId) {
+            if (isCodingInProgress) return;
             const check = safety.checkCodingSafety();
             if (!check.allowed) {
                 activeSafetyAlert = check;
@@ -221,31 +320,30 @@ mgu.run({
                 return;
             }
 
-            // Create a rollback safety point
-            backupMgr.createBackup(`Rollback to ${item.timeFormatted}`, 'rollback', 'active', item.id, getCurrentStateSnapshot());
-
             const s = item.snapshot;
-            if (s.autoStartStopMem !== undefined) autoStartStopMem = s.autoStartStopMem;
-            if (s.instantMirrorFold !== undefined) instantMirrorFold = s.instantMirrorFold;
-            if (s.windowInterruptMuted !== undefined) windowInterruptMuted = s.windowInterruptMuted;
-            if (s.tailgateCloseFob !== undefined) tailgateCloseFob = s.tailgateCloseFob;
-            if (s.comfortTurnSignals5 !== undefined) comfortTurnSignals5 = s.comfortTurnSignals5;
-            if (s.reverseMirrorTilt70 !== undefined) reverseMirrorTilt70 = s.reverseMirrorTilt70;
-            if (s.acousticLockChirp !== undefined) acousticLockChirp = s.acousticLockChirp;
-            if (s.emergencyBrakeBfd !== undefined) emergencyBrakeBfd = s.emergencyBrakeBfd;
-            if (s.ambientColorName) {
-                const found = AMBIENT_PRESETS.find(p => p.name === s.ambientColorName);
-                if (found) selectedColor = found;
-            }
+            const candidate = {
+                autoStartStopMem: (s.autoStartStopMem !== undefined) ? s.autoStartStopMem : autoStartStopMem,
+                instantMirrorFold: (s.instantMirrorFold !== undefined) ? s.instantMirrorFold : instantMirrorFold,
+                windowInterruptMuted: (s.windowInterruptMuted !== undefined) ? s.windowInterruptMuted : windowInterruptMuted,
+                tailgateCloseFob: (s.tailgateCloseFob !== undefined) ? s.tailgateCloseFob : tailgateCloseFob,
+                comfortTurnSignals5: (s.comfortTurnSignals5 !== undefined) ? s.comfortTurnSignals5 : comfortTurnSignals5,
+                reverseMirrorTilt70: (s.reverseMirrorTilt70 !== undefined) ? s.reverseMirrorTilt70 : reverseMirrorTilt70,
+                acousticLockChirp: (s.acousticLockChirp !== undefined) ? s.acousticLockChirp : acousticLockChirp,
+                emergencyBrakeBfd: (s.emergencyBrakeBfd !== undefined) ? s.emergencyBrakeBfd : emergencyBrakeBfd,
+                ambientColorName: s.ambientColorName || (selectedColor ? selectedColor.name : OEM_DEFAULTS.ambientColorName),
+                ambientHex: s.ambientHex || (selectedColor ? selectedColor.hex : OEM_DEFAULTS.ambientHex)
+            };
 
-            persistState();
-            notify(`[OK] Restored backup from ${item.timeFormatted}`);
-            render().catch(() => {});
+            await applyCodingChange(`Rollback to ${item.timeFormatted}`, 'rollback', 'active', item.id, candidate);
         }
 
-        // Attempt live ECU read once TASU connects
-        diag.on('available', (isAvail) => {
-            if (isAvail) readLiveEcuValues().catch(() => {});
+        // Attempt live ECU discovery and read once TASU connects
+        diag.on('available', async (isAvail) => {
+            log.info(`QuickCode: Diagnostic transport available=${isAvail}`);
+            if (isAvail) {
+                await safety.scanModules();
+                await readLiveEcuValues();
+            }
         });
 
         // 4 Curated Low-Risk Categories (BDC 0x40 Only)
@@ -256,7 +354,7 @@ mgu.run({
             { id: 'backups', name: 'Backups & Rollback' }
         ];
 
-        /* ---------- Safety Lockout Screen (Non-G-Series) ---------- */
+        /* ---------- Safety Lockout Screen (Non-G-Series or Bus Unreachable) ---------- */
         function drawSafetyLockout(cv, t) {
             G.panel(cv, t, 40, 52, 1520, 410, 'Safety Interlock Active');
 
@@ -266,13 +364,30 @@ mgu.run({
             cv.circle(180, 260, 48, withAlpha('#e1001a', 0.2));
             cv.text('!', 180, 275, 48, '#e1001a', { align: 'center', font: 'bold' });
 
-            cv.text('NON-G-SERIES ARCHITECTURE DETECTED', 260, 180, 26, '#e1001a', { font: 'bold' });
-            cv.text('QuickCode is engineered specifically for BMW G-Series vehicles with iDrive 7 (BDC_BODY3).', 260, 220, 18, '#ffffff');
-            cv.text('All ECU coding write and parameter change functions have been permanently locked for vehicle protection.', 260, 252, 17, '#94a3b8');
-            cv.text('No coding modifications will be sent to the vehicle CAN/Ethernet bus.', 260, 284, 17, '#94a3b8');
+            cv.text('BDC_BODY3 ARCHITECTURE NOT DETECTED', 260, 175, 26, '#e1001a', { font: 'bold' });
+            cv.text('QuickCode is engineered specifically for BMW G-Series vehicles with iDrive 7 (BDC_BODY3 0x40).', 260, 215, 18, '#ffffff');
+            cv.text('All ECU coding write and parameter change functions are locked for vehicle protection.', 260, 245, 17, '#94a3b8');
+            cv.text('No coding modifications will be sent to the vehicle CAN/Ethernet bus.', 260, 275, 17, '#94a3b8');
 
-            cv.roundRect(260, 320, 380, 44, 8, '#1e293b');
-            cv.text('STATUS: READ-ONLY SAFE LOCKOUT', 450, 348, 16, '#ffb703', { align: 'center', font: 'bold' });
+            cv.roundRect(260, 315, 360, 46, 8, '#1e293b');
+            cv.text('STATUS: READ-ONLY SAFE LOCKOUT', 440, 344, 15, '#ffb703', { align: 'center', font: 'bold' });
+
+            // Interactive Re-scan Button so startup timing never permanently locks user out
+            const rBtnX = 640, rBtnY = 315, rBtnW = 260, rBtnH = 46;
+            cv.roundRect(rBtnX, rBtnY, rBtnW, rBtnH, 8, '#0f291e');
+            cv.strokeRoundRect(rBtnX, rBtnY, rBtnW, rBtnH, 8, 1.5, '#2af575');
+            cv.text('RETRY BUS SCAN', rBtnX + rBtnW / 2, rBtnY + 29, 15, '#2af575', { align: 'center', font: 'bold' });
+            cv.target(rBtnX, rBtnY, rBtnW, rBtnH, async () => {
+                notify('Scanning vehicle bus for BDC (0x40)...');
+                await safety.scanModules();
+                if (safety.isGSeries) {
+                    notify('[OK] BDC_BODY3 (0x40) responding! Unlocked.');
+                    await readLiveEcuValues();
+                } else {
+                    notify('[!] BDC (0x40) still not responding.');
+                }
+                render().catch(() => {});
+            }, 'btn_retry_scan', 15);
         }
 
         /* ---------- Safety Modal Dialog (Engine Running / Diag Mode Required) ---------- */
@@ -368,6 +483,7 @@ mgu.run({
                 cv.text(preset.hex.toUpperCase(), px + 68, py + 56, 17, t.dim, { font: 'num' });
 
                 cv.target(px, py, 305, 82, () => {
+                    if (isCodingInProgress) return;
                     selectedColor = preset;
                 }, 'amb_' + idx, 12);
             });
@@ -401,22 +517,34 @@ mgu.run({
             // Apply button (Gated by Engine Running & Diagnostic Mode Safety)
             const btnX = cx + 180, btnY = 380, btnW = cw - 360, btnH = 54;
             const safeCheck = safety.checkCodingSafety('ambient_rgb');
-            const canWrite = safeCheck.allowed;
+            const canWrite = safeCheck.allowed && !isCodingInProgress;
 
             cv.roundRect(btnX, btnY, btnW, btnH, 12, canWrite ? selectedColor.hex : '#16202c');
             cv.strokeRoundRect(btnX, btnY, btnW, btnH, 12, 1.5, canWrite ? selectedColor.hex : safeCheck.badgeColor);
 
             const isOemColor = !!selectedColor.isOem;
-            const btnLabel = canWrite ? (isOemColor ? 'RESTORE ' + selectedColor.name.toUpperCase() : 'WRITE ' + selectedColor.name.toUpperCase() + ' (AUTO-BACKUP)') : `[LOCKED] ${safeCheck.title}`;
-            cv.text(btnLabel, btnX + btnW / 2, btnY + 34, 18, canWrite ? '#000000' : safeCheck.badgeColor, { align: 'center', font: 'bold', spacing: 1.2 });
+            let btnLabel = '';
+            if (isCodingInProgress) {
+                btnLabel = 'WRITING BDC 0x40 (PLEASE WAIT...)';
+            } else if (canWrite) {
+                btnLabel = isOemColor ? ('RESTORE ' + selectedColor.name.toUpperCase()) : ('WRITE ' + selectedColor.name.toUpperCase() + ' (AUTO-BACKUP)');
+            } else {
+                btnLabel = `[LOCKED] ${safeCheck.title}`;
+            }
 
-            cv.target(btnX, btnY, btnW, btnH, () => {
-                applyCodingChange(
+            cv.text(btnLabel, btnX + btnW / 2, btnY + 34, 17, canWrite ? '#000000' : safeCheck.badgeColor, { align: 'center', font: 'bold', spacing: 1.2 });
+
+            cv.target(btnX, btnY, btnW, btnH, async () => {
+                if (isCodingInProgress) return;
+                await applyCodingChange(
                     'Ambient Color: ' + selectedColor.name,
                     'ambientColorName',
                     saved.ambientColorName || OEM_DEFAULTS.ambientColorName,
                     selectedColor.name,
-                    () => {}
+                    {
+                        ambientColorName: selectedColor.name,
+                        ambientHex: selectedColor.hex
+                    }
                 );
             }, 'btn_apply_amb', 12);
         }
@@ -479,14 +607,14 @@ mgu.run({
                     desc: 'Permanently remembers last button state across ignition cycles (Stays OFF)',
                     active: autoStartStopMem,
                     stateLabel: autoStartStopMem ? 'CODED: MEMORY (OFF)' : 'OEM FACTORY (ACTIVE)',
-                    action: () => {
+                    action: async () => {
                         const target = !autoStartStopMem;
-                        applyCodingChange(
+                        await applyCodingChange(
                             'Auto Start/Stop Memory',
                             'autoStartStopMem',
                             autoStartStopMem,
                             target,
-                            () => { autoStartStopMem = target; }
+                            { autoStartStopMem: target }
                         );
                     }
                 },
@@ -496,14 +624,14 @@ mgu.run({
                     desc: 'Folds side mirrors immediately when pressing lock (0.0s vs 1.5s hold delay)',
                     active: instantMirrorFold,
                     stateLabel: instantMirrorFold ? 'CODED: INSTANT (0.0s)' : 'OEM FACTORY (1.5s DELAY)',
-                    action: () => {
+                    action: async () => {
                         const target = !instantMirrorFold;
-                        applyCodingChange(
+                        await applyCodingChange(
                             'Instant Mirror Fold',
                             'instantMirrorFold',
                             instantMirrorFold,
                             target,
-                            () => { instantMirrorFold = target; }
+                            { instantMirrorFold: target }
                         );
                     }
                 },
@@ -513,14 +641,14 @@ mgu.run({
                     desc: 'Power windows continue rolling up without interrupting when car door opens',
                     active: windowInterruptMuted,
                     stateLabel: windowInterruptMuted ? 'CODED: CONTINUOUS UP' : 'OEM FACTORY (INTERRUPT)',
-                    action: () => {
+                    action: async () => {
                         const target = !windowInterruptMuted;
-                        applyCodingChange(
+                        await applyCodingChange(
                             'Continuous Window Roll-Up',
                             'windowInterruptMuted',
                             windowInterruptMuted,
                             target,
-                            () => { windowInterruptMuted = target; }
+                            { windowInterruptMuted: target }
                         );
                     }
                 },
@@ -530,14 +658,14 @@ mgu.run({
                     desc: 'One-touch close tailgate from key fob and driver door button without holding',
                     active: tailgateCloseFob,
                     stateLabel: tailgateCloseFob ? 'CODED: ONE-TOUCH CLOSE' : 'OEM FACTORY (HOLD REQUIRED)',
-                    action: () => {
+                    action: async () => {
                         const target = !tailgateCloseFob;
-                        applyCodingChange(
+                        await applyCodingChange(
                             'One-Touch Tailgate Close',
                             'tailgateCloseFob',
                             tailgateCloseFob,
                             target,
-                            () => { tailgateCloseFob = target; }
+                            { tailgateCloseFob: target }
                         );
                     }
                 }
@@ -549,7 +677,7 @@ mgu.run({
                 const tx = 64 + col * 752;
                 const ty = 112 + row * 162;
                 const safeCheck = safety.checkCodingSafety(item.key);
-                const canCode = safeCheck.allowed;
+                const canCode = safeCheck.allowed && !isCodingInProgress;
 
                 // Card container with authentic BMW cockpit styling
                 const cardBg = item.active ? '#0c1522' : '#0b0f16';
@@ -574,8 +702,9 @@ mgu.run({
                 const swX = tx + 586, swY = ty + 49;
                 drawBmwToggle(cv, swX, swY, item.active, canCode, safeCheck.badgeColor);
 
-                cv.target(tx, ty, 720, 144, () => {
-                    item.action();
+                cv.target(tx, ty, 720, 144, async () => {
+                    if (isCodingInProgress) return;
+                    await item.action();
                 }, 'tog_c_' + idx, 12);
             });
         }
@@ -591,14 +720,14 @@ mgu.run({
                     desc: 'One-touch indicator flashes 5 times instead of factory 3 flashes for lane changes',
                     active: comfortTurnSignals5,
                     stateLabel: comfortTurnSignals5 ? 'CODED: 5 FLASHES' : 'OEM FACTORY (3 FLASHES)',
-                    action: () => {
+                    action: async () => {
                         const target = !comfortTurnSignals5;
-                        applyCodingChange(
+                        await applyCodingChange(
                             '5-Flash Comfort Signals',
                             'comfortTurnSignals5',
                             comfortTurnSignals5,
                             target,
-                            () => { comfortTurnSignals5 = target; }
+                            { comfortTurnSignals5: target }
                         );
                     }
                 },
@@ -608,14 +737,14 @@ mgu.run({
                     desc: 'Passenger mirror dips 70% in reverse to show curb/rim instead of 100% floor angle',
                     active: reverseMirrorTilt70,
                     stateLabel: reverseMirrorTilt70 ? 'CODED: 70% TILT' : 'OEM FACTORY (100% TILT)',
-                    action: () => {
+                    action: async () => {
                         const target = !reverseMirrorTilt70;
-                        applyCodingChange(
+                        await applyCodingChange(
                             'Curb Mirror Tilt 70%',
                             'reverseMirrorTilt70',
                             reverseMirrorTilt70,
                             target,
-                            () => { reverseMirrorTilt70 = target; }
+                            { reverseMirrorTilt70: target }
                         );
                     }
                 },
@@ -625,14 +754,14 @@ mgu.run({
                     desc: 'Audible horn chirp confirmation when locking or unlocking the vehicle',
                     active: acousticLockChirp,
                     stateLabel: acousticLockChirp ? 'CODED: CHIRP ACTIVE' : 'OEM FACTORY (SILENT)',
-                    action: () => {
+                    action: async () => {
                         const target = !acousticLockChirp;
-                        applyCodingChange(
+                        await applyCodingChange(
                             'Acoustic Lock Chirp',
                             'acousticLockChirp',
                             acousticLockChirp,
                             target,
-                            () => { acousticLockChirp = target; }
+                            { acousticLockChirp: target }
                         );
                     }
                 },
@@ -642,14 +771,14 @@ mgu.run({
                     desc: 'Rapidly pulses outer brake lamps under heavy deceleration to alert trailing drivers',
                     active: emergencyBrakeBfd,
                     stateLabel: emergencyBrakeBfd ? 'CODED: FLASHING ACTIVE' : 'OEM FACTORY (STEADY LIGHT)',
-                    action: () => {
+                    action: async () => {
                         const target = !emergencyBrakeBfd;
-                        applyCodingChange(
+                        await applyCodingChange(
                             'Flashing Brake Force (BFD)',
                             'emergencyBrakeBfd',
                             emergencyBrakeBfd,
                             target,
-                            () => { emergencyBrakeBfd = target; }
+                            { emergencyBrakeBfd: target }
                         );
                     }
                 }
@@ -661,7 +790,7 @@ mgu.run({
                 const tx = 64 + col * 752;
                 const ty = 112 + row * 162;
                 const safeCheck = safety.checkCodingSafety(item.key);
-                const canCode = safeCheck.allowed;
+                const canCode = safeCheck.allowed && !isCodingInProgress;
 
                 // Card container with authentic BMW cockpit styling
                 const cardBg = item.active ? '#0c1522' : '#0b0f16';
@@ -686,8 +815,9 @@ mgu.run({
                 const swX = tx + 586, swY = ty + 49;
                 drawBmwToggle(cv, swX, swY, item.active, canCode, safeCheck.badgeColor);
 
-                cv.target(tx, ty, 720, 144, () => {
-                    item.action();
+                cv.target(tx, ty, 720, 144, async () => {
+                    if (isCodingInProgress) return;
+                    await item.action();
                 }, 'tog_l_' + idx, 12);
             });
         }
@@ -698,7 +828,7 @@ mgu.run({
 
             const backups = backupMgr.getBackups();
             const safeCheck = safety.checkCodingSafety();
-            const canRestore = safeCheck.allowed;
+            const canRestore = safeCheck.allowed && !isCodingInProgress;
 
             // Left Section: Historical Backups List
             const listX = 64, listY = 112, listW = 920;
@@ -744,15 +874,16 @@ mgu.run({
                     if (!canRestore) {
                         cv.roundRect(btnX, btnY, btnW, btnH, 8, '#241215');
                         cv.strokeRoundRect(btnX, btnY, btnW, btnH, 8, 1, safeCheck.badgeColor);
-                        cv.text('[LOCKED]', btnX + btnW / 2, btnY + 29, 14, safeCheck.badgeColor, { align: 'center', font: 'bold', spacing: 1 });
+                        cv.text(isCodingInProgress ? 'BUSY...' : '[LOCKED]', btnX + btnW / 2, btnY + 29, 14, safeCheck.badgeColor, { align: 'center', font: 'bold', spacing: 1 });
                     } else {
                         cv.roundRect(btnX, btnY, btnW, btnH, 8, '#004e8c');
                         cv.strokeRoundRect(btnX, btnY, btnW, btnH, 8, 1.5, '#00a3e0');
                         cv.text('RESTORE', btnX + btnW / 2, btnY + 29, 16, '#ffffff', { align: 'center', font: 'bold', spacing: 1.2 });
                     }
 
-                    cv.target(btnX, btnY, btnW, btnH, () => {
-                        restoreBackupSnapshot(b.id);
+                    cv.target(btnX, btnY, btnW, btnH, async () => {
+                        if (isCodingInProgress) return;
+                        await restoreBackupSnapshot(b.id);
                     }, 'bk_res_' + idx, 14);
                 });
             }
@@ -780,13 +911,21 @@ mgu.run({
             cv.roundRect(rfBtnX, rfBtnY, rfBtnW, rfBtnH, 10, canRestore ? '#1e293b' : '#241215');
             cv.strokeRoundRect(rfBtnX, rfBtnY, rfBtnW, rfBtnH, 10, 1.5, canRestore ? '#00a3e0' : safeCheck.badgeColor);
 
-            const rLabel = canRestore ? 'RESTORE ALL FACTORY OEM DEFAULTS' : `[LOCKED] ${safeCheck.title}`;
+            let rLabel = '';
+            if (isCodingInProgress) {
+                rLabel = 'WRITING OEM DEFAULTS...';
+            } else if (canRestore) {
+                rLabel = 'RESTORE ALL FACTORY OEM DEFAULTS';
+            } else {
+                rLabel = `[LOCKED] ${safeCheck.title}`;
+            }
             cv.text(rLabel, rfBtnX + rfBtnW / 2, rfBtnY + 31, 16, canRestore ? '#ffffff' : safeCheck.badgeColor, { align: 'center', font: 'bold', spacing: 1 });
 
             cv.text('Instantly resets all 8 parameters back to authentic BMW factory stock.', infoX + 28, resY + 98, 14, '#94a3b8');
 
-            cv.target(rfBtnX, rfBtnY, rfBtnW, rfBtnH, () => {
-                restoreOemDefaults();
+            cv.target(rfBtnX, rfBtnY, rfBtnW, rfBtnH, async () => {
+                if (isCodingInProgress) return;
+                await restoreOemDefaults();
             }, 'btn_restore_oem_full', 14);
         }
 
@@ -796,7 +935,7 @@ mgu.run({
             const isDiag = safety.vehicleState.diagnosticMode;
             const rpm = safety.vehicleState.rpm;
             const speed = safety.vehicleState.speed;
-            const stateColor = safeStatus.badgeColor;
+            const stateColor = isCodingInProgress ? '#00a3e0' : safeStatus.badgeColor;
 
             // Dock background container
             cv.roundRect(dockX, dockY, dockW, dockH, 8, '#080d14');
@@ -809,7 +948,10 @@ mgu.run({
             // State label & detailed advice
             let mainLabel = '';
             let subLabel = '';
-            if (speed > 0) {
+            if (isCodingInProgress) {
+                mainLabel = 'CODING TRANSACTION ACTIVE';
+                subLabel = 'Writing UDS parameter and verifying EEPROM read-back...';
+            } else if (speed > 0) {
                 mainLabel = `VEHICLE IN MOTION (${speed} KM/H)`;
                 subLabel = 'Coding locked while driving. Park vehicle to enable.';
             } else if (rpm > 0) {
@@ -837,16 +979,18 @@ mgu.run({
             cv.roundRect(b1X, bY, b1W, bH, 6, '#0c1724');
             cv.strokeRoundRect(b1X, bY, b1W, bH, 6, 1, '#00a3e0');
             cv.text('READ BDC', b1X + b1W / 2, bY + 18, 12, '#00a3e0', { align: 'center', font: 'bold', spacing: 0.8 });
-            cv.target(b1X, bY, b1W, bH, () => {
-                readLiveEcuValues();
+            cv.target(b1X, bY, b1W, bH, async () => {
+                if (isCodingInProgress) return;
+                await readLiveEcuValues();
             }, 'btn_dock_read_ecu', 15);
 
             // Button 2: RESTORE OEM
             cv.roundRect(b2X, bY, b2W, bH, 6, '#181b22');
             cv.strokeRoundRect(b2X, bY, b2W, bH, 6, 1, '#94a3b8');
             cv.text('RESTORE OEM', b2X + b2W / 2, bY + 18, 12, '#cbd5e1', { align: 'center', font: 'bold', spacing: 0.8 });
-            cv.target(b2X, bY, b2W, bH, () => {
-                restoreOemDefaults();
+            cv.target(b2X, bY, b2W, bH, async () => {
+                if (isCodingInProgress) return;
+                await restoreOemDefaults();
             }, 'btn_dock_restore_oem', 15);
 
             // Button 3: TEST DIAG MODE
@@ -856,6 +1000,7 @@ mgu.run({
             cv.text(btnText, b3X + b3W / 2, bY + 18, 12, stateColor, { align: 'center', font: 'bold', spacing: 0.8 });
 
             cv.target(b3X, bY, b3W, bH, () => {
+                if (isCodingInProgress) return;
                 safety.toggleSimulatedDiagMode();
                 if (safety.vehicleState.diagnosticMode) {
                     activeSafetyAlert = null;
@@ -864,6 +1009,7 @@ mgu.run({
                     activeSafetyAlert = safety.checkCodingSafety();
                     notify('[!] Diagnostic Mode exited (Coding locked)');
                 }
+                render().catch(() => {});
             }, 'btn_dock_toggle_diag', 15);
         }
 
@@ -899,11 +1045,13 @@ mgu.run({
             drawDiagnosticDock(cv, t, safeStatus);
 
             // Toast feedback message (floating cleanly above the dock)
-            if (statusMsg && now - statusTime < 3500) {
-                const alpha = Math.min(1, (3500 - (now - statusTime)) / 500);
-                cv.roundRect(W / 2 - 280, 415, 560, 44, 10, withAlpha('#000000', 0.9 * alpha));
-                cv.strokeRoundRect(W / 2 - 280, 415, 560, 44, 10, 1.5, withAlpha('#1db954', alpha));
-                cv.text(statusMsg, W / 2, 443, 18, withAlpha('#ffffff', alpha), { align: 'center', font: 'bold', spacing: 1 });
+            if (statusMsg && now - statusTime < 3800) {
+                const alpha = Math.min(1, (3800 - (now - statusTime)) / 400);
+                const isErr = statusMsg.startsWith('[ERR]') || statusMsg.startsWith('[!]');
+                const borderCol = isErr ? '#e1001a' : '#1db954';
+                cv.roundRect(W / 2 - 320, 415, 640, 44, 10, withAlpha('#000000', 0.92 * alpha));
+                cv.strokeRoundRect(W / 2 - 320, 415, 640, 44, 10, 1.5, withAlpha(borderCol, alpha));
+                cv.text(statusMsg, W / 2, 443, 17, withAlpha('#ffffff', alpha), { align: 'center', font: 'bold', spacing: 1 });
             }
 
             // If safety alert modal is active, render on top of everything!
@@ -920,25 +1068,38 @@ mgu.run({
                 activeSafetyAlert = null;
                 return render();
             }
+            if (isCodingInProgress) return;
             page = (page + 1) % PAGES.length;
             return render();
         });
 
-        ui.onClick('BTN_APPLY', () => {
+        ui.onClick('BTN_APPLY', async () => {
+            if (activeSafetyAlert) {
+                activeSafetyAlert = null;
+                return render();
+            }
+            if (isCodingInProgress) {
+                notify('[!] Coding in progress, please wait...');
+                return;
+            }
+
             const check = safety.checkCodingSafety();
             if (!check.allowed) {
                 activeSafetyAlert = check;
                 notify('[!] ' + check.title);
-            } else {
-                notify('[OK] Selected parameters committed to BDC');
+                return render();
             }
-            return render();
+
+            // Commit and verify all current settings to BDC
+            const curState = getCurrentStateSnapshot();
+            await applyCodingChange('Commit All Parameters', 'commit_all', 'staged', 'written', curState);
         });
 
         ctx.onTab((idx) => {
             if (activeSafetyAlert) {
                 activeSafetyAlert = null;
             }
+            if (isCodingInProgress) return;
             page = idx;
             return render();
         });

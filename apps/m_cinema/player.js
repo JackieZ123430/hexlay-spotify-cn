@@ -43,6 +43,11 @@ class VideoPlayer {
         this.simTimer = null;
         this.onProgress = null;
         this.onEnded = null;
+
+        const onExit = () => this._resetInternal();
+        process.on('exit', onExit);
+        process.on('SIGTERM', onExit);
+        process.on('SIGINT', onExit);
     }
 
     _findBinary() {
@@ -66,12 +71,14 @@ class VideoPlayer {
             this.statusStream = null;
         }
         if (this.proc) {
-            this._sendCtrl('quit');
+            try { this._sendCtrl('quit'); } catch (e) {}
             const p = this.proc;
-            setTimeout(() => {
-                try { if (p && !p.killed) p.kill('SIGKILL'); } catch (e) {}
-            }, 500);
             this.proc = null;
+            try {
+                if (p && !p.killed) {
+                    p.kill('SIGKILL');
+                }
+            } catch (e) {}
         }
     }
 
@@ -231,9 +238,14 @@ class VideoPlayer {
 
     stop() {
         this.isPlaying = false;
+        this.activeUrl = null;
+        this.activeMeta = null;
+        this.currentTimeSec = 0;
         this._resetInternal();
         if (process.send) {
-            process.send({ t: 'video', action: 'stop' });
+            try {
+                process.send({ t: 'video', action: 'stop' });
+            } catch (e) {}
         }
     }
 

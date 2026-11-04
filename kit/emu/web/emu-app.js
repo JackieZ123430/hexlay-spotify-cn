@@ -411,6 +411,19 @@ stage.addEventListener('pointerdown', (e) => {
   }
 }, { capture: true });
 
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && activeVideoElem) {
+    // If browser tab is backgrounded/minimized, pause immediately to save CPU/GPU
+    if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+      try { ytPlayer.pauseVideo(); } catch (e) {}
+    }
+    sendYtCmd('pauseVideo', []);
+    if (activeVideoElem.tagName === 'VIDEO') activeVideoElem.pause();
+  }
+});
+
+window.addEventListener('pagehide', () => destroyVideoPlayer());
+
 function destroyVideoPlayer() {
   lastVideoMsg = null;
   currentYtId = null;
@@ -418,6 +431,7 @@ function destroyVideoPlayer() {
     clearInterval(autoPlayTimer);
     autoPlayTimer = null;
   }
+  setFullscreen(false);
   if (ytPlayer && typeof ytPlayer.destroy === 'function') {
     try { ytPlayer.destroy(); } catch (e) {}
     ytPlayer = null;
@@ -426,8 +440,10 @@ function destroyVideoPlayer() {
   if (videoLayer) {
     videoLayer.style.display = 'none';
     videoLayer.hidden = true;
+    videoLayer.classList.remove('fullscreen');
     videoLayer.replaceChildren();
   }
+  stage.classList.remove('cinema-fullscreen');
 }
 
 window.handleVideoEvent = handleVideoEvent;
@@ -630,20 +646,7 @@ function handleVideoEvent(m) {
     updateVideoPlacement();
     break;
   case 'stop':
-    setFullscreen(false);
-    if (autoPlayTimer) {
-      clearInterval(autoPlayTimer);
-      autoPlayTimer = null;
-    }
-    if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
-      try { ytPlayer.pauseVideo(); } catch (e) {}
-    } else if (activeVideoElem) {
-      sendYtCmd('pauseVideo');
-    }
-    if (layer) {
-      layer.style.display = 'none';
-      layer.hidden = true;
-    }
+    destroyVideoPlayer();
     break;
   }
 }
@@ -652,7 +655,7 @@ function onText(m) {
   switch (m.t) {
   case 'reload': location.reload(); break;
   case 'hello':
-    if (m.app !== S.app) destroyVideoPlayer();
+    destroyVideoPlayer();
     S.app = m.app;
     $('#touchroute').checked = m.touch !== false;
     $('#app').replaceChildren(...m.apps.map((id) => el('option', { value: id, textContent: id, selected: id === m.app })));
@@ -664,6 +667,7 @@ function onText(m) {
   case 'settings': S.values = m.values; syncSettings(); break;
   case 'status': setStatus(m.s, m.text); break;
   case 'reset':
+    destroyVideoPlayer();
     awaitReset = false; rx.feedErr = null; rx.dropped = false; rx.types = {};
     if (!gfxMod) break;
     if (!gfx || (gfxApp !== null && m.app !== gfxApp) || gfx.stats().atlasFull) newGfx(m.app);
@@ -676,7 +680,7 @@ function onText(m) {
     break;
   case 'screens':
     S.stack = m.stack; S.closed = !!m.closed; renderHmi(); picker();
-    if (m.closed) destroyVideoPlayer();
+    if (m.closed || !m.stack || m.stack.length === 0) destroyVideoPlayer();
     break;
   case 'video': handleVideoEvent(m); break;
   case 'focus': S.focus = m.id; renderHmi(); break;

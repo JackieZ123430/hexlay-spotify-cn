@@ -122,6 +122,47 @@ mgu.run({
             }
         });
 
+        // Foreground-Only Lifecycle: Video must NEVER play in background.
+        // Once the user leaves the app (HOME, BACK, or app switch), playback dies immediately.
+        ui.onVisible((stateName, isVisible) => {
+            log.info(`[M-Cinema] Screen '${stateName}' visible: ${isVisible}`);
+            if (stateName === 'MAIN' && !isVisible) {
+                log.info('[M-Cinema] App left foreground -> stopping video immediately to free CPU/GPU');
+                isPlaying = false;
+                isFullscreen = false;
+                player.stop();
+                if (process.send) {
+                    try { process.send({ t: 'video', action: 'stop' }); } catch (e) {}
+                }
+                render().catch(() => {});
+            }
+        });
+
+        ui.onFocus((stateName, hasFocus) => {
+            log.info(`[M-Cinema] Screen '${stateName}' focus: ${hasFocus}`);
+            if (stateName === 'MAIN' && !hasFocus) {
+                if (isPlaying) {
+                    log.info('[M-Cinema] App lost focus -> pausing video');
+                    isPlaying = false;
+                    player.pause();
+                    render().catch(() => {});
+                }
+            }
+        });
+
+        const appCleanup = () => {
+            log.info('[M-Cinema] App terminating -> killing video engine');
+            isPlaying = false;
+            isFullscreen = false;
+            player.stop();
+            if (process.send) {
+                try { process.send({ t: 'video', action: 'stop' }); } catch (e) {}
+            }
+        };
+        process.on('exit', appCleanup);
+        process.on('SIGTERM', appCleanup);
+        process.on('SIGINT', appCleanup);
+
         function setPage(idx) {
             page = idx;
             if (page !== 0 && isFullscreen) {

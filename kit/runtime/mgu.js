@@ -21,6 +21,16 @@
 const fs = require('fs');
 const path = require('path');
 const { OnlineApp, logging } = require('oap-sdk');
+
+if (!Promise.prototype.finally) {
+    Promise.prototype.finally = function(callback) {
+        const P = this.constructor || Promise;
+        return this.then(
+            value => P.resolve(callback()).then(() => value),
+            reason => P.resolve(callback()).then(() => { throw reason; })
+        );
+    };
+}
 const themes = require('./themes');
 const { Display } = require('./display');
 const { HmiText } = require('./hmi-text');

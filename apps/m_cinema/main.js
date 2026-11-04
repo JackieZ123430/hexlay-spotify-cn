@@ -225,19 +225,21 @@ mgu.run({
         let searchResults = searchEngine.getFeatured();
         const thumbManager = new ThumbnailManager(log, () => render().catch(() => {}));
 
-        // Active YouTube video
+        // Active YouTube video (preload featured BMW M3 video so it is ready immediately)
+        const initialFeatured = (searchResults && searchResults[0]) || {};
         let activeCastVideo = {
-            title: 'Ready to Play',
-            channel: 'YouTube on TV',
-            duration: '0:00',
-            durationSec: 0,
+            title: initialFeatured.title || 'New BMW M3 CS Manual! The Perfect M3? | 4K',
+            channel: initialFeatured.channel || 'Top Gear',
+            duration: initialFeatured.duration || '14:29',
+            durationSec: initialFeatured.durationSec || parseDurationSec(initialFeatured.duration || '14:29'),
             quality: '720p HD',
             glow: '#0066b1',
-            views: 'Connected',
-            desc: 'Search YouTube directly from iDrive in Search tab or link YouTube mobile app in Connect tab.',
-            ytId: null,
-            url: null
+            views: initialFeatured.views || '699K views',
+            desc: initialFeatured.channel ? `${initialFeatured.channel}  |  ${initialFeatured.duration}  |  ${initialFeatured.views}` : (initialFeatured.url || ''),
+            ytId: initialFeatured.id || 'b_2jP9_F_rQ',
+            url: initialFeatured.url || 'https://www.youtube.com/watch?v=b_2jP9_F_rQ'
         };
+        totalDurationSec = activeCastVideo.durationSec;
 
         // Monitor vehicle speed for safety
         try {
@@ -429,10 +431,14 @@ mgu.run({
             cv.strokeRoundRect(1124, 276, btnW, btnH, 8, 1, isPlaying ? '#23364f' : '#00a3e0');
             cv.text(isPlaying ? 'PAUSE' : 'PLAY', 1124 + btnW / 2, 307, 16, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
             cv.target(1124, 276, btnW, btnH, () => {
-                isPlaying = !isPlaying;
-                if (isPlaying) player.resume();
-                else player.pause();
-                render().catch(() => {});
+                if (!isPlaying && !player.isPlaying && activeCastVideo) {
+                    playVideo(activeCastVideo);
+                } else {
+                    isPlaying = !isPlaying;
+                    if (isPlaying) player.resume();
+                    else player.pause();
+                    render().catch(() => {});
+                }
             }, 'btn_play_toggle', 10);
 
             // In-Car Search Tab Shortcut Button
@@ -613,10 +619,14 @@ mgu.run({
 
             // Touch target over entire video screen to toggle Play/Pause
             cv.target(x, y, w, h, () => {
-                isPlaying = !isPlaying;
-                if (isPlaying) player.resume();
-                else player.pause();
-                render().catch(() => {});
+                if (!isPlaying && !player.isPlaying && activeCastVideo) {
+                    playVideo(activeCastVideo);
+                } else {
+                    isPlaying = !isPlaying;
+                    if (isPlaying) player.resume();
+                    else player.pause();
+                    render().catch(() => {});
+                }
             }, 'vid_screen', 10);
         }
 
@@ -934,58 +944,68 @@ mgu.run({
         // Controller rotary knob & tilt (exclusive grab only in Fullscreen Cinema Mode)
         ctx.controller.grab(false);
         ctx.controller.onInput((ev) => {
-            if (!ev) return;
-            if (isFullscreen && (ev.tilt === 'W' || ev.tilt === 'S')) {
-                toggleFullscreen();
-                return;
-            }
-            if (isFullscreen && ev.knobTicks) {
-                if (totalDurationSec > 0) {
-                    currentTimeSec = Math.max(0, Math.min(totalDurationSec, currentTimeSec + ev.knobTicks * 5));
-                    playProgress = currentTimeSec / totalDurationSec;
-                    player.seek(currentTimeSec);
-                    notify(`Seek: ${formatTime(currentTimeSec)}`);
+            if (!ev) return false;
+            if (isFullscreen) {
+                if (ev.tilt === 'W' || ev.tilt === 'S') {
+                    toggleFullscreen();
+                    return true;
                 }
-                render().catch(() => {});
-                return;
-            }
-            if (isFullscreen && ev.press) {
-                isPlaying = !isPlaying;
-                if (isPlaying) player.resume();
-                else player.pause();
-                render().catch(() => {});
-                return;
-            }
-            if (page === 1 && ev.knobTicks) {
-                if (ev.knobTicks > 0) {
-                    searchScroll = Math.min(Math.max(0, searchResults.length - 4), searchScroll + 1);
-                } else {
-                    searchScroll = Math.max(0, searchScroll - 1);
+                if (ev.knobTicks) {
+                    if (totalDurationSec > 0) {
+                        currentTimeSec = Math.max(0, Math.min(totalDurationSec, currentTimeSec + ev.knobTicks * 5));
+                        playProgress = currentTimeSec / totalDurationSec;
+                        player.seek(currentTimeSec);
+                        notify(`Seek: ${formatTime(currentTimeSec)}`);
+                    }
+                    render().catch(() => {});
+                    return true;
                 }
-                render().catch(() => {});
-                return;
-            }
-            if (page === 1 && ev.press && searchResults.length > 0) {
-                const first = searchResults[searchScroll];
-                if (first) {
-                    playVideo({
-                        ytId: first.id,
-                        title: first.title,
-                        channel: first.channel,
-                        duration: first.duration,
-                        durationSec: first.durationSec || parseDurationSec(first.duration),
-                        views: first.views,
-                        quality: '720p HD',
-                        glow: '#0066b1',
-                        desc: first.channel ? `${first.channel}  |  ${first.duration}  |  ${first.views}` : first.url,
-                        url: first.url
-                    });
+                if (ev.press) {
+                    isPlaying = !isPlaying;
+                    if (isPlaying) player.resume();
+                    else player.pause();
+                    render().catch(() => {});
+                    return true;
                 }
-                render().catch(() => {});
+                return true;
             }
+            if (page === 1) {
+                if (ev.knobTicks) {
+                    if (ev.knobTicks > 0) {
+                        searchScroll = Math.min(Math.max(0, searchResults.length - 4), searchScroll + 1);
+                    } else {
+                        searchScroll = Math.max(0, searchScroll - 1);
+                    }
+                    render().catch(() => {});
+                    return true;
+                }
+                if (ev.press && searchResults.length > 0) {
+                    const first = searchResults[searchScroll];
+                    if (first) {
+                        playVideo({
+                            ytId: first.id,
+                            title: first.title,
+                            channel: first.channel,
+                            duration: first.duration,
+                            durationSec: first.durationSec || parseDurationSec(first.duration),
+                            views: first.views,
+                            quality: '720p HD',
+                            glow: '#0066b1',
+                            desc: first.channel ? `${first.channel}  |  ${first.duration}  |  ${first.views}` : first.url,
+                            url: first.url
+                        });
+                    }
+                    render().catch(() => {});
+                    return true;
+                }
+            }
+            // Return false so display.js native _ccu() navigates tabs, buttons, seekbar
+            return false;
         });
 
-        notify('M-Cinema Ready');
+        // Start 15 fps / tick-driven render loop (same as Spotify, QuickCode, Copilot)
+        ctx.loop('MAIN', 15, render);
         await render();
+        log.info('M-Cinema ready');
     }
 });

@@ -13,6 +13,16 @@ const fs = require('fs');
 const path = require('path');
 const querystring = require('querystring');
 
+if (!Promise.prototype.finally) {
+    Promise.prototype.finally = function(callback) {
+        const P = this.constructor || Promise;
+        return this.then(
+            value => P.resolve(callback()).then(() => value),
+            reason => P.resolve(callback()).then(() => { throw reason; })
+        );
+    };
+}
+
 function decodeHtmlEntities(str) {
     if (!str || typeof str !== 'string') return '';
     return str
@@ -651,7 +661,11 @@ class SpotifyClient {
         // Auto-refresh token if expiring within 2 minutes
         if (this.token && this.refreshToken && this.expiresAt && (now >= this.expiresAt - 120000) && !this.refreshing) {
             this.refreshing = true;
-            this.refreshAccessToken().finally(() => { this.refreshing = false; });
+            this.refreshAccessToken().then(() => {
+                this.refreshing = false;
+            }).catch(() => {
+                this.refreshing = false;
+            });
         }
 
         // Poll state from Spotify cloud every 2.5 seconds
@@ -661,7 +675,11 @@ class SpotifyClient {
             Promise.all([
                 this.pollPlayer(),
                 this.fetchDevices()
-            ]).finally(() => { this.syncing = false; });
+            ]).then(() => {
+                this.syncing = false;
+            }).catch(() => {
+                this.syncing = false;
+            });
         }
 
         // Retry playlists if online and authenticated, but none loaded yet

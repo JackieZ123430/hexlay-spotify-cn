@@ -184,6 +184,7 @@ class Display {
         });
         gpu.on('ccu', (v) => {
             if (this.gpu !== gpu) return;
+            let handled = false;
             if (this.onCcu && (this.grabbing || !this.own())) {
                 const k = Number(v.frontRotaryEncoderOperation), pb = Number(v.frontRotaryEncoderPushButton), df = Number(v.frontRotaryEncoderDeflection);
                 const L = this.ccuLast;
@@ -194,8 +195,11 @@ class Display {
                 const down = (x) => x === 1 || x === 2;
                 const press = down(pb) && !(L && down(L.pb));
                 const tilt = TILT[df] && !(L && TILT[L.df] === TILT[df]) ? TILT[df] : null;
-                try { this.onCcu({ knobTicks: d, press, tilt, k, pb, df, raw: v }); } catch (e) { this.log.error('onCcu', e); }
-            } else {
+                try {
+                    handled = this.onCcu({ knobTicks: d, press, tilt, k, pb, df, raw: v }) !== false;
+                } catch (e) { this.log.error('onCcu', e); }
+            }
+            if (!handled) {
                 this._ccu(v);
             }
         });

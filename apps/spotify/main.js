@@ -945,26 +945,12 @@ mgu.run({
         }
 
         /* ---------- HMI Button & Touch Interactions ---------- */
-        ui.onClick('BTN_PLAY', () => {
-            if (settings.get('demo') !== 'on' && (!spotify.hasInternet || !spotify.token)) return render();
-            spotify.togglePlay();
-            return render();
-        });
-        ui.onClick('BTN_NEXT', () => {
-            if (settings.get('demo') !== 'on' && (!spotify.hasInternet || !spotify.token)) return render();
-            spotify.nextTrack();
-            return render();
-        });
-        ui.onClick('BTN_PREV', () => {
-            if (settings.get('demo') !== 'on' && (!spotify.hasInternet || !spotify.token)) return render();
-            spotify.prevTrack();
-            return render();
-        });
         ui.onClick('BTN_PAGE', () => { page = (page + 1) % PAGES.length; return render(); });
         ctx.onTab((idx) => { page = idx; return render(); });
 
-        // Start 60 fps render loop
+        // Start 60 fps render loop and render initial frame
         ctx.loop('MAIN', 15, render);
-        render().then(() => log.info('Spotify app ready')).catch((e) => log.warn('Spotify render error: ' + e));
+        await render();
+        log.info('Spotify app ready');
     }
 });

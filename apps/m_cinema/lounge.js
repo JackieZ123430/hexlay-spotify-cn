@@ -264,8 +264,9 @@ class YouTubeLoungeReceiver {
     handleStreamChunks(raw) {
         // Look for nowPlaying or setPlaylist video events
         // E.g. ["nowPlaying", {"videoId": "AvCt8Ggtupc"}] or ["setPlaylist", {"videoId": "..."}]
-        const matches = raw.matchAll(/\["(?:nowPlaying|setPlaylist)",\s*\{([^}]+)\}/g);
-        for (const m of matches) {
+        const re = /\["(?:nowPlaying|setPlaylist)",\s*\{([^}]+)\}/g;
+        let m;
+        while ((m = re.exec(raw)) !== null) {
             const body = m[1];
             const vidMatch = body.match(/"videoId":\s*"([^"]+)"/);
             if (vidMatch && vidMatch[1]) {

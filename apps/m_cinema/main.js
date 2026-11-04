@@ -87,10 +87,16 @@ mgu.run({
 
         function updateVideoBounds() {
             if (!process.send) return;
-            const b = isFullscreen ?
-                { x: 64, y: 158, w: 1472, h: 236, r: 8 } :
-                { x: 64, y: 158, w: 992, h: 236, r: 8 };
-            process.send({ t: 'video', action: 'place', x: b.x, y: b.y, w: b.w, h: b.h, r: b.r });
+            process.send({
+                t: 'video',
+                action: 'fullscreen',
+                fullscreen: isFullscreen,
+                x: isFullscreen ? 0 : 64,
+                y: isFullscreen ? 0 : 158,
+                w: isFullscreen ? 1600 : 992,
+                h: isFullscreen ? 520 : 236,
+                r: isFullscreen ? 0 : 8
+            });
         }
 
         function toggleFullscreen() {
@@ -100,8 +106,20 @@ mgu.run({
             render().catch(() => {});
         }
 
+        // Listen for exit/fullscreen command from emulator exit button or HMI
+        process.on('message', (m) => {
+            if (m && m.t === 'video-fullscreen') {
+                if (isFullscreen !== !!m.on) {
+                    toggleFullscreen();
+                }
+            }
+        });
+
         function setPage(idx) {
             page = idx;
+            if (page !== 0 && isFullscreen) {
+                isFullscreen = false;
+            }
             if (process.send) {
                 process.send({ t: 'video', action: page === 0 && isPlaying && !lastMotionLocked ? 'show' : 'hide' });
             }
@@ -374,70 +392,43 @@ mgu.run({
             cv.text('Audio output: Vehicle stereo via Bluetooth / CarPlay', 1124 + btnW / 2, 428, 12, '#64748b', { align: 'center' });
         }
 
-        /* ---------- Fullscreen Theater Player (1520 x 410 Cockpit Screen) ---------- */
+        /* ---------- Fullscreen Cinema Theater (Real Ultrawide Edge-to-Edge) ---------- */
         function drawFullscreenPlayer(cv, t, now, video, motionLocked) {
-            // Full-width Grand Theater Panel
-            G.panel(cv, t, 40, 52, 1520, 410, 'Cockpit Cinema Theater');
+            cv.clear('#000000');
 
-            const vx = 64, vy = 114, vw = 1472, vh = 280;
-
-            if (settings.ambilight !== 'off' && !motionLocked) {
-                const pulse = (Math.sin(now / 400) + 1) * 0.5;
-                const glowAlpha = isPlaying ? (0.22 + pulse * 0.14) : 0.06;
-                cv.roundRect(vx - 2, vy - 2, vw + 4, vh + 4, 10, withAlpha('#0066b1', glowAlpha));
+            if (motionLocked) {
+                cv.roundRect(W / 2 - 400, H / 2 - 80, 800, 160, 14, '#0c121c');
+                cv.strokeRoundRect(W / 2 - 400, H / 2 - 80, 800, 160, 14, 2, '#e1001a');
+                cv.text('[!] VIDEO LOCKED WHILE IN MOTION', W / 2, H / 2 - 20, 24, '#e1001a', { align: 'center', font: 'bold' });
+                cv.text('Audio continues through car speakers. Park vehicle to resume (' + vehicleSpeed + ' km/h).', W / 2, H / 2 + 22, 16, '#cbd5e1', { align: 'center' });
+                return;
             }
 
-            drawVideoScreen(cv, vx, vy, vw, vh, video, now, motionLocked, true);
+            // Hardware live video surface edge-to-edge (Protocol 4 OP_VIDEO 19)
+            if (video && video.ytId && cv.video) {
+                cv.video(1, 0, 0, W, H, 0);
+            }
 
-            // Widescreen Scrubber Bar across full 1472px
-            const sy = 405, sw = 1472;
-            cv.roundRect(vx, sy, sw, 6, 3, t.track);
-            const thumbX = vx + Math.floor(sw * playProgress);
-            cv.roundRect(vx, sy, Math.max(6, thumbX - vx), 6, 3, '#0066b1');
-            cv.circle(thumbX, sy + 3, 7, '#ffffff');
-            cv.arc(thumbX, sy + 3, 7, 9, 0, 360, '#00a3e0');
-
-            // 38px tall touch target centered on the scrubber
-            cv.target(vx, sy - 16, sw, 38, (touchX) => {
-                const rel = Math.max(0, Math.min(1, (touchX - vx) / sw));
-                playProgress = rel;
-                if (totalDurationSec > 0) {
-                    currentTimeSec = Math.floor(rel * totalDurationSec);
-                    player.seek(currentTimeSec);
+            if (isPlaying) {
+                // Sleek minimalist Spectrum Visualizer in bottom-right corner
+                const eqX = W - 180, eqY = H - 20;
+                for (let bi = 0; bi < 16; bi++) {
+                    const wave = Math.abs(Math.sin((now / 160) + bi * 0.6));
+                    const barH = 4 + Math.floor(wave * 22);
+                    const col = bi < 5 ? '#0066b1' : (bi < 11 ? '#00a3e0' : '#e1001a');
+                    cv.roundRect(eqX + bi * 9, eqY - barH, 6, barH, 2, col);
                 }
-                notify(`Seek: ${formatTime(currentTimeSec)}`);
-                render().catch(() => {});
-            }, 'scrub_fs', 8);
+            }
 
-            // Left: Timecode and Quality badge
-            const durDisplay = totalDurationSec > 0 ? formatTime(totalDurationSec) : (video.duration || '0:00');
-            const timeStr = `${formatTime(currentTimeSec)} / ${durDisplay}`;
-            cv.text(timeStr, vx, 442, 16, t.dim, { font: 'num' });
-            cv.text('720p HD', vx + 160, 442, 13, '#00a3e0', { font: 'bold' });
-
-            // Center: Play / Pause Control Button
-            const btnPlayW = 140, btnPlayH = 34;
-            const btnPlayX = vx + Math.floor((sw - btnPlayW) / 2), btnPlayY = 425;
-            cv.roundRect(btnPlayX, btnPlayY, btnPlayW, btnPlayH, 6, isPlaying ? '#162233' : '#0066b1');
-            cv.strokeRoundRect(btnPlayX, btnPlayY, btnPlayW, btnPlayH, 6, 1, isPlaying ? '#23364f' : '#00a3e0');
-            cv.text(isPlaying ? 'PAUSE' : 'PLAY', btnPlayX + btnPlayW / 2, btnPlayY + 22, 13, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
-            cv.target(btnPlayX, btnPlayY, btnPlayW, btnPlayH, () => {
-                isPlaying = !isPlaying;
-                if (isPlaying) player.resume();
-                else player.pause();
-                notify(isPlaying ? 'Resumed' : 'Paused');
-                render().catch(() => {});
-            }, 'btn_play_toggle_fs', 10);
-
-            // Right: Normal View Exit Button
-            const btnExitW = 150, btnExitH = 34;
-            const btnExitX = vx + sw - btnExitW, btnExitY = 425;
-            cv.roundRect(btnExitX, btnExitY, btnExitW, btnExitH, 6, '#0f1724');
-            cv.strokeRoundRect(btnExitX, btnExitY, btnExitW, btnExitH, 6, 1, '#1e324c');
-            cv.text('NORMAL VIEW', btnExitX + btnExitW / 2, btnExitY + 22, 13, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
+            // Floating Normal View Exit Button in top-right corner
+            const btnExitW = 160, btnExitH = 42;
+            const btnExitX = W - btnExitW - 28, btnExitY = 24;
+            cv.roundRect(btnExitX, btnExitY, btnExitW, btnExitH, 8, withAlpha('#0c1420', 0.9));
+            cv.strokeRoundRect(btnExitX, btnExitY, btnExitW, btnExitH, 8, 1.5, '#00a3e0');
+            cv.text('NORMAL VIEW', btnExitX + btnExitW / 2, btnExitY + 27, 15, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
             cv.target(btnExitX, btnExitY, btnExitW, btnExitH, () => {
                 toggleFullscreen();
-            }, 'btn_exit_fs_bot', 10);
+            }, 'btn_exit_fs_bot', 15);
         }
 
         /* ---------- Video Screen Canvas Renderer (Debloated 60 fps Vector Stage) ---------- */
@@ -776,7 +767,14 @@ mgu.run({
             const t = ctx.theme();
             const cv = ctx.canvas(W, H).clear(t.bg);
 
-            if (page === 0) drawPlayer(cv, t, now);
+            if (page === 0) {
+                if (isFullscreen) {
+                    drawFullscreenPlayer(cv, t, now, activeCastVideo, lastMotionLocked);
+                    await ui.image('MAIN_GFX', cv);
+                    return;
+                }
+                drawPlayer(cv, t, now);
+            }
             else if (page === 1) drawSearch(cv, t);
             else if (page === 2) drawConnect(cv, t);
 

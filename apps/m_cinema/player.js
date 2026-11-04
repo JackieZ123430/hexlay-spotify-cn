@@ -98,6 +98,7 @@ class VideoPlayer {
                 title: (videoMeta && videoMeta.title) || '',
                 duration: this.totalDurationSec,
                 time: this.currentTimeSec,
+                fullscreen: !!(videoMeta && videoMeta.fullscreen),
                 x: bX,
                 y: bY,
                 w: bW,

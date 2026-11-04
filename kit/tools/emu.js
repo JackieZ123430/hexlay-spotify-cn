@@ -505,6 +505,7 @@ function onPage(ws, m) {
         }
         toChild({ t: 'hmi', a: m.a, screen: m.screen && String(m.screen) });
         break;
+    case 'video-fullscreen': toChild({ t: 'video-fullscreen', on: !!m.on }); break;
     case 'click': toChild({ t: 'click', id: String(m.id) }); break;
     case 'set': toChild({ t: 'set', k: String(m.k), v: m.v }); break;
     case 'sig':
@@ -671,6 +672,7 @@ function start(id) {
             else if (m.t === 'video') {
                 if (m.action === 'stop') App.video = null;
                 else if (m.action === 'place' && App.video) Object.assign(App.video, m);
+                else if (m.action === 'fullscreen' && App.video) Object.assign(App.video, m);
                 else App.video = m;
                 appLog('info', 'emu: video ' + m.action + (m.ytId ? ' [' + m.ytId + ']' : ''));
                 toPages(m);

@@ -107,12 +107,64 @@ function ensureVideoLayer() {
     const picker = $('#picker');
     if (picker) stage.insertBefore(videoLayer, picker);
     else stage.append(videoLayer);
+
+    let hideTimer = null;
+    const showControls = () => {
+      const btn = $('#video-exit-fs-btn');
+      if (btn) btn.classList.remove('faded');
+      clearTimeout(hideTimer);
+      if (videoLayer && videoLayer.classList.contains('fullscreen')) {
+        hideTimer = setTimeout(() => {
+          if (btn) btn.classList.add('faded');
+        }, 3000);
+      }
+    };
+    stage.addEventListener('pointermove', showControls);
+    stage.addEventListener('pointerdown', showControls);
   }
   return videoLayer;
 }
 
+function setFullscreen(isFs) {
+  const layer = ensureVideoLayer();
+  if (isFs) {
+    stage.classList.add('cinema-fullscreen');
+    layer.classList.add('fullscreen');
+  } else {
+    stage.classList.remove('cinema-fullscreen');
+    layer.classList.remove('fullscreen');
+  }
+}
+
+function ensureExitButton(layer) {
+  let exitBtn = $('#video-exit-fs-btn');
+  if (!exitBtn && layer) {
+    exitBtn = el('div', { id: 'video-exit-fs-btn', class: 'video-exit-fs-btn' });
+    exitBtn.innerHTML = `
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+        <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-14v3h3v2h-5V5h2z"/>
+      </svg>
+      <span>Exit Fullscreen</span>
+    `;
+    exitBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setFullscreen(false);
+      send({ t: 'video-fullscreen', on: false });
+    });
+    layer.append(exitBtn);
+  }
+}
+
 function updateVideoPlacement() {
   if (!lastVideoMsg || !videoLayer) return;
+  if (lastVideoMsg.fullscreen || videoLayer.classList.contains('fullscreen')) {
+    videoLayer.style.left = '0px';
+    videoLayer.style.top = '0px';
+    videoLayer.style.width = '100%';
+    videoLayer.style.height = '100%';
+    videoLayer.style.borderRadius = '0px';
+    return;
+  }
   const pl = S.conn?.place || { x: 0, y: 0, s: 1, ox: 0, oy: 0 };
   const s = pl.s || pl.scale || 1;
   const ox = pl.ox || 0, oy = pl.oy || 0;
@@ -129,7 +181,7 @@ function updateVideoPlacement() {
   videoLayer.style.top = `calc(var(--u) * ${screenY})`;
   videoLayer.style.width = `calc(var(--u) * ${screenW})`;
   videoLayer.style.height = `calc(var(--u) * ${screenH})`;
-  videoLayer.style.borderRadius = `0 0 calc(var(--u) * ${screenR}) calc(var(--u) * ${screenR})`;
+  videoLayer.style.borderRadius = `calc(var(--u) * ${screenR})`;
 }
 
 function sendYtCmd(func, args = '') {
@@ -262,6 +314,7 @@ function handleVideoEvent(m) {
     lastVideoMsg = m;
     layer.style.display = 'flex';
     layer.hidden = false;
+    if (m.fullscreen) setFullscreen(true);
     updateVideoPlacement();
 
     const ytId = m.ytId || extractYtId(m.url);
@@ -320,6 +373,7 @@ function handleVideoEvent(m) {
           unmuteAudio();
         });
         layer.append(unmuteBtn);
+        ensureExitButton(layer);
 
         iframe.addEventListener('load', () => {
           sendYtCmd('playVideo');
@@ -357,6 +411,7 @@ function handleVideoEvent(m) {
       });
       activeVideoElem = vid;
       layer.append(vid);
+      ensureExitButton(layer);
     }
     break;
   }
@@ -417,6 +472,22 @@ function handleVideoEvent(m) {
       layer.hidden = false;
     }
     break;
+  case 'fullscreen': {
+    const isFs = !!m.fullscreen;
+    setFullscreen(isFs);
+    if (!lastVideoMsg) lastVideoMsg = {};
+    lastVideoMsg.fullscreen = isFs;
+    if (!isFs) {
+      if (typeof m.x === 'number') lastVideoMsg.x = m.x;
+      if (typeof m.y === 'number') lastVideoMsg.y = m.y;
+      if (typeof m.w === 'number') lastVideoMsg.w = m.w;
+      if (typeof m.h === 'number') lastVideoMsg.h = m.h;
+      if (typeof m.r === 'number') lastVideoMsg.r = m.r;
+    }
+    updateVideoPlacement();
+    ensureExitButton(layer);
+    break;
+  }
   case 'place':
     if (!lastVideoMsg) lastVideoMsg = {};
     if (typeof m.x === 'number') lastVideoMsg.x = m.x;
@@ -427,6 +498,7 @@ function handleVideoEvent(m) {
     updateVideoPlacement();
     break;
   case 'stop':
+    setFullscreen(false);
     if (autoPlayTimer) {
       clearInterval(autoPlayTimer);
       autoPlayTimer = null;
@@ -572,6 +644,13 @@ const typing = (e) => !!(e.target.closest && e.target.closest('#panel, input, se
 document.addEventListener('keydown', (e) => {
   if (typing(e)) return;
   const k = e.key;
+  if (k === 'Escape') {
+    if (stage.classList.contains('cinema-fullscreen')) {
+      setFullscreen(false);
+      send({ t: 'video-fullscreen', on: false });
+      return;
+    }
+  }
   // the app picker has the controller while it shows (the app is not on screen); BACK and HOME leave it there
   if (S.closed) {
     if (k === '[' || k === ']') pickMove(k === ']' ? 1 : -1);

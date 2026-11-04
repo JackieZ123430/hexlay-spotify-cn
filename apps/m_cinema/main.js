@@ -91,9 +91,9 @@ mgu.run({
                 t: 'video',
                 fullscreen: isFullscreen,
                 x: isFullscreen ? 0 : 64,
-                y: isFullscreen ? 0 : 158,
+                y: isFullscreen ? 0 : 112,
                 w: isFullscreen ? 1600 : 992,
-                h: isFullscreen ? 520 : 236,
+                h: isFullscreen ? 520 : 288,
                 r: isFullscreen ? 0 : 8
             };
             process.send(Object.assign({ action: 'fullscreen' }, payload));
@@ -272,7 +272,7 @@ mgu.run({
             const streamUrl = video.streamUrl || video.url || ('https://youtube.com/watch?v=' + (video.ytId || ''));
             const b = isFullscreen ?
                 { x: 0, y: 0, w: 1600, h: 520, r: 0, fullscreen: true } :
-                { x: 64, y: 158, w: 992, h: 236, r: 8, fullscreen: false };
+                { x: 64, y: 112, w: 992, h: 288, r: 8, fullscreen: false };
             player.play(streamUrl, totalDurationSec, Object.assign({}, video, b));
 
             notify('Playing: ' + video.title);
@@ -359,7 +359,7 @@ mgu.run({
             // Left / Main Media Viewport (1040 x 410)
             G.panel(cv, t, 40, 52, 1040, 410);
 
-            const vx = 64, vy = 114, vw = 992, vh = 280;
+            const vx = 64, vy = 68, vw = 992, vh = 332;
 
             if (settings.ambilight !== 'off' && !motionLocked) {
                 const pulse = (Math.sin(now / 400) + 1) * 0.5;
@@ -370,7 +370,7 @@ mgu.run({
             drawVideoScreen(cv, vx, vy, vw, vh, video, now, motionLocked, false);
 
             // Scrubber Bar
-            const sy = 405, sw = 992;
+            const sy = 412, sw = 992;
             cv.roundRect(vx, sy, sw, 6, 3, t.track);
             const thumbX = vx + Math.floor(sw * playProgress);
             cv.roundRect(vx, sy, Math.max(6, thumbX - vx), 6, 3, '#0066b1');
@@ -401,15 +401,15 @@ mgu.run({
 
             const durDisplay = totalDurationSec > 0 ? formatTime(totalDurationSec) : (video.duration || '0:00');
             const timeStr = `${formatTime(currentTimeSec)} / ${durDisplay}`;
-            cv.text(timeStr, vx, 442, 16, t.dim, { font: 'num' });
-            cv.text('720p HD', vx + 160, 442, 13, '#00a3e0', { font: 'bold' });
+            cv.text(timeStr, vx, 444, 16, t.dim, { font: 'num' });
+            cv.text('720p HD', vx + 160, 444, 13, '#00a3e0', { font: 'bold' });
 
             // Fullscreen Button below video
-            const btnFsW = 148, btnFsH = 34;
-            const btnFsX = vx + sw - btnFsW, btnFsY = 425;
+            const btnFsW = 148, btnFsH = 32;
+            const btnFsX = vx + sw - btnFsW, btnFsY = 424;
             cv.roundRect(btnFsX, btnFsY, btnFsW, btnFsH, 6, '#0f1724');
             cv.strokeRoundRect(btnFsX, btnFsY, btnFsW, btnFsH, 6, 1, '#1e324c');
-            cv.text('FULLSCREEN', btnFsX + btnFsW / 2, btnFsY + 22, 13, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
+            cv.text('FULLSCREEN', btnFsX + btnFsW / 2, btnFsY + 21, 13, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
             cv.target(btnFsX, btnFsY, btnFsW, btnFsH, () => {
                 toggleFullscreen();
             }, 'btn_fullscreen_std', 10);
@@ -884,9 +884,7 @@ mgu.run({
             else if (page === 2) drawConnect(cv, t);
 
             // G-Series Live Cockpit frame tabs along the top
-            G.frame(cv, t, PAGES, page, [
-                { text: 'M-CINEMA' }
-            ]);
+            G.frame(cv, t, PAGES, page, []);
 
             // Explicit touch targets for top header tabs
             if (cv.tabRects && Array.isArray(cv.tabRects)) {

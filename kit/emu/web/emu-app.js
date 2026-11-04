@@ -331,7 +331,7 @@ function updateVideoPlacement() {
   const ox = pl.ox || 0, oy = pl.oy || 0;
   const px = pl.x || 0, py = pl.y || 0;
 
-  const lx = lastVideoMsg.x || 64, ly = lastVideoMsg.y || 158, lw = lastVideoMsg.w || 992, lh = lastVideoMsg.h || 236, lr = lastVideoMsg.r || 8;
+  const lx = lastVideoMsg.x || 64, ly = lastVideoMsg.y || 112, lw = lastVideoMsg.w || 992, lh = lastVideoMsg.h || 288, lr = lastVideoMsg.r || 8;
   const screenX = Math.round(px + (lx * s + ox));
   const screenY = Math.round(py + (ly * s + oy));
   const screenW = Math.round(lw * s);

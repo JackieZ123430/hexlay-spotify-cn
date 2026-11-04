@@ -92,9 +92,9 @@ class VideoPlayer {
 
         const ytId = (videoMeta && (videoMeta.ytId || videoMeta.id)) || extractYouTubeId(streamUrl) || null;
         const bX = (videoMeta && typeof videoMeta.x === 'number') ? videoMeta.x : 64;
-        const bY = (videoMeta && typeof videoMeta.y === 'number') ? videoMeta.y : 158;
+        const bY = (videoMeta && typeof videoMeta.y === 'number') ? videoMeta.y : 112;
         const bW = (videoMeta && typeof videoMeta.w === 'number') ? videoMeta.w : 992;
-        const bH = (videoMeta && typeof videoMeta.h === 'number') ? videoMeta.h : 236;
+        const bH = (videoMeta && typeof videoMeta.h === 'number') ? videoMeta.h : 288;
         const bR = (videoMeta && typeof videoMeta.r === 'number') ? videoMeta.r : 8;
         if (process.send) {
             process.send({

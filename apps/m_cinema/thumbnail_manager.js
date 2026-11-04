@@ -8,6 +8,7 @@
  */
 const https = require('https');
 const http = require('http');
+const url = require('url');
 const decodeJpeg = require('./jpeg');
 
 let setImage = null;
@@ -113,7 +114,7 @@ class ThumbnailManager {
                 if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                     const nextUrl = res.headers.location.startsWith('http') ?
                         res.headers.location :
-                        new URL(res.headers.location, targetUrl).href;
+                        url.resolve(targetUrl, res.headers.location);
                     return this._fetchUrl(nextUrl, cb, redirectCount + 1);
                 }
 

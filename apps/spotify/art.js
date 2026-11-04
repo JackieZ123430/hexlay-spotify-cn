@@ -7,6 +7,8 @@
  * via setImage() for GPU or software rendering.
  */
 const https = require('https');
+const http = require('http');
+const urlMod = require('url');
 const decodeJpeg = require('./jpeg');
 const { setImage } = require('./kit/record');
 
@@ -45,7 +47,24 @@ class AlbumArtManager {
         if (this.loadingUrl === url) return;
         this.loadingUrl = url;
 
-        const req = https.get(url, { timeout: 6000 }, (res) => {
+        let parsed;
+        try {
+            parsed = urlMod.parse(url);
+        } catch (e) {
+            this.loadingUrl = null;
+            return;
+        }
+
+        const opt = {
+            hostname: parsed.hostname,
+            port: parsed.port || (parsed.protocol === 'http:' ? 80 : 443),
+            path: parsed.path,
+            headers: { 'User-Agent': 'BMW-iDrive7' },
+            timeout: 6000
+        };
+
+        const client = parsed.protocol === 'http:' ? http : https;
+        const req = client.get(opt, (res) => {
             if (res.statusCode !== 200) {
                 this.loadingUrl = null;
                 return;

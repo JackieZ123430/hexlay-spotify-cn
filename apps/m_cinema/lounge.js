@@ -13,10 +13,19 @@ const https = require('https');
 const querystring = require('querystring');
 const fs = require('fs');
 const path = require('path');
+const url = require('url');
 
-function httpsGet(url) {
+function httpsGet(urlStr) {
     return new Promise((resolve, reject) => {
-        const req = https.get(url, { timeout: 8000 }, (res) => {
+        const u = url.parse(urlStr);
+        const options = {
+            hostname: u.hostname,
+            port: u.port || 443,
+            path: u.path,
+            headers: { 'User-Agent': 'Mozilla/5.0 (BMW iDrive 7)' },
+            timeout: 8000
+        };
+        const req = https.get(options, (res) => {
             let data = '';
             res.on('data', c => { data += c; });
             res.on('end', () => resolve(data.trim()));
@@ -26,12 +35,13 @@ function httpsGet(url) {
     });
 }
 
-function httpsPost(url, postData) {
+function httpsPost(urlStr, postData) {
     return new Promise((resolve, reject) => {
-        const u = new URL(url);
+        const u = url.parse(urlStr);
         const options = {
             hostname: u.hostname,
-            path: u.pathname + u.search,
+            port: u.port || 443,
+            path: u.path || (u.pathname + (u.search || '')),
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -216,8 +226,16 @@ class YouTubeLoungeReceiver {
         });
 
         const streamUrl = `https://www.youtube.com/api/lounge/bc/bind?${rpcParams}`;
+        const u = url.parse(streamUrl);
+        const options = {
+            hostname: u.hostname,
+            port: u.port || 443,
+            path: u.path,
+            headers: { 'User-Agent': 'Mozilla/5.0 (BMW iDrive 7)' },
+            timeout: 60000
+        };
 
-        this.streamReq = https.get(streamUrl, { timeout: 60000 }, (res) => {
+        this.streamReq = https.get(options, (res) => {
             this.isConnected = true;
             let buffer = '';
 

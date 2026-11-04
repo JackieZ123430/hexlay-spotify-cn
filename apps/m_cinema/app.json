@@ -2,7 +2,7 @@
   "id": "m_cinema",
   "title": "M-Cinema",
   "description": "Ultrawide 21:9 Cockpit Theater & YouTube Player with In-Car Search and Official TV Cast for BMW iDrive 7",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "vendor": "custom",
   "loggingId": "OACN",
   "iconGlyph": "cinema",
@@ -19,6 +19,7 @@
       "kind": "canvas",
       "title": "M-Cinema",
       "buttons": [
+        ["BTN_PAGE", "Next page"],
         ["BTN_SETTINGS", "Settings"]
       ]
     }

@@ -4,6 +4,7 @@
  * Fetches real video results directly from YouTube APIs without API keys.
  */
 const https = require('https');
+const urlMod = require('url');
 
 const INSTANCES = [
     'https://yt.chocolatemoo53.com',
@@ -56,7 +57,15 @@ class YouTubeSearchEngine {
     _fetchFromInstance(baseUrl, query) {
         return new Promise((resolve, reject) => {
             const url = `${baseUrl}/api/v1/search?q=${encodeURIComponent(query)}&type=video`;
-            const req = https.get(url, { timeout: 4000 }, (res) => {
+            const u = urlMod.parse(url);
+            const options = {
+                hostname: u.hostname,
+                port: u.port || 443,
+                path: u.path,
+                headers: { 'User-Agent': 'Mozilla/5.0 (BMW iDrive 7)' },
+                timeout: 4000
+            };
+            const req = https.get(options, (res) => {
                 if (res.statusCode !== 200) {
                     return reject(new Error('HTTP ' + res.statusCode));
                 }

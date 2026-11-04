@@ -17,7 +17,13 @@ let visitorDataTime = 0;
 function fetchVisitorData() {
     return new Promise((resolve) => {
         // Strategy 1: YouTube ServiceWorker data endpoint
-        const req = https.get('https://www.youtube.com/sw.js_data', { timeout: 4000 }, (res) => {
+        const opt = {
+            hostname: 'www.youtube.com',
+            port: 443,
+            path: '/sw.js_data',
+            timeout: 4000
+        };
+        const req = https.get(opt, (res) => {
             let data = '';
             res.on('data', c => { data += c; });
             res.on('end', () => {
@@ -38,10 +44,14 @@ function fetchVisitorData() {
 
 function fetchHomepageVisitorData() {
     return new Promise((resolve) => {
-        const req = https.get('https://www.youtube.com', {
+        const opt = {
+            hostname: 'www.youtube.com',
+            port: 443,
+            path: '/',
             headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' },
             timeout: 4000
-        }, (res) => {
+        };
+        const req = https.get(opt, (res) => {
             let data = '';
             res.on('data', c => { data += c; });
             res.on('end', () => {
@@ -96,14 +106,18 @@ async function resolveYouTubeStream(videoId, log, retryCount = 0) {
     });
 
     return new Promise((resolve, reject) => {
-        const req = https.request('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
+        const opt = {
+            hostname: 'www.youtube.com',
+            port: 443,
+            path: '/youtubei/v1/player?prettyPrint=false',
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Content-Length': Buffer.byteLength(payload)
             },
             timeout: 6000
-        }, (res) => {
+        };
+        const req = https.request(opt, (res) => {
             let data = '';
             res.on('data', c => { data += c; });
             res.on('end', async () => {

@@ -189,6 +189,10 @@ mgu.run({
         const authServer = new SpotifyAuthServer(ctx, spotify);
         authServer.start();
 
+        function notify(msg) {
+            log.info('Spotify: ' + msg);
+        }
+
         const cloudPair = new CloudPairManager(ctx, spotify);
         cloudPair.onPaired = () => {
             notify('Spotify Paired via Secure Cloud!');

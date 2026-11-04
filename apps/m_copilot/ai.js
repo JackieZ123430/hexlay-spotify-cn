@@ -150,13 +150,25 @@ class AiBridge {
             }, 5000);
 
             try {
-                const req = https.get('https://connectivitycheck.gstatic.com/generate_204', { timeout: 4000 }, (res) => {
+                const opt1 = {
+                    hostname: 'connectivitycheck.gstatic.com',
+                    port: 443,
+                    path: '/generate_204',
+                    timeout: 4000
+                };
+                const req = https.get(opt1, (res) => {
                     clearTimeout(timer);
                     done(res.statusCode >= 200 && res.statusCode < 400);
                 });
 
                 req.on('error', () => {
-                    const fb = https.get('https://dns.google/resolve?name=google.com', { timeout: 4000 }, (res2) => {
+                    const opt2 = {
+                        hostname: 'dns.google',
+                        port: 443,
+                        path: '/resolve?name=google.com',
+                        timeout: 4000
+                    };
+                    const fb = https.get(opt2, (res2) => {
                         clearTimeout(timer);
                         done(res2.statusCode >= 200 && res2.statusCode < 400);
                     });
@@ -409,15 +421,18 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
         for (const model of candidateModels) {
             try {
                 const res = await new Promise((resolve) => {
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-                    const req = https.request(url, {
+                    const opt = {
+                        hostname: 'generativelanguage.googleapis.com',
+                        port: 443,
+                        path: `/v1beta/models/${model}:generateContent?key=${apiKey}`,
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                             'Content-Length': Buffer.byteLength(body)
                         },
                         timeout: 9000
-                    }, (res) => {
+                    };
+                    const req = https.request(opt, (res) => {
                         let data = '';
                         res.on('data', (chunk) => { data += chunk; });
                         res.on('end', () => {
@@ -481,7 +496,10 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
                 ]
             });
 
-            const req = https.request('https://api.anthropic.com/v1/messages', {
+            const opt = {
+                hostname: 'api.anthropic.com',
+                port: 443,
+                path: '/v1/messages',
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -490,7 +508,8 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
                     'Content-Length': Buffer.byteLength(body)
                 },
                 timeout: 8000
-            }, (res) => {
+            };
+            const req = https.request(opt, (res) => {
                 let data = '';
                 res.on('data', (chunk) => { data += chunk; });
                 res.on('end', () => {

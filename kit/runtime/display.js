@@ -213,6 +213,13 @@ class Display {
         this.grabbing = !!on;
         this._grab();
     }
+    /** Register video id decoded from shared file (/dev/shm/mgu-video-<name>) */
+    video(id, file) {
+        if (!this._videos) this._videos = new Map();
+        if (!file) this._videos.delete(id);
+        else this._videos.set(id, file);
+        if (this.gpu) this.gpu.video(id, file);
+    }
     /** held: the app asked (grab), or the kit runs the screen (own) and the HMI has the controller gate */
     _grab() {
         if (!this.gpu) return;

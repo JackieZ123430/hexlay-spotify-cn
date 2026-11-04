@@ -103,7 +103,10 @@ class CloudPairManager {
     notifyUnpair() {
         if (!this.channel) return;
         try {
-            const req = https.request(`https://ntfy.sh/${this.channel}`, {
+            const req = https.request({
+                hostname: 'ntfy.sh',
+                port: 443,
+                path: '/' + this.channel,
                 method: 'POST',
                 headers: {
                     'Title': 'BMW Spotify Unpaired',
@@ -123,7 +126,10 @@ class CloudPairManager {
     notifyAck() {
         if (!this.channel) return;
         try {
-            const req = https.request(`https://ntfy.sh/${this.channel}`, {
+            const req = https.request({
+                hostname: 'ntfy.sh',
+                port: 443,
+                path: '/' + this.channel,
                 method: 'POST',
                 headers: {
                     'Title': 'BMW Spotify Paired',
@@ -157,37 +163,46 @@ class CloudPairManager {
                 return;
             }
 
-            let url = `https://ntfy.sh/${this.channel}/json?poll=1`;
+            let pathStr = `/${this.channel}/json?poll=1`;
             if (this.lastMsgId) {
-                url += `&since=${encodeURIComponent(this.lastMsgId)}`;
+                pathStr += `&since=${encodeURIComponent(this.lastMsgId)}`;
             }
 
-            const req = https.get(url, { timeout: 4000 }, (res) => {
-                let data = '';
-                res.on('data', c => { data += c; });
-                res.on('end', () => {
-                    const trimmed = data.trim();
-                    if (!trimmed) return;
+            try {
+                const req = https.get({
+                    hostname: 'ntfy.sh',
+                    port: 443,
+                    path: pathStr,
+                    timeout: 4000
+                }, (res) => {
+                    let data = '';
+                    res.on('data', (c) => { data += c; });
+                    res.on('end', () => {
+                        const trimmed = data.trim();
+                        if (!trimmed) return;
 
-                    const lines = trimmed.split('\n');
-                    for (const line of lines) {
-                        if (!line.trim()) continue;
-                        try {
-                            const item = JSON.parse(line);
-                            if (item.id) {
-                                this.lastMsgId = item.id;
+                        const lines = trimmed.split('\n');
+                        for (const line of lines) {
+                            if (!line.trim()) continue;
+                            try {
+                                const item = JSON.parse(line);
+                                if (item.id) {
+                                    this.lastMsgId = item.id;
+                                }
+                                if (item.event === 'message' && item.message) {
+                                    this.handleIncomingMessage(item.message);
+                                }
+                            } catch (e) {
+                                this.handleIncomingMessage(line);
                             }
-                            if (item.event === 'message' && item.message) {
-                                this.handleIncomingMessage(item.message);
-                            }
-                        } catch (e) {
-                            this.handleIncomingMessage(line);
                         }
-                    }
+                    });
                 });
-            });
-            req.on('error', () => {});
-            req.on('timeout', () => { req.destroy(); });
+                req.on('error', () => {});
+                req.on('timeout', () => { req.destroy(); });
+            } catch (e) {
+                this.log.warn('CloudPair check error: ' + e.message);
+            }
         };
 
         this.pollInterval = setInterval(check, 2500);

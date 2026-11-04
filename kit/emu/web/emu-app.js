@@ -108,6 +108,34 @@ function ensureVideoLayer() {
     if (picker) stage.insertBefore(videoLayer, picker);
     else stage.append(videoLayer);
 
+    // Tapping directly on the video screen toggles Play / Pause smoothly without exposing YouTube web UI
+    videoLayer.addEventListener('click', (e) => {
+      if (!activeVideoElem) return;
+      const currentlyPlaying = !lastVideoMsg || lastVideoMsg.action !== 'pause';
+      if (currentlyPlaying) {
+        if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+          try { ytPlayer.pauseVideo(); } catch (err) {}
+        }
+        sendYtCmd('pauseVideo', []);
+        if (activeVideoElem.tagName === 'VIDEO') activeVideoElem.pause();
+        if (!lastVideoMsg) lastVideoMsg = {};
+        lastVideoMsg.action = 'pause';
+        updateFloatingHUD(false);
+        send({ t: 'video-state', playing: false });
+      } else {
+        if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+          try { ytPlayer.playVideo(); } catch (err) {}
+        }
+        sendYtCmd('playVideo', []);
+        if (activeVideoElem.tagName === 'VIDEO') activeVideoElem.play();
+        if (!lastVideoMsg) lastVideoMsg = {};
+        lastVideoMsg.action = 'play';
+        updateFloatingHUD(true);
+        send({ t: 'video-state', playing: true });
+        startAutoplayPolling();
+      }
+    });
+
     let hideTimer = null;
     const showControls = () => {
       const hud = $('#video-fs-hud');
@@ -451,9 +479,10 @@ function handleVideoEvent(m) {
 
         const iframe = el('iframe', {
           id: 'emu-yt-iframe',
-          src: `https://www.youtube.com/embed/${ytId}?autoplay=1&mute=1&controls=1&modestbranding=1&rel=0&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`,
+          src: `https://www.youtube.com/embed/${ytId}?autoplay=1&mute=1&controls=0&modestbranding=1&rel=0&playsinline=1&enablejsapi=1&fs=0&iv_load_policy=3&disablekb=1&origin=${encodeURIComponent(location.origin)}`,
           allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
-          allowfullscreen: 'true'
+          allowfullscreen: 'true',
+          sandbox: 'allow-scripts allow-same-origin allow-presentation'
         });
         layer.append(iframe);
         activeVideoElem = iframe;

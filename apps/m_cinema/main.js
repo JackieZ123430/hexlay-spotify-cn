@@ -427,6 +427,16 @@ mgu.run({
                 }
             }
 
+            // Floating Normal View Exit Button in top-right corner
+            const btnExitW = 160, btnExitH = 42;
+            const btnExitX = W - btnExitW - 28, btnExitY = 24;
+            cv.roundRect(btnExitX, btnExitY, btnExitW, btnExitH, 8, withAlpha('#0c1420', 0.9));
+            cv.strokeRoundRect(btnExitX, btnExitY, btnExitW, btnExitH, 8, 1.5, '#00a3e0');
+            cv.text('NORMAL VIEW', btnExitX + btnExitW / 2, btnExitY + 27, 15, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
+            cv.target(btnExitX, btnExitY, btnExitW, btnExitH, () => {
+                toggleFullscreen();
+            }, 'btn_exit_fs_bot', 15);
+
             // Floating Play/Pause Button in top-right HUD
             const btnPlayW = 130, btnPlayH = 42;
             const btnPlayX = btnExitX - btnPlayW - 14, btnPlayY = 24;
@@ -440,16 +450,6 @@ mgu.run({
                 notify(isPlaying ? 'Resumed' : 'Paused');
                 render().catch(() => {});
             }, 'btn_play_toggle_fs', 15);
-
-            // Floating Normal View Exit Button in top-right corner
-            const btnExitW = 160, btnExitH = 42;
-            const btnExitX = W - btnExitW - 28, btnExitY = 24;
-            cv.roundRect(btnExitX, btnExitY, btnExitW, btnExitH, 8, withAlpha('#0c1420', 0.9));
-            cv.strokeRoundRect(btnExitX, btnExitY, btnExitW, btnExitH, 8, 1.5, '#00a3e0');
-            cv.text('NORMAL VIEW', btnExitX + btnExitW / 2, btnExitY + 27, 15, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
-            cv.target(btnExitX, btnExitY, btnExitW, btnExitH, () => {
-                toggleFullscreen();
-            }, 'btn_exit_fs_bot', 15);
         }
 
         /* ---------- Video Screen Canvas Renderer (Debloated 60 fps Vector Stage) ---------- */

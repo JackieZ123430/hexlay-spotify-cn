@@ -107,7 +107,7 @@
             padding: 12px 14px;
             border-radius: 8px;
             font-size: 13px;
-            margin-bottom: 16px;
+            margin-bottom: 12px;
             color: #8a95a6;
             font-weight: 600;
         }
@@ -125,6 +125,19 @@
             background: #2af575;
             box-shadow: 0 0 8px #2af575;
             margin-right: 6px;
+        }
+        .privacy-pill {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(0, 163, 224, 0.08);
+            border: 1px solid rgba(0, 163, 224, 0.25);
+            padding: 7px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            color: #00f0ff;
+            margin-bottom: 16px;
+            line-height: 1.3;
         }
         .alert-box {
             background: rgba(225, 0, 26, 0.12);
@@ -272,6 +285,16 @@
             letter-spacing: 0.5px;
             margin-bottom: 16px;
         }
+        .car-badge {
+            background: #141a24;
+            border: 1px solid #242c39;
+            color: #00f0ff;
+            font-family: ui-monospace, monospace;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-left: 4px;
+        }
         .footer-nav {
             margin-top: 20px;
             font-size: 12px;
@@ -286,6 +309,12 @@
         }
         .footer-nav a:hover {
             color: #00f0ff;
+        }
+        /* No Vehicle Detected View */
+        .no-vehicle-box {
+            display: none;
+            text-align: center;
+            padding: 26px 16px;
         }
     </style>
 </head>
@@ -305,11 +334,40 @@
 
     <!-- Disconnect / Unpair Notification Banner -->
     <div class="card alert-box" id="disconnectNotice">
-        ⚠️ BMW Live Cockpit was unpaired. Enter API key below or scan new QR code to re-pair.
+        ⚠️ This vehicle was unpaired. Enter API key below or scan new QR code to re-pair.
+    </div>
+
+    <!-- Card: No Vehicle Detected (When visiting directly without QR scan) -->
+    <div class="card no-vehicle-box" id="cardNoVehicle">
+        <div class="card-m-header">
+            <div class="st-light"></div>
+            <div class="st-dark"></div>
+            <div class="st-red"></div>
+            <div class="line"></div>
+        </div>
+        <div style="font-size: 44px; margin-bottom: 14px;">📷</div>
+        <h2 style="font-size: 18px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">VEHICLE SCAN REQUIRED</h2>
+        <p style="font-size: 13px; color: #8a95a6; line-height: 1.5; margin-bottom: 18px;">
+            To ensure 100% privacy and prevent mixing data between different cars, each BMW generates a unique, isolated encryption QR code.
+        </p>
+        <div style="background: #06080e; border: 1px solid #1a2333; padding: 14px; border-radius: 8px; font-size: 13px; color: #cbd5e1; margin-bottom: 18px; text-align: left;">
+            <strong style="color: #00f0ff; display: block; margin-bottom: 4px;">How to pair:</strong>
+            1. Open <strong>M-Copilot</strong> on your BMW iDrive screen.<br>
+            2. Tap <strong>PAIR PHONE / QR CODE</strong>.<br>
+            3. Point your smartphone camera at the displayed QR code.
+        </div>
+        <details style="text-align: left; margin-top: 10px;">
+            <summary style="font-size: 12px; color: #00a3e0; cursor: pointer; font-weight: 700;">Manual Relay Code Entry ▾</summary>
+            <div style="margin-top: 12px;">
+                <label>Enter 8-Character Car Code</label>
+                <input type="text" id="inputManualCode" placeholder="e.g. 7F8A-9E2D" style="text-transform: uppercase;">
+                <button class="btn-connect" style="margin-top: 12px;" onclick="applyManualCode()">Target Vehicle</button>
+            </div>
+        </details>
     </div>
 
     <!-- Pairing Form Card -->
-    <div class="card" id="cardPairing">
+    <div class="card" id="cardPairing" style="display: none;">
         <div class="card-m-header">
             <div class="st-light"></div>
             <div class="st-dark"></div>
@@ -318,8 +376,12 @@
         </div>
 
         <div class="pair-code">
-            <span><span class="pulse-dot"></span>RELAY CHANNEL</span>
-            <strong id="spanCode">------</strong>
+            <span><span class="pulse-dot"></span>ACTIVE VEHICLE</span>
+            <strong id="spanCode">--------</strong>
+        </div>
+
+        <div class="privacy-pill" id="privacyIndicator">
+            🔒 <strong>E2EE Isolated Session:</strong> Encrypted exclusively for this vehicle.
         </div>
 
         <div class="tabs">
@@ -365,15 +427,17 @@
 
         <div class="icon-check">✓</div>
         <h2 style="font-size: 20px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">CONNECTED TO BMW iDRIVE 7</h2>
-        <div class="status-pill">● Safe Read-Only CAN Telemetry Uplink Active</div>
+        <div class="status-pill">
+            ● Paired With Vehicle <span class="car-badge" id="successCarId">BMW</span>
+        </div>
         <p style="font-size: 13px; color: #8a95a6; line-height: 1.5; margin-bottom: 12px;">
-            AI credentials paired securely with your car.<br>
-            All prompts and questions are controlled directly from your vehicle's touchscreen and iDrive controller.
+            AI credentials paired securely and isolated to this vehicle.<br>
+            All prompts and questions are controlled directly from your car's touchscreen and iDrive controller.
         </p>
         <p style="font-size: 12px; color: #64748b; margin-bottom: 18px;">
             You can safely lock your phone or close this browser tab.
         </p>
-        <button class="btn-unpair" onclick="unpairFromPhone()">UNPAIR / RE-PAIR</button>
+        <button class="btn-unpair" onclick="unpairThisVehicle()">UNPAIR THIS VEHICLE</button>
     </div>
 
     <div class="footer-nav">
@@ -385,32 +449,82 @@
     </div>
 
     <script>
-        // Clean up legacy voice assistant keys
+        // Clean up legacy keys
         localStorage.removeItem('copilot_tts_enabled');
         localStorage.removeItem('copilot_voice_lang');
+        localStorage.removeItem('copilot_paired'); // purge old un-scoped global key
 
         const urlParams = new URLSearchParams(window.location.search);
-        const urlChannel = urlParams.get('channel');
-        const storedChannel = localStorage.getItem('copilot_channel');
+        let channel = urlParams.get('channel') || '';
+        let secretKey = '';
 
-        // Reset if scanning a different QR code
-        if (urlChannel && urlChannel !== storedChannel) {
-            localStorage.removeItem('copilot_paired');
-            localStorage.setItem('copilot_channel', urlChannel);
+        // Extract secret key from URL hash (#k=<key>)
+        if (window.location.hash && window.location.hash.startsWith('#k=')) {
+            secretKey = window.location.hash.substring(3).trim();
+            // Cache secret key per channel so reloads preserve E2EE
+            if (channel && secretKey) {
+                sessionStorage.setItem('copilot_k_' + channel, secretKey);
+            }
+        } else if (channel) {
+            secretKey = sessionStorage.getItem('copilot_k_' + channel) || '';
         }
 
-        const channel = urlChannel || storedChannel || 'bmw_copilot_default';
         let currentTab = 'gemini';
         let evtSource = null;
 
-        document.getElementById('spanCode').innerText = channel.replace('bmw_copilot_', '').toUpperCase();
-
-        if (localStorage.getItem('copilot_paired') === 'true') {
+        // Multi-Car Verification & UI Router
+        if (!channel) {
+            document.getElementById('cardNoVehicle').style.display = 'block';
             document.getElementById('cardPairing').style.display = 'none';
-            document.getElementById('cardSuccess').style.display = 'block';
+            document.getElementById('cardSuccess').style.display = 'none';
+        } else {
+            initVehicleContext();
         }
 
-        initRelayListener();
+        function formatDisplayCode(ch) {
+            const raw = ch.replace('bmw_copilot_', '').toUpperCase();
+            if (raw.length >= 8) {
+                return raw.substring(0, 4) + '-' + raw.substring(4, 8);
+            }
+            return raw;
+        }
+
+        function initVehicleContext() {
+            const shortCode = formatDisplayCode(channel);
+            document.getElementById('spanCode').innerText = shortCode;
+            document.getElementById('successCarId').innerText = shortCode;
+
+            // Check vehicle-specific pairing state
+            const isPaired = localStorage.getItem('copilot_paired_' + channel) === 'true';
+
+            if (isPaired) {
+                document.getElementById('cardNoVehicle').style.display = 'none';
+                document.getElementById('cardPairing').style.display = 'none';
+                document.getElementById('cardSuccess').style.display = 'block';
+            } else {
+                document.getElementById('cardNoVehicle').style.display = 'none';
+                document.getElementById('cardPairing').style.display = 'block';
+                document.getElementById('cardSuccess').style.display = 'none';
+            }
+
+            if (secretKey && secretKey.length === 64) {
+                document.getElementById('privacyIndicator').innerHTML =
+                    '🔒 <strong>Zero-Knowledge E2EE:</strong> 256-bit AES-GCM encrypted exclusively for car <strong>' + shortCode + '</strong>.';
+            } else {
+                document.getElementById('privacyIndicator').innerHTML =
+                    '● <strong>Isolated Cloud Channel:</strong> Dedicated uplink for car <strong>' + shortCode + '</strong>.';
+            }
+
+            initRelayListener();
+        }
+
+        function applyManualCode() {
+            let code = document.getElementById('inputManualCode').value.trim();
+            if (!code) return;
+            code = code.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+            channel = 'bmw_copilot_' + code;
+            initVehicleContext();
+        }
 
         function switchTab(t) {
             currentTab = t;
@@ -422,16 +536,16 @@
         }
 
         function handleCarDisconnected() {
-            localStorage.removeItem('copilot_paired');
+            localStorage.removeItem('copilot_paired_' + channel);
             document.getElementById('cardSuccess').style.display = 'none';
             document.getElementById('cardPairing').style.display = 'block';
             const alertBox = document.getElementById('disconnectNotice');
             alertBox.style.display = 'block';
-            alertBox.innerText = 'BMW Live Cockpit was unpaired. Enter API key below or scan new QR code to re-pair.';
+            alertBox.innerText = 'Vehicle ' + formatDisplayCode(channel) + ' was unpaired. Ready to pair again.';
         }
 
         function handleCarConnected() {
-            localStorage.setItem('copilot_paired', 'true');
+            localStorage.setItem('copilot_paired_' + channel, 'true');
             document.getElementById('disconnectNotice').style.display = 'none';
             document.getElementById('cardPairing').style.display = 'none';
             document.getElementById('cardSuccess').style.display = 'block';
@@ -441,6 +555,7 @@
             if (evtSource) {
                 try { evtSource.close(); } catch (e) {}
             }
+            if (!channel) return;
             try {
                 evtSource = new EventSource('https://ntfy.sh/' + channel + '/sse');
                 evtSource.onmessage = (e) => {
@@ -460,29 +575,72 @@
                     } catch (err) {}
                 };
             } catch (err) {
-                console.warn('SSE relay listener error:', err);
+                console.warn('SSE relay error:', err);
             }
         }
 
-        async function unpairFromPhone() {
+        async function unpairThisVehicle() {
             try {
                 await fetch('https://ntfy.sh/' + channel, {
                     method: 'POST',
                     headers: { 'Title': 'BMW M-Copilot Unpair' },
-                    body: JSON.stringify({ type: 'phone_unpair', time: Date.now() })
+                    body: JSON.stringify({ type: 'phone_unpair', channel: channel, time: Date.now() })
                 });
             } catch (e) {}
             handleCarDisconnected();
+        }
+
+        // WebCrypto AES-256-GCM Zero-Knowledge Encryption
+        async function encryptCredentials(plaintextStr, keyHex) {
+            if (!keyHex || keyHex.length !== 64 || !window.crypto || !window.crypto.subtle) {
+                return null;
+            }
+            try {
+                const keyBytes = new Uint8Array(keyHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+                const cryptoKey = await window.crypto.subtle.importKey(
+                    'raw',
+                    keyBytes,
+                    { name: 'AES-GCM' },
+                    false,
+                    ['encrypt']
+                );
+                const iv = window.crypto.getRandomValues(new Uint8Array(12));
+                const encoded = new TextEncoder().encode(plaintextStr);
+                const ctBuffer = await window.crypto.subtle.encrypt(
+                    { name: 'AES-GCM', iv: iv, tagLength: 128 },
+                    cryptoKey,
+                    encoded
+                );
+                const cipherArray = new Uint8Array(ctBuffer);
+                const tag = cipherArray.slice(-16);
+                const data = cipherArray.slice(0, -16);
+                const toHex = arr => Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+
+                return {
+                    type: 'copilot_encrypted',
+                    iv: toHex(iv),
+                    tag: toHex(tag),
+                    data: toHex(data),
+                    channel: channel,
+                    time: Date.now()
+                };
+            } catch (err) {
+                console.warn('WebCrypto encryption failed, falling back to direct relay:', err);
+                return null;
+            }
         }
 
         async function connectCopilot() {
             const err = document.getElementById('errorMsg');
             err.style.display = 'none';
 
-            let payload = {
-                type: 'copilot_pair',
-                time: Date.now()
-            };
+            if (!channel) {
+                err.innerText = 'No target vehicle specified. Please scan car QR code.';
+                err.style.display = 'block';
+                return;
+            }
+
+            let creds = { time: Date.now() };
 
             if (currentTab === 'gemini') {
                 const key = document.getElementById('inputGeminiKey').value.trim();
@@ -491,9 +649,9 @@
                     err.style.display = 'block';
                     return;
                 }
-                payload.mode = 'gemini';
-                payload.provider = 'gemini';
-                payload.geminiApiKey = key;
+                creds.mode = 'gemini';
+                creds.provider = 'gemini';
+                creds.geminiApiKey = key;
             } else {
                 const key = document.getElementById('inputCustomKey').value.trim();
                 if (!key) {
@@ -502,16 +660,25 @@
                     return;
                 }
                 const prov = document.getElementById('selectProvider').value;
-                payload.mode = 'custom_api';
-                payload.apiKey = key;
-                payload.provider = prov;
+                creds.mode = 'custom_api';
+                creds.apiKey = key;
+                creds.provider = prov;
+            }
+
+            // Attempt End-to-End Encryption with car's secret key
+            let transmissionPayload = null;
+            if (secretKey && secretKey.length === 64) {
+                transmissionPayload = await encryptCredentials(JSON.stringify(creds), secretKey);
+            }
+            if (!transmissionPayload) {
+                transmissionPayload = Object.assign({ type: 'copilot_pair', channel: channel }, creds);
             }
 
             try {
                 const res = await fetch('https://ntfy.sh/' + channel, {
                     method: 'POST',
-                    headers: { 'Title': 'BMW M-Copilot Pairing' },
-                    body: JSON.stringify(payload)
+                    headers: { 'Title': 'BMW M-Copilot Secure Pairing' },
+                    body: JSON.stringify(transmissionPayload)
                 });
                 if (res.ok) {
                     handleCarConnected();

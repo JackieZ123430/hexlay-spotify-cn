@@ -364,14 +364,28 @@
         ].join(' ');
 
         const urlParams = new URLSearchParams(window.location.search);
-        let channel = urlParams.get('channel') || localStorage.getItem('bmw_spot_channel') || '';
+        let channel = urlParams.get('channel') || '';
         let clientId = urlParams.get('client_id') || localStorage.getItem('bmw_spot_client_id') || DEFAULT_CLIENT_ID;
+
+        function formatDisplayCode(ch) {
+            const raw = ch.replace('bmw_spot_', '').toUpperCase();
+            if (raw.length >= 8) {
+                return raw.substring(0, 4) + '-' + raw.substring(4, 8);
+            }
+            return raw || 'BMW-CONNECT';
+        }
 
         if (channel) {
             localStorage.setItem('bmw_spot_channel', channel);
-            const shortCode = channel.replace('bmw_spot_', '').toUpperCase();
-            document.getElementById('spanCode').innerText = shortCode;
+            document.getElementById('spanCode').innerText = formatDisplayCode(channel);
             document.getElementById('inputChannel').value = channel;
+        } else {
+            const saved = localStorage.getItem('bmw_spot_channel');
+            if (saved) {
+                channel = saved;
+                document.getElementById('spanCode').innerText = formatDisplayCode(saved);
+                document.getElementById('inputChannel').value = saved;
+            }
         }
         if (clientId) {
             document.getElementById('inputClientId').value = clientId;

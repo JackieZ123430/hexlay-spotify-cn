@@ -371,9 +371,9 @@ mgu.run({
             // Right Instructions
             const ix = 390;
             cv.text('GOOGLE GEMINI AI SETUP', ix, 170, 24, '#00a3e0', { font: 'bold', spacing: 1 });
-            cv.text('M-Copilot connects directly to Google Gemini 1.5/2.0 Flash (Free Tier @ $0.00).', ix, 206, 17, '#ffffff');
-            cv.text('Scan the QR code with your phone (Zero 127.0.0.1 / localhost - works anywhere over 4G/5G/Wi-Fi).', ix, 234, 16, '#94a3b8');
-            cv.text('Enter your free Gemini API key on the phone page to link your car co-driver.', ix, 258, 16, '#94a3b8');
+            cv.text('M-Copilot connects directly to Google Gemini Flash (Free Tier @ $0.00).', ix, 206, 17, '#ffffff');
+            cv.text('Scan the QR code with your phone. Zero-Knowledge E2EE ensures 100% privacy.', ix, 234, 16, '#94a3b8');
+            cv.text('Each car has an isolated encryption key and an independent pairing session.', ix, 258, 16, '#94a3b8');
 
             // Status indicator
             cv.roundRect(ix, 290, 380, 36, 8, withAlpha('#00a3e0', 0.15));

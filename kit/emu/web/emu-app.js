@@ -157,14 +157,38 @@ function ensureExitButton(layer) {
 
 function updateVideoPlacement() {
   if (!lastVideoMsg || !videoLayer) return;
-  if (lastVideoMsg.fullscreen || videoLayer.classList.contains('fullscreen')) {
-    videoLayer.style.left = '0px';
-    videoLayer.style.top = '0px';
-    videoLayer.style.width = '100%';
-    videoLayer.style.height = '100%';
-    videoLayer.style.borderRadius = '0px';
+  const isFs = !!(lastVideoMsg.fullscreen || videoLayer.classList.contains('fullscreen'));
+  if (isFs) {
+    videoLayer.classList.add('fullscreen');
+    stage.classList.add('cinema-fullscreen');
+    videoLayer.style.setProperty('position', 'absolute', 'important');
+    videoLayer.style.setProperty('left', '0px', 'important');
+    videoLayer.style.setProperty('top', '0px', 'important');
+    videoLayer.style.setProperty('width', '100%', 'important');
+    videoLayer.style.setProperty('height', '100%', 'important');
+    videoLayer.style.setProperty('border-radius', '0px', 'important');
+    videoLayer.style.setProperty('z-index', '50', 'important');
+    videoLayer.style.setProperty('background', '#000000', 'important');
+    const child = videoLayer.querySelector('iframe, video');
+    if (child) {
+      child.style.setProperty('width', '100%', 'important');
+      child.style.setProperty('height', '100%', 'important');
+      child.style.setProperty('border-radius', '0px', 'important');
+      child.style.setProperty('object-fit', 'cover', 'important');
+    }
+    ensureExitButton(videoLayer);
     return;
   }
+
+  videoLayer.classList.remove('fullscreen');
+  stage.classList.remove('cinema-fullscreen');
+  videoLayer.style.removeProperty('z-index');
+  videoLayer.style.removeProperty('background');
+  const child = videoLayer.querySelector('iframe, video');
+  if (child) {
+    child.style.removeProperty('object-fit');
+  }
+
   const pl = S.conn?.place || { x: 0, y: 0, s: 1, ox: 0, oy: 0 };
   const s = pl.s || pl.scale || 1;
   const ox = pl.ox || 0, oy = pl.oy || 0;
@@ -490,6 +514,10 @@ function handleVideoEvent(m) {
   }
   case 'place':
     if (!lastVideoMsg) lastVideoMsg = {};
+    if (typeof m.fullscreen === 'boolean') {
+      lastVideoMsg.fullscreen = m.fullscreen;
+      setFullscreen(m.fullscreen);
+    }
     if (typeof m.x === 'number') lastVideoMsg.x = m.x;
     if (typeof m.y === 'number') lastVideoMsg.y = m.y;
     if (typeof m.w === 'number') lastVideoMsg.w = m.w;
@@ -518,6 +546,7 @@ function handleVideoEvent(m) {
 
 function onText(m) {
   switch (m.t) {
+  case 'reload': location.reload(); break;
   case 'hello':
     if (m.app !== S.app) destroyVideoPlayer();
     S.app = m.app;

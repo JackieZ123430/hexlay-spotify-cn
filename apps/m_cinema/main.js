@@ -87,16 +87,17 @@ mgu.run({
 
         function updateVideoBounds() {
             if (!process.send) return;
-            process.send({
+            const payload = {
                 t: 'video',
-                action: 'fullscreen',
                 fullscreen: isFullscreen,
                 x: isFullscreen ? 0 : 64,
                 y: isFullscreen ? 0 : 158,
                 w: isFullscreen ? 1600 : 992,
                 h: isFullscreen ? 520 : 236,
                 r: isFullscreen ? 0 : 8
-            });
+            };
+            process.send(Object.assign({ action: 'fullscreen' }, payload));
+            process.send(Object.assign({ action: 'place' }, payload));
         }
 
         function toggleFullscreen() {
@@ -207,8 +208,8 @@ mgu.run({
             // Start native video engine playback
             const streamUrl = video.streamUrl || video.url || ('https://youtube.com/watch?v=' + (video.ytId || ''));
             const b = isFullscreen ?
-                { x: 64, y: 158, w: 1472, h: 236, r: 8 } :
-                { x: 64, y: 158, w: 992, h: 236, r: 8 };
+                { x: 0, y: 0, w: 1600, h: 520, r: 0, fullscreen: true } :
+                { x: 64, y: 158, w: 992, h: 236, r: 8, fullscreen: false };
             player.play(streamUrl, totalDurationSec, Object.assign({}, video, b));
 
             notify('Playing: ' + video.title);

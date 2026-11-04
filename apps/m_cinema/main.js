@@ -288,10 +288,8 @@ mgu.run({
             onControl(cmd) {
                 if (cmd === 'pause') {
                     isPlaying = false;
-                    notify('Paused');
                 } else if (cmd === 'play') {
                     isPlaying = true;
-                    notify('Playing');
                 }
                 render().catch(() => {});
             },
@@ -359,7 +357,7 @@ mgu.run({
             }
 
             // Left / Main Media Viewport (1040 x 410)
-            G.panel(cv, t, 40, 52, 1040, 410, 'Video Display');
+            G.panel(cv, t, 40, 52, 1040, 410);
 
             const vx = 64, vy = 114, vw = 992, vh = 280;
 
@@ -426,7 +424,7 @@ mgu.run({
             const titleText = trunc(video.title || 'Ready to Play', 30);
             cv.text(titleText, 1124, 172, 21, '#ffffff', { font: 'bold' });
             cv.text(video.channel || 'YouTube on TV', 1124, 204, 16, '#00a3e0', { font: 'bold' });
-            cv.text(video.views ? `${video.views}  |  720p HD` : 'Ready to Play', 1124, 230, 14, t.dim);
+            cv.text(video.views || 'Ready to Play', 1124, 230, 14, t.dim);
 
             // Clean Play / Pause Button
             const btnW = 412, btnH = 50;
@@ -437,7 +435,6 @@ mgu.run({
                 isPlaying = !isPlaying;
                 if (isPlaying) player.resume();
                 else player.pause();
-                notify(isPlaying ? 'Resumed' : 'Paused');
                 render().catch(() => {});
             }, 'btn_play_toggle', 10);
 
@@ -492,7 +489,6 @@ mgu.run({
                 isPlaying = !isPlaying;
                 if (isPlaying) player.resume();
                 else player.pause();
-                notify(isPlaying ? 'Resumed' : 'Paused');
                 render().catch(() => {});
             }, 'btn_play_toggle_fs', 15);
 
@@ -596,10 +592,6 @@ mgu.run({
                 cv.target(btnX, btnY, btnW, btnH, () => {
                     toggleFullscreen();
                 }, 'btn_exit_fs_top', 12);
-                cv.text('720p HD', btnX - 16, y + 28, 13, '#00a3e0', { align: 'right', font: 'bold' });
-            } else {
-                // Quality Badge
-                cv.text('720p HD', x + w - 20, y + 28, 13, '#00a3e0', { align: 'right', font: 'bold' });
             }
 
             // Center Stage: Refined Minimalist Playback Indicator & Hardware Video Surface
@@ -618,13 +610,6 @@ mgu.run({
                         const col = bi < 5 ? '#0066b1' : (bi < 11 ? '#00a3e0' : '#e1001a');
                         cv.roundRect(eqX + bi * 9, eqY - barH, 6, barH, 2, col);
                     }
-                } else {
-                    // Clean Paused state
-                    cv.circle(cx, cy - 6, 38, withAlpha('#0c1420', 0.85));
-                    cv.arc(cx, cy - 6, 36, 38, 0, 360, '#ffb703');
-                    drawPauseGlyph(cv, cx, cy - 6, 20, '#ffb703');
-
-                    cv.text('PAUSED', cx, cy + 46, 16, '#ffb703', { align: 'center', font: 'bold' });
                 }
             } else {
                 // Waiting for search or cast
@@ -641,7 +626,6 @@ mgu.run({
                 isPlaying = !isPlaying;
                 if (isPlaying) player.resume();
                 else player.pause();
-                notify(isPlaying ? 'Play' : 'Pause');
                 render().catch(() => {});
             }, 'vid_screen', 10);
         }
@@ -901,9 +885,7 @@ mgu.run({
 
             // G-Series Live Cockpit frame tabs along the top
             G.frame(cv, t, PAGES, page, [
-                { text: 'M-CINEMA' },
-                { text: '720p HD' },
-                { text: isPlaying ? 'PLAYING' : 'PAUSED' }
+                { text: 'M-CINEMA' }
             ]);
 
             // Explicit touch targets for top header tabs
@@ -967,7 +949,6 @@ mgu.run({
                     isPlaying = !isPlaying;
                     if (isPlaying) player.resume();
                     else player.pause();
-                    notify(isPlaying ? 'Resumed' : 'Paused');
                     render().catch(() => {});
                     return;
                 } else if (page === 1 && searchResults.length > 0) {

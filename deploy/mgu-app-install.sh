@@ -79,7 +79,7 @@ NODE=${NODE:-/usr/bin/node}
 # GPU renderer (kit/renderd): apps draw through it at 60 fps when it runs, else in software
 RENDERD_DIR=/var/opt/mgu-renderd
 RENDERD_UNIT=mgu-renderd.service
-RENDERD_FILES="foreground_gate.js hmi_template.js mgu-render-hmi.sh mgu-render-hmi-guard.sh LICENSE LICENSE.mgu-renderd"
+RENDERD_FILES="mgu-vidplay foreground_gate.js hmi_template.js mgu-render-hmi.sh mgu-render-hmi-guard.sh LICENSE LICENSE.mgu-renderd"
 # in-page drawing: the page template's unit and its files in /run (apart from mgu-store's mgu-render)
 EMBED_UNIT=mgu-renderd-hmi.service
 EMBED_RUN=/run/mgu-renderd-hmi
@@ -506,6 +506,7 @@ install_renderd() {
         cp "$SELF_DIR/$f" "$RENDERD_DIR/$f" || die "copy failed"
     done
     chown -R 0:0 "$RENDERD_DIR"; chmod 755 "$RENDERD_DIR" "$RENDERD_DIR/mgu-renderd"
+    [ -f "$RENDERD_DIR/mgu-vidplay" ] && chmod 755 "$RENDERD_DIR/mgu-vidplay"
     if [ "${1:-}" = "--persist" ]; then
         rm -f "/run/systemd/system/$RENDERD_UNIT"
         renderd_unit > "$TMP.unit" || die "tmp"

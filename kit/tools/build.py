@@ -415,6 +415,14 @@ def build(app_id, language='en'):
         elif f.endswith(('.wasm', '.wad')) or f in ('LICENSE', 'NOTICE'):
             # files the app reads as they are (doom: the game as WebAssembly, its data, its licences)
             shutil.copy(os.path.join(adir, f), os.path.join(src, 'javascript', f))
+        elif f == 'bin' and os.path.isdir(os.path.join(adir, f)):
+            # native binaries: preserve folder and executable permissions for in-car playback
+            dst_bin = os.path.join(src, 'javascript', 'bin')
+            shutil.copytree(os.path.join(adir, f), dst_bin)
+            for root, _, files in os.walk(dst_bin):
+                for bf in files:
+                    os.chmod(os.path.join(root, bf), 0o755)
+            print('  bin/: copied native binaries')
         elif os.path.isdir(os.path.join(adir, f)):
             # data folders go along as one compressed file, read with kit/runtime/pack.js
             # (e.g. dtc_scanner/dtc_db, the fault text database -> dtc_db.pack)

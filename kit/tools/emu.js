@@ -164,7 +164,12 @@ const server = http.createServer((req, res) => {
         if (!ic && f !== BG && f.indexOf(WEB + path.sep) !== 0) { fail(403); return; }
         fs.readFile(f, (e, d) => {
             if (e) { fail(404); return; }
-            res.writeHead(200, { 'content-type': MIME[path.extname(f).toLowerCase()] || 'application/octet-stream', 'cache-control': 'no-store' });
+            res.writeHead(200, {
+                'content-type': MIME[path.extname(f).toLowerCase()] || 'application/octet-stream',
+                'cache-control': 'no-store, no-cache, must-revalidate, max-age=0',
+                'pragma': 'no-cache',
+                'expires': '0'
+            });
             res.end(d);
         });
     } catch (e) { fail(500); }

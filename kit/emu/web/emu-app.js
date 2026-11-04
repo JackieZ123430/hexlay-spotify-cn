@@ -86,6 +86,7 @@ let activeVideoElem = null;
 let currentYtId = null;
 let ytPlayer = null;
 let ytApiReady = false;
+let lastVideoMsg = null;
 
 window.onYouTubeIframeAPIReady = function() {
   ytApiReady = true;
@@ -108,6 +109,27 @@ function ensureVideoLayer() {
     else stage.append(videoLayer);
   }
   return videoLayer;
+}
+
+function updateVideoPlacement() {
+  if (!lastVideoMsg || !videoLayer) return;
+  const pl = S.conn?.place || { x: 0, y: 0, s: 1, ox: 0, oy: 0 };
+  const s = pl.s || pl.scale || 1;
+  const ox = pl.ox || 0, oy = pl.oy || 0;
+  const px = pl.x || 0, py = pl.y || 0;
+
+  const lx = lastVideoMsg.x || 64, ly = lastVideoMsg.y || 158, lw = lastVideoMsg.w || 992, lh = lastVideoMsg.h || 236, lr = lastVideoMsg.r || 8;
+  const screenX = Math.round(px + (lx * s + ox));
+  const screenY = Math.round(py + (ly * s + oy));
+  const screenW = Math.round(lw * s);
+  const screenH = Math.round(lh * s);
+  const screenR = Math.round(lr * s);
+
+  videoLayer.style.left = `calc(var(--u) * ${screenX})`;
+  videoLayer.style.top = `calc(var(--u) * ${screenY})`;
+  videoLayer.style.width = `calc(var(--u) * ${screenW})`;
+  videoLayer.style.height = `calc(var(--u) * ${screenH})`;
+  videoLayer.style.borderRadius = `0 0 calc(var(--u) * ${screenR}) calc(var(--u) * ${screenR})`;
 }
 
 function sendYtCmd(func, args = '') {
@@ -153,29 +175,16 @@ stage.addEventListener('pointerdown', (e) => {
   if (activeVideoElem) unmuteAudio();
 }, { capture: true });
 
+window.handleVideoEvent = handleVideoEvent;
+
 function handleVideoEvent(m) {
   const layer = ensureVideoLayer();
   switch (m.action) {
   case 'play': {
-    const pl = S.conn?.place || { x: 0, y: 0, s: 1, ox: 0, oy: 0 };
-    const s = pl.s || pl.scale || 1;
-    const ox = pl.ox || 0, oy = pl.oy || 0;
-    const px = pl.x || 0, py = pl.y || 0;
-
-    const lx = m.x || 64, ly = m.y || 158, lw = m.w || 992, lh = m.h || 236, lr = m.r || 8;
-    const screenX = Math.round(px + (lx * s + ox));
-    const screenY = Math.round(py + (ly * s + oy));
-    const screenW = Math.round(lw * s);
-    const screenH = Math.round(lh * s);
-    const screenR = Math.round(lr * s);
-
+    lastVideoMsg = m;
     layer.style.display = 'flex';
     layer.hidden = false;
-    layer.style.left = `calc(var(--u) * ${screenX})`;
-    layer.style.top = `calc(var(--u) * ${screenY})`;
-    layer.style.width = `calc(var(--u) * ${screenW})`;
-    layer.style.height = `calc(var(--u) * ${screenH})`;
-    layer.style.borderRadius = `0 0 calc(var(--u) * ${screenR}) calc(var(--u) * ${screenR})`;
+    updateVideoPlacement();
 
     const ytId = m.ytId || extractYtId(m.url);
     if (ytId) {
@@ -303,6 +312,7 @@ function handleVideoEvent(m) {
     }
     break;
   case 'stop':
+    lastVideoMsg = null;
     currentYtId = null;
     if (ytPlayer && typeof ytPlayer.destroy === 'function') {
       try { ytPlayer.destroy(); } catch (e) {}
@@ -338,7 +348,10 @@ function onText(m) {
     else { gfxApp = m.app; errSeen = 0; gfx.reset(); }
     break;
   case 'log': addLog(m.lines); break;
-  case 'conn': S.conn = m; break;
+  case 'conn':
+    S.conn = m;
+    updateVideoPlacement();
+    break;
   case 'screens':
     S.stack = m.stack; S.closed = !!m.closed; renderHmi(); picker();
     if (m.closed) handleVideoEvent({ action: 'stop' });

@@ -110,12 +110,12 @@ function ensureVideoLayer() {
 
     let hideTimer = null;
     const showControls = () => {
-      const btn = $('#video-exit-fs-btn');
-      if (btn) btn.classList.remove('faded');
+      const hud = $('#video-fs-hud');
+      if (hud) hud.classList.remove('faded');
       clearTimeout(hideTimer);
       if (videoLayer && videoLayer.classList.contains('fullscreen')) {
         hideTimer = setTimeout(() => {
-          if (btn) btn.classList.add('faded');
+          if (hud) hud.classList.add('faded');
         }, 3000);
       }
     };
@@ -136,10 +136,67 @@ function setFullscreen(isFs) {
   }
 }
 
-function ensureExitButton(layer) {
-  let exitBtn = $('#video-exit-fs-btn');
-  if (!exitBtn && layer) {
-    exitBtn = el('div', { id: 'video-exit-fs-btn', class: 'video-exit-fs-btn' });
+function updateFloatingHUD(isPlaying) {
+  const btn = $('#video-fs-play-btn');
+  if (!btn) return;
+  if (isPlaying) {
+    btn.classList.remove('is-paused');
+    btn.innerHTML = `
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+        <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+      </svg>
+      <span>Pause</span>
+    `;
+  } else {
+    btn.classList.add('is-paused');
+    btn.innerHTML = `
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+        <path d="M8 5v14l11-7z"/>
+      </svg>
+      <span>Play</span>
+    `;
+  }
+}
+
+function ensureFloatingHUD(layer) {
+  let hud = $('#video-fs-hud');
+  if (!hud && layer) {
+    hud = el('div', { id: 'video-fs-hud', class: 'video-fs-hud' });
+
+    const playBtn = el('div', { id: 'video-fs-play-btn', class: 'video-hud-btn' });
+    playBtn.innerHTML = `
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+        <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+      </svg>
+      <span>Pause</span>
+    `;
+    playBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const currentlyPlaying = !lastVideoMsg || lastVideoMsg.action !== 'pause';
+      if (currentlyPlaying) {
+        if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+          try { ytPlayer.pauseVideo(); } catch (err) {}
+        }
+        sendYtCmd('pauseVideo', []);
+        if (activeVideoElem && activeVideoElem.tagName === 'VIDEO') activeVideoElem.pause();
+        if (!lastVideoMsg) lastVideoMsg = {};
+        lastVideoMsg.action = 'pause';
+        updateFloatingHUD(false);
+        send({ t: 'video-state', playing: false });
+      } else {
+        if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+          try { ytPlayer.playVideo(); } catch (err) {}
+        }
+        sendYtCmd('playVideo', []);
+        if (activeVideoElem && activeVideoElem.tagName === 'VIDEO') activeVideoElem.play();
+        if (!lastVideoMsg) lastVideoMsg = {};
+        lastVideoMsg.action = 'play';
+        updateFloatingHUD(true);
+        send({ t: 'video-state', playing: true });
+      }
+    });
+
+    const exitBtn = el('div', { id: 'video-exit-fs-btn', class: 'video-hud-btn' });
     exitBtn.innerHTML = `
       <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
         <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-14v3h3v2h-5V5h2z"/>
@@ -151,8 +208,14 @@ function ensureExitButton(layer) {
       setFullscreen(false);
       send({ t: 'video-fullscreen', on: false });
     });
-    layer.append(exitBtn);
+
+    hud.append(playBtn, exitBtn);
+    layer.append(hud);
   }
+}
+
+function ensureExitButton(layer) {
+  ensureFloatingHUD(layer);
 }
 
 function updateVideoPlacement() {
@@ -208,11 +271,27 @@ function updateVideoPlacement() {
   videoLayer.style.borderRadius = `calc(var(--u) * ${screenR})`;
 }
 
-function sendYtCmd(func, args = '') {
+function sendYtCmd(func, args = []) {
   if (activeVideoElem && activeVideoElem.tagName === 'IFRAME') {
     try {
-      activeVideoElem.contentWindow?.postMessage(JSON.stringify({ event: 'command', func, args }), '*');
+      const p = { event: 'command', func, args: Array.isArray(args) ? args : (args !== undefined ? [args] : []) };
+      activeVideoElem.contentWindow?.postMessage(JSON.stringify(p), '*');
     } catch (e) {}
+  }
+}
+
+function onYtStateChange(state) {
+  // YouTube states: 1 = PLAYING, 2 = PAUSED, 0 = ENDED, 3 = BUFFERING
+  if (state === 1) {
+    if (!lastVideoMsg) lastVideoMsg = {};
+    lastVideoMsg.action = 'play';
+    updateFloatingHUD(true);
+    send({ t: 'video-state', playing: true });
+  } else if (state === 2 || state === 0) {
+    if (!lastVideoMsg) lastVideoMsg = {};
+    lastVideoMsg.action = 'pause';
+    updateFloatingHUD(false);
+    send({ t: 'video-state', playing: false });
   }
 }
 
@@ -223,7 +302,7 @@ function unmuteAudio() {
       ytPlayer.setVolume(100);
     } catch (e) {}
   }
-  sendYtCmd('unMute');
+  sendYtCmd('unMute', []);
   sendYtCmd('setVolume', [100]);
   const btn = $('#video-unmute-btn');
   if (btn) btn.style.display = 'none';
@@ -249,7 +328,7 @@ function startAutoplayPolling() {
       }
       try { ytPlayer.playVideo(); } catch (e) {}
     }
-    sendYtCmd('playVideo');
+    sendYtCmd('playVideo', []);
     if (attempts > 20) {
       clearInterval(autoPlayTimer);
       autoPlayTimer = null;
@@ -265,17 +344,13 @@ function initYtPlayer() {
         events: {
           onReady: (event) => {
             try {
-              event.target.playVideo();
-              if (currentYtId) {
-                event.target.loadVideoById({ videoId: currentYtId, startSeconds: 0 });
+              if (lastVideoMsg && lastVideoMsg.action === 'play') {
                 event.target.playVideo();
               }
             } catch (e) {}
           },
           onStateChange: (event) => {
-            if ((event.data === 5 || event.data === -1) && lastVideoMsg && lastVideoMsg.action === 'play') {
-              try { event.target.playVideo(); } catch (e) {}
-            }
+            onYtStateChange(event.data);
           }
         }
       });
@@ -286,11 +361,15 @@ function initYtPlayer() {
 window.addEventListener('message', (ev) => {
   try {
     const data = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
-    if (data && (data.event === 'onReady' || data.event === 'initialDelivery' || data.event === 'onStateChange')) {
-      if (lastVideoMsg && lastVideoMsg.action === 'play') {
-        sendYtCmd('playVideo');
-        if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
-          try { ytPlayer.playVideo(); } catch (err) {}
+    if (data) {
+      if (data.event === 'onStateChange' && typeof data.info === 'number') {
+        onYtStateChange(data.info);
+      } else if (data.event === 'onReady' || data.event === 'initialDelivery') {
+        if (lastVideoMsg && lastVideoMsg.action === 'play') {
+          sendYtCmd('playVideo', []);
+          if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+            try { ytPlayer.playVideo(); } catch (err) {}
+          }
         }
       }
     }
@@ -298,15 +377,9 @@ window.addEventListener('message', (ev) => {
 });
 
 stage.addEventListener('pointerdown', (e) => {
-  // If user interacted with stage or video, unmute audio on user gesture
+  // Unmute audio on first user interaction with stage or video
   if (activeVideoElem) {
     unmuteAudio();
-    if (lastVideoMsg && lastVideoMsg.action === 'play') {
-      if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
-        try { ytPlayer.playVideo(); } catch (err) {}
-      }
-      sendYtCmd('playVideo');
-    }
   }
 }, { capture: true });
 
@@ -378,7 +451,7 @@ function handleVideoEvent(m) {
 
         const iframe = el('iframe', {
           id: 'emu-yt-iframe',
-          src: `https://www.youtube.com/embed/${ytId}?autoplay=1&mute=1&controls=0&modestbranding=1&rel=0&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`,
+          src: `https://www.youtube.com/embed/${ytId}?autoplay=1&mute=1&controls=1&modestbranding=1&rel=0&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`,
           allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
           allowfullscreen: 'true'
         });
@@ -440,30 +513,32 @@ function handleVideoEvent(m) {
     break;
   }
   case 'pause':
+    if (!lastVideoMsg) lastVideoMsg = {};
+    lastVideoMsg.action = 'pause';
     if (autoPlayTimer) {
       clearInterval(autoPlayTimer);
       autoPlayTimer = null;
     }
     if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
       try { ytPlayer.pauseVideo(); } catch (e) {}
-    } else if (activeVideoElem) {
-      if (activeVideoElem.tagName === 'IFRAME') {
-        sendYtCmd('pauseVideo');
-      } else if (typeof activeVideoElem.pause === 'function') {
-        activeVideoElem.pause();
-      }
     }
+    sendYtCmd('pauseVideo', []);
+    if (activeVideoElem && activeVideoElem.tagName === 'VIDEO') {
+      activeVideoElem.pause();
+    }
+    updateFloatingHUD(false);
     break;
   case 'resume':
+    if (!lastVideoMsg) lastVideoMsg = {};
+    lastVideoMsg.action = 'play';
     if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
       try { ytPlayer.playVideo(); } catch (e) {}
-    } else if (activeVideoElem) {
-      if (activeVideoElem.tagName === 'IFRAME') {
-        sendYtCmd('playVideo');
-      } else if (typeof activeVideoElem.play === 'function') {
-        activeVideoElem.play();
-      }
     }
+    sendYtCmd('playVideo', []);
+    if (activeVideoElem && activeVideoElem.tagName === 'VIDEO') {
+      activeVideoElem.play();
+    }
+    updateFloatingHUD(true);
     startAutoplayPolling();
     break;
   case 'seek':

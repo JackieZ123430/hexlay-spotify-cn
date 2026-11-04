@@ -109,9 +109,15 @@ mgu.run({
 
         // Listen for exit/fullscreen command from emulator exit button or HMI
         process.on('message', (m) => {
-            if (m && m.t === 'video-fullscreen') {
+            if (!m) return;
+            if (m.t === 'video-fullscreen') {
                 if (isFullscreen !== !!m.on) {
                     toggleFullscreen();
+                }
+            } else if (m.t === 'video-state') {
+                if (typeof m.playing === 'boolean' && isPlaying !== m.playing) {
+                    isPlaying = m.playing;
+                    render().catch(() => {});
                 }
             }
         });
@@ -420,6 +426,20 @@ mgu.run({
                     cv.roundRect(eqX + bi * 9, eqY - barH, 6, barH, 2, col);
                 }
             }
+
+            // Floating Play/Pause Button in top-right HUD
+            const btnPlayW = 130, btnPlayH = 42;
+            const btnPlayX = btnExitX - btnPlayW - 14, btnPlayY = 24;
+            cv.roundRect(btnPlayX, btnPlayY, btnPlayW, btnPlayH, 8, withAlpha('#0c1420', 0.9));
+            cv.strokeRoundRect(btnPlayX, btnPlayY, btnPlayW, btnPlayH, 8, 1.5, isPlaying ? '#00a3e0' : '#2af575');
+            cv.text(isPlaying ? 'PAUSE' : 'PLAY', btnPlayX + btnPlayW / 2, btnPlayY + 27, 15, isPlaying ? '#00f0ff' : '#2af575', { align: 'center', font: 'bold', spacing: 1 });
+            cv.target(btnPlayX, btnPlayY, btnPlayW, btnPlayH, () => {
+                isPlaying = !isPlaying;
+                if (isPlaying) player.resume();
+                else player.pause();
+                notify(isPlaying ? 'Resumed' : 'Paused');
+                render().catch(() => {});
+            }, 'btn_play_toggle_fs', 15);
 
             // Floating Normal View Exit Button in top-right corner
             const btnExitW = 160, btnExitH = 42;
@@ -845,7 +865,11 @@ mgu.run({
             if (ev.press) {
                 if (page === 0) {
                     isPlaying = !isPlaying;
-                    notify(isPlaying ? 'Play' : 'Pause');
+                    if (isPlaying) player.resume();
+                    else player.pause();
+                    notify(isPlaying ? 'Resumed' : 'Paused');
+                    render().catch(() => {});
+                    return;
                 } else if (page === 1 && searchResults.length > 0) {
                     const first = searchResults[searchScroll];
                     if (first) {

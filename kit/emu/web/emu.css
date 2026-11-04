@@ -216,16 +216,33 @@ select { text-overflow: ellipsis; }
   object-fit: cover !important;
 }
 
-/* Floating Exit Fullscreen Button */
-.video-exit-fs-btn {
+/* Floating Fullscreen HUD (Play/Pause & Exit Buttons) */
+.video-fs-hud {
   position: absolute;
   top: 14px;
   right: 14px;
   z-index: 60;
   display: none;
   align-items: center;
+  gap: 10px;
+  opacity: 1;
+  pointer-events: auto;
+  transition: opacity 0.3s ease;
+}
+
+#video-layer.fullscreen .video-fs-hud {
+  display: inline-flex;
+}
+
+.video-fs-hud.faded {
+  opacity: 0.45;
+}
+
+.video-hud-btn {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
-  padding: 8px 18px;
+  padding: 8px 16px;
   background: rgba(11, 17, 26, 0.92);
   border: 1.5px solid #00a3e0;
   border-radius: 6px;
@@ -240,21 +257,24 @@ select { text-overflow: ellipsis; }
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
-  opacity: 1;
-  transition: opacity 0.3s ease, transform 0.15s ease, background 0.15s ease;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
-#video-layer.fullscreen .video-exit-fs-btn {
-  display: inline-flex;
-}
-.video-exit-fs-btn.faded {
-  opacity: 0;
-  pointer-events: none;
-}
-.video-exit-fs-btn:hover {
+
+.video-hud-btn:hover {
   background: rgba(0, 102, 177, 0.95);
   color: #ffffff;
   border-color: #00f0ff;
   transform: scale(1.02);
+}
+
+.video-hud-btn.is-paused {
+  border-color: #2af575;
+  color: #2af575;
+}
+
+.video-hud-btn.is-paused:hover {
+  background: rgba(42, 245, 117, 0.25);
+  color: #ffffff;
 }
 
 .video-unmute-btn {

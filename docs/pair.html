@@ -7,8 +7,8 @@
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            background: #070b12;
-            color: #f1f5f9;
+            background: #04060a;
+            color: #f4f7fb;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             padding: 24px 16px 40px;
             display: flex;
@@ -20,196 +20,340 @@
             width: 100%;
             max-width: 440px;
             text-align: center;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
         }
-        .badge {
-            display: inline-block;
-            background: #004e8c;
+        .badge-m {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(0, 78, 140, 0.25);
+            border: 1px solid #00a3e0;
             color: #00f0ff;
             font-size: 11px;
-            font-weight: 700;
+            font-weight: 800;
             letter-spacing: 1.5px;
             padding: 4px 12px;
-            border-radius: 6px;
-            margin-bottom: 10px;
+            border-radius: 4px;
+            margin-bottom: 12px;
             text-transform: uppercase;
         }
+        .badge-m .m-logo {
+            display: inline-flex;
+            gap: 2px;
+            height: 10px;
+            align-items: center;
+        }
+        .badge-m .m-logo span {
+            width: 3px;
+            height: 10px;
+            display: inline-block;
+            transform: skewX(-20deg);
+        }
+        .m-light { background: #00a3e0; }
+        .m-dark { background: #004e8c; }
+        .m-red { background: #e1001a; }
+
         h1 {
             font-size: 24px;
             font-weight: 800;
             color: #ffffff;
             margin-bottom: 6px;
+            letter-spacing: -0.5px;
         }
         p.subtitle {
-            font-size: 14px;
-            color: #94a3b8;
+            font-size: 13px;
+            color: #8a95a6;
+            line-height: 1.4;
         }
         .card {
-            background: #0e1522;
-            border: 1px solid #1e293b;
-            border-radius: 16px;
-            padding: 26px 20px;
+            background: #0a0d14;
+            border: 1px solid #1a2333;
+            border-radius: 12px;
+            padding: 22px 20px 24px;
             width: 100%;
             max-width: 440px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-            margin-bottom: 20px;
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6), 0 0 1px rgba(0, 163, 224, 0.2);
+            margin-bottom: 16px;
+            position: relative;
+        }
+        /* BMW OEM M-Stripes Header */
+        .card-m-header {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            margin-bottom: 16px;
+        }
+        .card-m-header .st-light { width: 24px; height: 4px; background: #00a3e0; border-radius: 1px 0 0 1px; }
+        .card-m-header .st-dark { width: 24px; height: 4px; background: #004e8c; }
+        .card-m-header .st-red {
+            width: 28px;
+            height: 4px;
+            background: #e1001a;
+            clip-path: polygon(0 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+        }
+        .card-m-header .line {
+            flex: 1;
+            height: 1.5px;
+            background: rgba(255, 255, 255, 0.3);
+            margin-left: 2px;
+        }
+
+        .pair-code {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #06080e;
+            border: 1px solid #16202f;
+            padding: 12px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            margin-bottom: 16px;
+            color: #8a95a6;
+            font-weight: 600;
+        }
+        .pair-code strong {
+            color: #1ed760;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 16px;
+            letter-spacing: 2px;
+        }
+        .pulse-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #1ed760;
+            box-shadow: 0 0 8px #1ed760;
+            margin-right: 6px;
+        }
+        label {
+            display: block;
+            font-size: 12px;
+            color: #cbd5e1;
+            margin-bottom: 6px;
+            margin-top: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        input[type="text"], input[type="password"] {
+            width: 100%;
+            background: #06080e;
+            border: 1px solid #1a2333;
+            border-radius: 8px;
+            padding: 12px 14px;
+            color: #ffffff;
+            font-size: 14px;
+            outline: none;
+            transition: border 0.2s;
+        }
+        input[type="text"]:focus {
+            border-color: #1ed760;
+            box-shadow: 0 0 8px rgba(30, 215, 96, 0.25);
         }
         .btn-spotify {
             display: block;
             width: 100%;
             background: #1ed760;
+            border: 1px solid #1ed760;
             color: #000000;
-            font-size: 16px;
-            font-weight: 700;
+            font-size: 14px;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
             text-align: center;
-            padding: 16px 0;
-            border-radius: 30px;
+            padding: 14px 0;
+            border-radius: 8px;
             text-decoration: none;
             cursor: pointer;
-            border: none;
             transition: transform 0.1s ease, background 0.2s ease;
-            margin-top: 14px;
-            margin-bottom: 12px;
+            margin-top: 18px;
+            margin-bottom: 10px;
         }
         .btn-spotify:active {
             transform: scale(0.98);
             background: #1ab250;
         }
-        .pair-code {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            background: #141f2e;
-            border: 1px solid #23354d;
-            padding: 12px;
-            border-radius: 10px;
-            font-size: 18px;
-            margin-bottom: 16px;
-            color: #00f0ff;
-            font-weight: 700;
-            letter-spacing: 2px;
-            font-family: monospace;
-        }
-        label {
+        .btn-secondary {
             display: block;
-            font-size: 13px;
-            color: #cbd5e1;
-            margin-bottom: 6px;
-            margin-top: 14px;
-            font-weight: 600;
-        }
-        input[type="text"] {
             width: 100%;
-            background: #060a10;
-            border: 1px solid #253347;
+            background: #141a24;
+            border: 1px solid #242c39;
+            color: #8a95a6;
+            font-size: 13px;
+            font-weight: 700;
+            text-align: center;
+            padding: 11px 0;
             border-radius: 8px;
-            padding: 12px;
-            color: #ffffff;
-            font-size: 14px;
-            outline: none;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 10px;
         }
-        input[type="text"]:focus {
-            border-color: #1ed760;
+        .btn-secondary:hover {
+            color: #ffffff;
+            border-color: #00a3e0;
         }
         .success-box {
             display: none;
             text-align: center;
-            padding: 20px 0;
+            padding: 24px 16px;
         }
         .icon-check {
             width: 64px;
             height: 64px;
-            background: #1ed760;
-            color: #000;
+            background: rgba(30, 215, 96, 0.15);
+            border: 2px solid #1ed760;
+            color: #1ed760;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 32px;
             font-weight: bold;
-            margin: 0 auto 20px;
+            margin: 0 auto 16px;
+            box-shadow: 0 0 20px rgba(30, 215, 96, 0.25);
+        }
+        .status-pill {
+            display: inline-block;
+            background: #06080e;
+            border: 1px solid #16202f;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            color: #1ed760;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            margin-bottom: 16px;
         }
         details {
             margin-top: 18px;
-            border-top: 1px solid #1a2433;
+            border-top: 1px solid #16202f;
             padding-top: 14px;
         }
         summary {
-            font-size: 13px;
+            font-size: 12px;
             color: #00a3e0;
             cursor: pointer;
-            font-weight: 600;
+            font-weight: 700;
             outline: none;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .alert-box {
+            background: rgba(225, 0, 26, 0.12);
+            border: 1px solid #e1001a;
+            color: #ff8080;
+            padding: 12px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.4;
+            margin-bottom: 16px;
+            display: none;
+            text-align: center;
+        }
+        .footer-nav {
+            margin-top: 20px;
+            font-size: 12px;
+            color: #64748b;
+            text-align: center;
+        }
+        .footer-nav a {
+            color: #8a95a6;
+            text-decoration: none;
+            margin: 0 6px;
+            transition: color 0.2s;
+        }
+        .footer-nav a:hover {
+            color: #00f0ff;
         }
     </style>
 </head>
 <body>
     <div class="header">
-        <div class="badge">BMW iDrive 7 Cockpit</div>
+        <div class="badge-m">
+            <span class="m-logo">
+                <span class="m-light"></span>
+                <span class="m-dark"></span>
+                <span class="m-red"></span>
+            </span>
+            BMW iDrive 7 Cockpit
+        </div>
         <h1>Spotify Connect</h1>
         <p class="subtitle">Connect your personal Spotify library to your vehicle</p>
     </div>
 
+    <div class="card alert-box" id="statusAlert"></div>
+
     <!-- Active Pairing Card -->
     <div class="card" id="cardPairing">
-        <div class="pair-code" id="codeDisplay">PAIRING CODE: <span id="spanCode">BMW-CONNECT</span></div>
-        <p style="font-size: 13px; color: #94a3b8; text-align: center; margin-bottom: 14px;">
-            Pair your personal Spotify account to sync your playlists and playback with your BMW.
-        </p>
-
-        <div style="margin-top: 10px; margin-bottom: 8px;">
-            <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 700; color: #ffffff; margin-bottom: 6px;">
-                <span>Spotify Client ID</span>
-                <span id="savedIndicator" style="display: none; color: #1ed760; font-size: 11px; font-weight: 600;">&#10003; Remembered</span>
-            </label>
-            <input type="text" id="inputClientId" placeholder="Paste Client ID from Spotify Dashboard">
-            <p style="font-size: 11px; color: #94a3b8; margin-top: 5px; line-height: 1.4;">
-                Stored securely on this phone and car only — never committed to public git.
-            </p>
+        <div class="card-m-header">
+            <div class="st-light"></div>
+            <div class="st-dark"></div>
+            <div class="st-red"></div>
+            <div class="line"></div>
         </div>
+
+        <div class="pair-code">
+            <span><span class="pulse-dot"></span>PAIRING CODE</span>
+            <strong id="spanCode">BMW-CONNECT</strong>
+        </div>
+
+        <p style="font-size: 13px; color: #8a95a6; text-align: center; margin-bottom: 14px; line-height: 1.5;">
+            Pair your personal Spotify account to sync your playlists and playback with your BMW Live Cockpit.
+        </p>
 
         <button class="btn-spotify" id="btnConnect" onclick="startAuth()">Connect with Spotify</button>
 
-        <div id="statusBox" style="display:none; margin-top: 14px; padding: 12px 14px; border-radius: 8px; font-size: 13px; text-align: center; line-height: 1.4;"></div>
-
-        <div style="display: flex; align-items: center; text-align: center; margin: 20px 0 14px; color: #475569;">
-            <div style="flex: 1; height: 1px; background: #1e293b;"></div>
-            <span style="padding: 0 10px; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;">or paste access token directly</span>
-            <div style="flex: 1; height: 1px; background: #1e293b;"></div>
-        </div>
-
-        <div>
-            <input type="text" id="inputManualToken" placeholder="Paste Spotify access token (starts with BQ...)">
-            <button style="width: 100%; margin-top: 10px; background: #004e8c; color: #ffffff; border: 1px solid #00a3e0; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 14px; cursor: pointer;" onclick="sendManualToken()">Send Token to Car</button>
-        </div>
-
         <details>
-            <summary>Pairing Channel & Redirect URI</summary>
-            <div style="margin-top: 12px;">
-                <p style="font-size: 12px; color: #94a3b8; margin-bottom: 8px;">
-                    Ensure this exact Redirect URI is added in your Spotify Developer App:
-                    <br><code style="color: #00f0ff; background: #070d18; padding: 2px 6px; border-radius: 4px; display: inline-block; margin-top: 4px; word-break: break-all;">https://hexlay.github.io/idrive7-custom-apps/pair.html</code>
+            <summary>Advanced / Developer Settings ▾</summary>
+            <div style="margin-top: 14px;">
+                <label>Spotify Client ID</label>
+                <input type="text" id="inputClientId" placeholder="Default App ID or your Spotify Client ID">
+                <p style="font-size: 11px; color: #64748b; margin-top: 4px;">
+                    Saved securely in your browser. <span id="savedIndicator" style="color: #1ed760; display: none;">✓ Saved</span>
                 </p>
-                <label>Car Pairing Code / Channel</label>
+
+                <label>Car Pairing Channel</label>
                 <input type="text" id="inputChannel" placeholder="e.g. bmw_spot_xyz">
+
+                <label>Manual Token Fallback (Optional)</label>
+                <input type="password" id="inputManualToken" placeholder="Paste access token if OAuth blocked...">
+                <button class="btn-secondary" onclick="sendManualToken()">Send Manual Token</button>
             </div>
         </details>
     </div>
 
     <!-- Success Card -->
     <div class="card success-box" id="cardSuccess">
+        <div class="card-m-header">
+            <div class="st-light"></div>
+            <div class="st-dark"></div>
+            <div class="st-red"></div>
+            <div class="line"></div>
+        </div>
+
         <div class="icon-check">&#10003;</div>
-        <h2 style="font-size: 22px; color: #ffffff; margin-bottom: 10px;">Connected to BMW iDrive!</h2>
-        <p style="font-size: 14px; color: #94a3b8; line-height: 1.5; margin-bottom: 20px;">
-            Your authorization tokens have been transmitted to your car's cockpit. Your personal playlists, saved songs, and active devices are now live on your iDrive 7 screen!
+        <h2 style="font-size: 20px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">CONNECTED TO BMW iDRIVE 7</h2>
+        <div class="status-pill">● Spotify Library Uplink Active</div>
+        <p style="font-size: 13px; color: #8a95a6; line-height: 1.5; margin-bottom: 16px;">
+            Your Spotify credentials have been transmitted to your car's cockpit.<br>
+            Your personal playlists, saved songs, and active playback are now live on your iDrive 7 display.
         </p>
-        <span style="font-size: 12px; color: #00f0ff; background: #002b4d; padding: 6px 14px; border-radius: 20px;">
-            You can now close this browser tab
-        </span>
+        <p style="font-size: 12px; color: #64748b; margin-bottom: 18px;">
+            You can safely close this browser window.
+        </p>
+    </div>
+
+    <div class="footer-nav">
+        <span>BMW iDrive 7 Custom Apps</span>
+        &middot;
+        <a href="index.html">Apps Hub</a>
+        &middot;
+        <a href="copilot.html">M-Copilot AI</a>
     </div>
 
     <script>
+        const DEFAULT_CLIENT_ID = 'e7a0225d57b243b8a3e7587d605c30fb';
         const SCOPES = [
             'user-read-playback-state',
             'user-modify-playback-state',
@@ -219,43 +363,9 @@
             'user-library-read'
         ].join(' ');
 
-        function showStatus(text, isError = false) {
-            const box = document.getElementById('statusBox');
-            box.style.display = 'block';
-            box.style.background = isError ? 'rgba(225, 0, 26, 0.15)' : 'rgba(0, 240, 255, 0.15)';
-            box.style.border = '1px solid ' + (isError ? '#e1001a' : '#00a3e0');
-            box.style.color = isError ? '#ff6b6b' : '#00f0ff';
-            box.innerText = text;
-        }
-
-        function generateRandomString(length) {
-            const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
-            const values = crypto.getRandomValues(new Uint8Array(length));
-            return Array.from(values).map(x => possible[x % possible.length]).join('');
-        }
-
-        async function sha256(plain) {
-            const encoder = new TextEncoder();
-            const data = encoder.encode(plain);
-            return window.crypto.subtle.digest('SHA-256', data);
-        }
-
-        function base64encode(input) {
-            return btoa(String.fromCharCode(...new Uint8Array(input)))
-                .replace(/=/g, '')
-                .replace(/\+/g, '-')
-                .replace(/\//g, '_');
-        }
-
-        async function generateCodeChallenge(codeVerifier) {
-            const hashed = await sha256(codeVerifier);
-            return base64encode(hashed);
-        }
-
-        // Read query params and hash fragment
         const urlParams = new URLSearchParams(window.location.search);
         let channel = urlParams.get('channel') || localStorage.getItem('bmw_spot_channel') || '';
-        let clientId = urlParams.get('client_id') || localStorage.getItem('bmw_spot_client_id') || '';
+        let clientId = urlParams.get('client_id') || localStorage.getItem('bmw_spot_client_id') || DEFAULT_CLIENT_ID;
 
         if (channel) {
             localStorage.setItem('bmw_spot_channel', channel);
@@ -265,51 +375,70 @@
         }
         if (clientId) {
             document.getElementById('inputClientId').value = clientId;
-            const ind = document.getElementById('savedIndicator');
-            if (ind) ind.style.display = 'inline';
         }
 
-        // Process incoming OAuth callback (PKCE code or implicit token)
-        async function checkOAuthReturn() {
-            const code = urlParams.get('code');
-            const state = urlParams.get('state') || channel;
-            const err = urlParams.get('error');
+        function showStatus(msg, isError) {
+            const el = document.getElementById('statusAlert');
+            el.innerText = msg;
+            el.style.display = 'block';
+            el.style.borderColor = isError ? '#e1001a' : '#1ed760';
+            el.style.color = isError ? '#ff8080' : '#1ed760';
+        }
 
-            if (err) {
-                showStatus('Spotify authorization error: ' + err, true);
-                return;
+        function generateRandomString(length) {
+            let text = '';
+            const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+            for (let i = 0; i < length; i++) {
+                text += possible.charAt(Math.floor(Math.random() * possible.length));
             }
+            return text;
+        }
 
-            // 1. PKCE Authorization Code flow (standard for Spotify apps)
+        async function generateCodeChallenge(codeVerifier) {
+            const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(codeVerifier));
+            return btoa(String.fromCharCode(...new Uint8Array(digest)))
+                .replace(/=/g, '')
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_');
+        }
+
+        async function checkOAuthReturn() {
+            const params = new URLSearchParams(window.location.search);
+            const code = params.get('code');
+            const state = params.get('state');
+
             if (code) {
-                showStatus('Exchanging authorization code with Spotify & linking car...');
-                const codeVerifier = localStorage.getItem('bmw_code_verifier');
-                const activeClientId = document.getElementById('inputClientId').value.trim() || clientId || localStorage.getItem('bmw_spot_client_id');
+                const storedVerifier = localStorage.getItem('bmw_code_verifier');
+                const activeId = localStorage.getItem('bmw_spot_client_id') || clientId;
                 const redirectUri = window.location.origin + window.location.pathname;
 
+                if (!storedVerifier) {
+                    showStatus('Error: PKCE verification token lost. Please restart authorization.', true);
+                    return;
+                }
+
+                showStatus('Exchanging Spotify code for vehicle credentials...', false);
+
                 try {
-                    const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+                    const tokenResponse = await fetch('https://accounts.spotify.com/api/token', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/x-www-form-urlencoded'
-                        },
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                         body: new URLSearchParams({
-                            client_id: activeClientId,
+                            client_id: activeId,
                             grant_type: 'authorization_code',
                             code: code,
                             redirect_uri: redirectUri,
-                            code_verifier: codeVerifier
-                        }).toString()
+                            code_verifier: storedVerifier
+                        })
                     });
 
-                    const data = await tokenRes.json();
+                    const data = await tokenResponse.json();
                     if (data.access_token) {
                         const targetChannel = state || channel || localStorage.getItem('bmw_spot_channel');
                         const payload = {
                             token: data.access_token,
-                            refreshToken: data.refresh_token,
-                            clientId: activeClientId,
-                            expiresAt: Date.now() + ((data.expires_in || 3600) * 1000),
+                            refreshToken: data.refresh_token || null,
+                            expiresAt: Date.now() + (parseInt(data.expires_in, 10) * 1000),
                             time: Date.now()
                         };
 
@@ -320,7 +449,8 @@
 
                         document.getElementById('cardPairing').style.display = 'none';
                         document.getElementById('cardSuccess').style.display = 'block';
-                        return true;
+                        document.getElementById('statusAlert').style.display = 'none';
+                        window.history.replaceState({}, document.title, window.location.pathname + (targetChannel ? ('?channel=' + targetChannel) : ''));
                     } else {
                         showStatus('Spotify Token Exchange Failed: ' + (data.error_description || data.error || JSON.stringify(data)), true);
                     }
@@ -330,7 +460,7 @@
                 return;
             }
 
-            // 2. Legacy Implicit Grant (hash fragment fallback)
+            // Implicit grant fallback
             if (window.location.hash && window.location.hash.includes('access_token')) {
                 const hashParams = new URLSearchParams(window.location.hash.substring(1));
                 const token = hashParams.get('access_token');
@@ -354,7 +484,6 @@
                         document.getElementById('cardPairing').style.display = 'none';
                         document.getElementById('cardSuccess').style.display = 'block';
                     });
-                    return true;
                 }
             }
         }
@@ -376,12 +505,10 @@
             const ind = document.getElementById('savedIndicator');
             if (ind) ind.style.display = 'inline';
 
-            // Generate PKCE code verifier and challenge
             const codeVerifier = generateRandomString(64);
             localStorage.setItem('bmw_code_verifier', codeVerifier);
             const codeChallenge = await generateCodeChallenge(codeVerifier);
 
-            // Redirect URI: exact URL of this pair page (stripping hash/query)
             const redirectUri = window.location.origin + window.location.pathname;
 
             const authParams = new URLSearchParams({

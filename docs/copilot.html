@@ -7,8 +7,8 @@
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            background: #070b12;
-            color: #f1f5f9;
+            background: #04060a;
+            color: #f4f7fb;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             padding: 24px 16px 40px;
             display: flex;
@@ -22,18 +22,37 @@
             text-align: center;
             margin-bottom: 20px;
         }
-        .badge {
-            display: inline-block;
-            background: #004e8c;
+        .badge-m {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(0, 78, 140, 0.25);
+            border: 1px solid #00a3e0;
             color: #00f0ff;
             font-size: 11px;
-            font-weight: 700;
+            font-weight: 800;
             letter-spacing: 1.5px;
             padding: 4px 12px;
-            border-radius: 6px;
-            margin-bottom: 10px;
+            border-radius: 4px;
+            margin-bottom: 12px;
             text-transform: uppercase;
         }
+        .badge-m .m-logo {
+            display: inline-flex;
+            gap: 2px;
+            height: 10px;
+            align-items: center;
+        }
+        .badge-m .m-logo span {
+            width: 3px;
+            height: 10px;
+            display: inline-block;
+            transform: skewX(-20deg);
+        }
+        .m-light { background: #00a3e0; }
+        .m-dark { background: #004e8c; }
+        .m-red { background: #e1001a; }
+
         h1 {
             font-size: 24px;
             font-weight: 800;
@@ -43,35 +62,58 @@
         }
         p.subtitle {
             font-size: 13px;
-            color: #94a3b8;
+            color: #8a95a6;
             line-height: 1.4;
         }
         .card {
-            background: #0e1522;
-            border: 1px solid #1e293b;
-            border-radius: 16px;
-            padding: 24px 20px;
+            background: #0a0d14;
+            border: 1px solid #1a2333;
+            border-radius: 12px;
+            padding: 22px 20px 24px;
             width: 100%;
             max-width: 440px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-            margin-bottom: 20px;
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6), 0 0 1px rgba(0, 163, 224, 0.2);
+            margin-bottom: 16px;
+            position: relative;
         }
+        /* BMW OEM M-Stripes Header */
+        .card-m-header {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            margin-bottom: 16px;
+        }
+        .card-m-header .st-light { width: 24px; height: 4px; background: #00a3e0; border-radius: 1px 0 0 1px; }
+        .card-m-header .st-dark { width: 24px; height: 4px; background: #004e8c; }
+        .card-m-header .st-red {
+            width: 28px;
+            height: 4px;
+            background: #e1001a;
+            clip-path: polygon(0 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+        }
+        .card-m-header .line {
+            flex: 1;
+            height: 1.5px;
+            background: rgba(255, 255, 255, 0.3);
+            margin-left: 2px;
+        }
+
         .pair-code {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            background: #141f2e;
-            border: 1px solid #23354d;
-            padding: 12px 16px;
-            border-radius: 10px;
-            font-size: 14px;
+            background: #06080e;
+            border: 1px solid #16202f;
+            padding: 12px 14px;
+            border-radius: 8px;
+            font-size: 13px;
             margin-bottom: 16px;
-            color: #94a3b8;
+            color: #8a95a6;
             font-weight: 600;
         }
         .pair-code strong {
             color: #00f0ff;
-            font-family: monospace;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
             font-size: 16px;
             letter-spacing: 2px;
         }
@@ -85,10 +127,10 @@
             margin-right: 6px;
         }
         .alert-box {
-            background: rgba(225, 0, 26, 0.15);
+            background: rgba(225, 0, 26, 0.12);
             border: 1px solid #e1001a;
             color: #ff8080;
-            padding: 12px;
+            padding: 12px 14px;
             border-radius: 8px;
             font-size: 13px;
             line-height: 1.4;
@@ -105,14 +147,16 @@
             flex: 1;
             padding: 10px 0;
             text-align: center;
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 700;
-            background: #141f2e;
-            border: 1px solid #253347;
-            border-radius: 8px;
+            background: #141a24;
+            border: 1px solid #242c39;
+            border-radius: 6px;
             cursor: pointer;
-            color: #94a3b8;
+            color: #8a95a6;
             transition: all 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
         .tab.active {
             background: #004e8c;
@@ -121,29 +165,33 @@
         }
         label {
             display: block;
-            font-size: 13px;
+            font-size: 12px;
             color: #cbd5e1;
             margin-bottom: 6px;
             margin-top: 14px;
             font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
         input[type="text"], input[type="password"], select {
             width: 100%;
-            background: #060a10;
-            border: 1px solid #253347;
+            background: #06080e;
+            border: 1px solid #1a2333;
             border-radius: 8px;
-            padding: 12px;
+            padding: 12px 14px;
             color: #ffffff;
             font-size: 14px;
             outline: none;
+            transition: border 0.2s;
         }
         input:focus, select:focus {
             border-color: #00a3e0;
+            box-shadow: 0 0 8px rgba(0, 163, 224, 0.25);
         }
         .helper-text {
             font-size: 12px;
-            color: #94a3b8;
-            margin-top: 6px;
+            color: #8a95a6;
+            margin-top: 8px;
             line-height: 1.4;
         }
         .helper-text a {
@@ -154,18 +202,18 @@
             display: block;
             width: 100%;
             background: #00a3e0;
+            border: 1px solid #00f0ff;
             color: #ffffff;
-            font-size: 15px;
-            font-weight: 700;
-            letter-spacing: 0.5px;
+            font-size: 14px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            text-transform: uppercase;
             text-align: center;
-            padding: 15px 0;
-            border-radius: 28px;
+            padding: 14px 0;
+            border-radius: 8px;
             cursor: pointer;
-            border: none;
             transition: transform 0.1s ease, background 0.2s ease;
             margin-top: 22px;
-            margin-bottom: 6px;
         }
         .btn-connect:active {
             transform: scale(0.98);
@@ -174,58 +222,83 @@
         .btn-unpair {
             display: block;
             width: 100%;
-            background: rgba(225, 0, 26, 0.15);
-            border: 1px solid #e1001a;
+            background: rgba(225, 0, 26, 0.12);
+            border: 1.5px solid #e1001a;
             color: #ff6b6b;
             font-size: 14px;
-            font-weight: 700;
-            letter-spacing: 0.5px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            text-transform: uppercase;
             text-align: center;
             padding: 13px 0;
-            border-radius: 28px;
+            border-radius: 8px;
             cursor: pointer;
             margin-top: 20px;
             transition: all 0.2s;
         }
         .btn-unpair:active {
             transform: scale(0.98);
-            background: rgba(225, 0, 26, 0.3);
+            background: rgba(225, 0, 26, 0.25);
         }
         .success-box {
             display: none;
             text-align: center;
-            padding: 28px 16px;
+            padding: 24px 16px;
         }
         .icon-check {
-            width: 68px;
-            height: 68px;
-            background: #2af575;
-            color: #000;
+            width: 64px;
+            height: 64px;
+            background: rgba(42, 245, 117, 0.15);
+            border: 2px solid #2af575;
+            color: #2af575;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 36px;
+            font-size: 32px;
             font-weight: bold;
-            margin: 0 auto 20px;
-            box-shadow: 0 0 24px rgba(42, 245, 117, 0.35);
+            margin: 0 auto 16px;
+            box-shadow: 0 0 20px rgba(42, 245, 117, 0.25);
         }
         .status-pill {
             display: inline-block;
-            background: #141f2e;
-            border: 1px solid #23354d;
-            padding: 8px 16px;
+            background: #06080e;
+            border: 1px solid #16202f;
+            padding: 6px 14px;
             border-radius: 20px;
-            font-size: 13px;
+            font-size: 12px;
             color: #2af575;
-            font-weight: 600;
-            margin-bottom: 18px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            margin-bottom: 16px;
+        }
+        .footer-nav {
+            margin-top: 20px;
+            font-size: 12px;
+            color: #64748b;
+            text-align: center;
+        }
+        .footer-nav a {
+            color: #8a95a6;
+            text-decoration: none;
+            margin: 0 6px;
+            transition: color 0.2s;
+        }
+        .footer-nav a:hover {
+            color: #00f0ff;
         }
     </style>
 </head>
 <body>
     <div class="header">
-        <div class="badge">BMW iDrive 7 Cockpit</div>
+        <div class="badge-m">
+            <span class="m-logo">
+                <span class="m-light"></span>
+                <span class="m-dark"></span>
+                <span class="m-red"></span>
+            </span>
+            BMW iDrive 7 Cockpit
+        </div>
         <h1>M-Copilot AI Setup</h1>
         <p class="subtitle">Universal AI Performance Co-Driver for BMW G-Series</p>
     </div>
@@ -237,6 +310,13 @@
 
     <!-- Pairing Form Card -->
     <div class="card" id="cardPairing">
+        <div class="card-m-header">
+            <div class="st-light"></div>
+            <div class="st-dark"></div>
+            <div class="st-red"></div>
+            <div class="line"></div>
+        </div>
+
         <div class="pair-code">
             <span><span class="pulse-dot"></span>RELAY CHANNEL</span>
             <strong id="spanCode">------</strong>
@@ -252,7 +332,7 @@
             <label for="inputGeminiKey">Google Gemini API Key</label>
             <input type="password" id="inputGeminiKey" placeholder="AIzaSy..." autocomplete="off">
             <p class="helper-text">
-                Free personal tier with high rate limits. Get one instantly in <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio ↗</a>.
+                Free personal tier with high rate limits. Get your key in <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio ↗</a>.
             </p>
         </div>
 
@@ -270,35 +350,42 @@
             <input type="password" id="inputCustomKey" placeholder="sk-..." autocomplete="off">
         </div>
 
-        <!-- Persona Selection -->
-        <label for="selectPersona">Co-Driver Persona</label>
-        <select id="selectPersona">
-            <option value="m_engineer">BMW M Track Engineer (Dynamic & Technical)</option>
-            <option value="concierge">BMW Executive Concierge (Refined & Luxury)</option>
-            <option value="mechanic">N63/S63/B58 Master Tech (Diagnostics)</option>
-        </select>
-
         <button class="btn-connect" onclick="connectCopilot()">CONNECT TO BMW iDRIVE</button>
         <p id="errorMsg" style="color: #ff4d4d; font-size: 13px; text-align: center; margin-top: 12px; display: none;"></p>
     </div>
 
     <!-- Paired Success Screen -->
     <div class="card success-box" id="cardSuccess">
+        <div class="card-m-header">
+            <div class="st-light"></div>
+            <div class="st-dark"></div>
+            <div class="st-red"></div>
+            <div class="line"></div>
+        </div>
+
         <div class="icon-check">✓</div>
-        <h2 style="font-size: 20px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">CONNECTED TO BMW iDRIVE 7!</h2>
+        <h2 style="font-size: 20px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">CONNECTED TO BMW iDRIVE 7</h2>
         <div class="status-pill">● Safe Read-Only CAN Telemetry Uplink Active</div>
-        <p style="font-size: 14px; color: #94a3b8; line-height: 1.5; margin-bottom: 12px;">
-            Your AI credentials have been transferred securely to your car.<br>
+        <p style="font-size: 13px; color: #8a95a6; line-height: 1.5; margin-bottom: 12px;">
+            AI credentials paired securely with your car.<br>
             All prompts and questions are controlled directly from your vehicle's touchscreen and iDrive controller.
         </p>
-        <p style="font-size: 13px; color: #64748b; margin-bottom: 20px;">
+        <p style="font-size: 12px; color: #64748b; margin-bottom: 18px;">
             You can safely lock your phone or close this browser tab.
         </p>
         <button class="btn-unpair" onclick="unpairFromPhone()">UNPAIR / RE-PAIR</button>
     </div>
 
+    <div class="footer-nav">
+        <span>BMW iDrive 7 Custom Apps</span>
+        &middot;
+        <a href="index.html">Apps Hub</a>
+        &middot;
+        <a href="pair.html">Spotify Connect</a>
+    </div>
+
     <script>
-        // Clean up any legacy voice assistant local storage
+        // Clean up legacy voice assistant keys
         localStorage.removeItem('copilot_tts_enabled');
         localStorage.removeItem('copilot_voice_lang');
 
@@ -306,7 +393,7 @@
         const urlChannel = urlParams.get('channel');
         const storedChannel = localStorage.getItem('copilot_channel');
 
-        // If user scans a new QR code (new channel), force reset of previous pairing
+        // Reset if scanning a different QR code
         if (urlChannel && urlChannel !== storedChannel) {
             localStorage.removeItem('copilot_paired');
             localStorage.setItem('copilot_channel', urlChannel);
@@ -318,13 +405,11 @@
 
         document.getElementById('spanCode').innerText = channel.replace('bmw_copilot_', '').toUpperCase();
 
-        // Restore paired view if already paired on this channel
         if (localStorage.getItem('copilot_paired') === 'true') {
             document.getElementById('cardPairing').style.display = 'none';
             document.getElementById('cardSuccess').style.display = 'block';
         }
 
-        // Start real-time connection / disconnection listener
         initRelayListener();
 
         function switchTab(t) {
@@ -396,7 +481,6 @@
 
             let payload = {
                 type: 'copilot_pair',
-                persona: document.getElementById('selectPersona').value,
                 time: Date.now()
             };
 

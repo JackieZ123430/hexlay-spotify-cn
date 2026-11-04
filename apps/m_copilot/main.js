@@ -14,10 +14,13 @@
  *      - Thermal & DME (Turbo Cooling, Oil Warm-Up, Intercooling, Air Flaps, Cat Warm)
  *      - Chassis & Tires (Tire Grip/PSI, Adaptive EDC Damper, Differential, Steering, Camber)
  *      - Service & Health (BMW Oil Specs, ECU Fault Scan, ZF 8HP, 12V/48V, Fuel Octane)
- *   4. Ultra-Low CPU/GPU Adaptive Pacing:
+ *   4. Instant Auto-Prompt & On-Screen Touch Keyboard:
+ *      Tapping any topic chip immediately asks M-Copilot. An in-car touch keyboard
+ *      allows asking custom vehicle queries with live telemetry synthesis.
+ *   5. Ultra-Low CPU/GPU Adaptive Pacing:
  *      Eliminates continuous 66 fps loop in favor of 4 fps idle refresh (~250ms), dynamically
  *      switching to 25 fps (~40ms) ONLY while neural thinking animation is active.
- *   5. Vehicle Context Engine:
+ *   6. Vehicle Context Engine:
  *      Pours rich, safe, read-only CAN & UDS telemetry directly into Google Gemini with
  *      prompt-specific intent analysis (Launch control, Cooling, Grip, DTCs, Brakes).
  */
@@ -101,9 +104,11 @@ mgu.run({
 
         let activeCategory = 0;
         let selectedTopicIdx = 0;
+        let showKeyboard = false;
+        let customQuery = '';
 
         let currentPrompt = TOPIC_CATEGORIES[0].topics[0].title;
-        let currentResponse = 'M-Copilot ready. Select a category & topic chip or ask a vehicle question.';
+        let currentResponse = 'M-Copilot ready. Select a category & topic chip or ask a custom question.';
         let statusMsg = null;
         let statusTime = 0;
 
@@ -373,25 +378,155 @@ mgu.run({
             }
         }
 
+        /* ---------- On-Screen Touch Keyboard (Panel 2) ---------- */
+        function drawKeyboard(cv, t, now) {
+            G.panel(cv, t, 510, 52, 1050, 410, 'Ask Custom Question');
+
+            // Live Engine Vitals in header
+            cv.text(`${telemetry.oilTemp}°C OIL  ·  ${telemetry.coolantTemp}°C COOLANT  ·  ${telemetry.batteryVoltage}V`, 1530, 80, 13, t.dim, { align: 'right', font: 'num' });
+
+            const kx = 540, kw = 990;
+
+            // 1. Query Input Display Box
+            const qBoxY = 104, qBoxH = 46;
+            cv.roundRect(kx, qBoxY, kw, qBoxH, 8, '#080d14');
+            cv.strokeRoundRect(kx, qBoxY, kw, qBoxH, 8, 1.5, '#00a3e0');
+
+            const hasText = !!customQuery.trim();
+            const displayText = hasText ? (customQuery + '_') : 'Type your question with touch keyboard or tap a preset below...';
+            cv.text(displayText, kx + 18, qBoxY + 30, 15, hasText ? '#ffffff' : '#64748b', { font: hasText ? 'bold' : 'normal' });
+
+            // Clear button inside input bar
+            if (hasText) {
+                const clrW = 70, clrH = 32, clrX = kx + kw - 78, clrY = qBoxY + 7;
+                cv.roundRect(clrX, clrY, clrW, clrH, 6, withAlpha('#e1001a', 0.22));
+                cv.strokeRoundRect(clrX, clrY, clrW, clrH, 6, 1, '#e1001a');
+                cv.text('CLEAR', clrX + clrW / 2, clrY + 21, 12, '#ff6b6b', { align: 'center', font: 'bold' });
+                cv.target(clrX, clrY, clrW, clrH, () => {
+                    customQuery = '';
+                    render(true);
+                }, 'kb_btn_clear', 8);
+            }
+
+            // 2. Quick Preset Chips Row
+            const presetY = 158, presetH = 26;
+            const presets = [
+                'What is my boost?',
+                'Brake pad health',
+                'Cold start high idle',
+                'Recommended oil spec',
+                'Scan active fault codes'
+            ];
+            let px = kx;
+            presets.forEach((pr, pIdx) => {
+                const pw = pr.length * 8 + 20;
+                cv.roundRect(px, presetY, pw, presetH, 13, '#101a28');
+                cv.strokeRoundRect(px, presetY, pw, presetH, 13, 1, '#1e324c');
+                cv.text(pr, px + pw / 2, presetY + 17, 12, '#cbd5e1', { align: 'center' });
+                cv.target(px, presetY, pw, presetH, () => {
+                    customQuery = pr;
+                    render(true);
+                }, 'kb_preset_' + pIdx, 6);
+                px += pw + 10;
+            });
+
+            // 3. Speller Keyboard Key Rows
+            const kbY = 194;
+            const keyH = 38;
+            const keyGap = 6;
+
+            const rows = [
+                ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '?'],
+                ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
+                ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
+                ['Z', 'X', 'C', 'V', 'B', 'N', 'M', '.', ',']
+            ];
+
+            rows.forEach((row, rIdx) => {
+                const ry = kbY + rIdx * (keyH + keyGap);
+                const count = row.length;
+                const keyW = Math.floor((kw - (count - 1) * keyGap) / count);
+
+                row.forEach((k, cIdx) => {
+                    const kxPos = kx + cIdx * (keyW + keyGap);
+                    cv.roundRect(kxPos, ry, keyW, keyH, 6, '#0f1724');
+                    cv.strokeRoundRect(kxPos, ry, keyW, keyH, 6, 1, '#1e2d42');
+                    cv.text(k, kxPos + keyW / 2, ry + 25, 16, '#ffffff', { align: 'center', font: 'bold' });
+
+                    cv.target(kxPos, ry, keyW, keyH, () => {
+                        customQuery += k;
+                        render(true);
+                    }, 'kb_k_' + rIdx + '_' + cIdx, 6);
+                });
+            });
+
+            // 4. Action Row (Row 5)
+            const aY = kbY + 4 * (keyH + keyGap);
+            const aH = 42;
+
+            // Cancel button
+            const canW = 140, canX = kx;
+            cv.roundRect(canX, aY, canW, aH, 8, '#141f2e');
+            cv.strokeRoundRect(canX, aY, canW, aH, 8, 1, '#253347');
+            cv.text('CANCEL', canX + canW / 2, aY + 27, 14, '#94a3b8', { align: 'center', font: 'bold' });
+            cv.target(canX, aY, canW, aH, () => {
+                showKeyboard = false;
+                render(true);
+            }, 'kb_act_cancel', 8);
+
+            // Spacebar
+            const spW = 410, spX = canX + canW + keyGap;
+            cv.roundRect(spX, aY, spW, aH, 8, '#0f1724');
+            cv.strokeRoundRect(spX, aY, spW, aH, 8, 1, '#1e2d42');
+            cv.text('SPACEBAR', spX + spW / 2, aY + 27, 14, '#cbd5e1', { align: 'center', font: 'bold' });
+            cv.target(spX, aY, spW, aH, () => {
+                customQuery += ' ';
+                render(true);
+            }, 'kb_act_space', 8);
+
+            // Backspace / Del
+            const delW = 150, delX = spX + spW + keyGap;
+            cv.roundRect(delX, aY, delW, aH, 8, '#1f1418');
+            cv.strokeRoundRect(delX, aY, delW, aH, 8, 1, '#421a22');
+            cv.text('BACKSPACE', delX + delW / 2, aY + 27, 13, '#ff8080', { align: 'center', font: 'bold' });
+            cv.target(delX, aY, delW, aH, () => {
+                customQuery = customQuery.slice(0, -1);
+                render(true);
+            }, 'kb_act_del', 8);
+
+            // Ask Copilot / Submit
+            const askW = 270, askX = delX + delW + keyGap;
+            cv.roundRect(askX, aY, askW, aH, 8, hasText ? '#00a3e0' : '#1e293b');
+            if (hasText) cv.strokeRoundRect(askX, aY, askW, aH, 8, 1.5, '#00f0ff');
+            cv.text('ASK M-COPILOT >', askX + askW / 2, aY + 27, 15, hasText ? '#ffffff' : '#64748b', { align: 'center', font: 'bold', spacing: 1 });
+            cv.target(askX, aY, askW, aH, () => {
+                if (hasText) {
+                    const q = customQuery.trim();
+                    customQuery = '';
+                    showKeyboard = false;
+                    askCopilot(q, 'Custom: ' + (q.length > 25 ? q.slice(0, 25) + '...' : q));
+                }
+            }, 'kb_act_go', 10);
+        }
+
         /* ---------- M-Copilot AI Main Screen (2-Panel Wide Architecture) ---------- */
         function drawMainCopilot(cv, t, now) {
             const curCat = TOPIC_CATEGORIES[activeCategory] || TOPIC_CATEGORIES[0];
             const topics = curCat.topics;
 
-            // Panel 1 (Left): Quick Topics & Control Actions
-            G.panel(cv, t, 40, 52, 440, 410, 'Co-Driver Topics');
+            // Panel 1 (Left): Quick Topics & Custom Query Action (No header text)
+            G.panel(cv, t, 40, 52, 440, 410, '');
 
-            // Category Selector Tabs Bar (4 Categories across 400px width)
+            // Category Selector Tabs Bar (Moved up to y=66)
+            const tabY = 66, tabH = 28;
             TOPIC_CATEGORIES.forEach((cat, cIdx) => {
                 const tabW = 96;
                 const tabX = 60 + cIdx * 101;
-                const tabY = 96;
-                const tabH = 26;
                 const isCurCat = activeCategory === cIdx;
 
                 cv.roundRect(tabX, tabY, tabW, tabH, 6, isCurCat ? '#004e8c' : t.track);
                 cv.strokeRoundRect(tabX, tabY, tabW, tabH, 6, 1, isCurCat ? '#00a3e0' : t.panelEdge);
-                cv.text(cat.name, tabX + tabW / 2, tabY + 18, 11, isCurCat ? '#00f0ff' : '#94a3b8', { align: 'center', font: isCurCat ? 'bold' : 'normal' });
+                cv.text(cat.name, tabX + tabW / 2, tabY + 19, 11, isCurCat ? '#00f0ff' : '#94a3b8', { align: 'center', font: isCurCat ? 'bold' : 'normal' });
 
                 cv.target(tabX, tabY, tabW, tabH, () => {
                     activeCategory = cIdx;
@@ -401,9 +536,9 @@ mgu.run({
                 }, 'cat_' + cIdx, 6);
             });
 
-            // 5 Topic Chips for selected category
+            // 5 Topic Chips for selected category (Moved up to y=104, auto-sends prompt on click)
             topics.forEach((p, idx) => {
-                const py = 130 + idx * 42;
+                const py = 104 + idx * 42;
                 const isSelected = selectedTopicIdx === idx;
                 const isCur = currentPrompt === p.title;
 
@@ -413,32 +548,63 @@ mgu.run({
                 cv.circle(80, py + 18, 4.5, isCur ? '#00f0ff' : (isSelected ? '#00a3e0' : t.dim));
                 cv.text(p.title, 98, py + 23, 14, isSelected ? '#ffffff' : '#cbd5e1', { font: isSelected ? 'bold' : 'normal' });
 
+                // Auto-sends prompt immediately upon clicking topic chip
                 cv.target(60, py, 400, 36, () => {
                     selectedTopicIdx = idx;
+                    showKeyboard = false;
                     askCopilot(p.query, p.title);
                 }, 'chip_' + idx, 8);
             });
 
-            // Primary Ask button
-            const askW = 400, askH = 44, askX = 60, askY = 348;
-            cv.roundRect(askX, askY, askW, askH, 10, isThinking ? '#1e293b' : '#00a3e0');
-            cv.text(isThinking ? 'THINKING...' : 'ASK M-COPILOT', askX + askW / 2, askY + 28, 16, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
-            cv.target(askX, askY, askW, askH, () => {
-                const currentTopic = topics[selectedTopicIdx] || topics[0];
-                askCopilot(currentTopic.query, currentTopic.title);
-            }, 'btn_ask', 10);
+            // Custom Text Input Button (Replaces redundant Ask button, opens on-screen keyboard)
+            const inputW = 400, inputH = 44, inputX = 60, inputY = 320;
+            cv.roundRect(inputX, inputY, inputW, inputH, 8, showKeyboard ? withAlpha('#00a3e0', 0.25) : '#0b111a');
+            cv.strokeRoundRect(inputX, inputY, inputW, inputH, 8, showKeyboard ? 1.5 : 1, showKeyboard ? '#00f0ff' : '#1e2d42');
 
-            // Secondary Re-pair / QR Code button
-            const pairW = 400, pairH = 38, pairX = 60, pairY = 404;
-            cv.roundRect(pairX, pairY, pairW, pairH, 8, withAlpha('#00a3e0', 0.12));
-            cv.strokeRoundRect(pairX, pairY, pairW, pairH, 8, 1.5, '#00a3e0');
-            cv.text('PAIR PHONE / QR CODE', pairX + pairW / 2, pairY + 24, 14, '#00a3e0', { align: 'center', font: 'bold', spacing: 1 });
-            cv.target(pairX, pairY, pairW, pairH, () => {
-                showPairing = true;
+            const hasCustom = !!customQuery.trim();
+            const inputLabel = hasCustom ? (customQuery + (showKeyboard ? '_' : '')) : (showKeyboard ? 'Typing custom question..._' : 'Ask Custom Question...');
+            cv.text(inputLabel, inputX + 16, inputY + 27, 14, hasCustom ? '#ffffff' : (showKeyboard ? '#00f0ff' : '#94a3b8'), { font: (hasCustom || showKeyboard) ? 'bold' : 'normal' });
+            cv.target(inputX, inputY, inputW, inputH, () => {
+                showKeyboard = !showKeyboard;
                 render(true);
-            }, 'btn_relink', 8);
+            }, 'btn_custom_input', 10);
 
-            // Panel 2 (Right): Dialogue Stream
+            // Dynamic Pair vs Unpair/Re-pair Button
+            const isPaired = ai.isConfigured();
+            const pairW = 400, pairH = 40, pairX = 60, pairY = 376;
+            const pairBg = isPaired ? withAlpha('#e1001a', 0.12) : withAlpha('#00a3e0', 0.12);
+            const pairBorder = isPaired ? '#e1001a' : '#00a3e0';
+            const pairTextCol = isPaired ? '#ff6b6b' : '#00a3e0';
+            const pairLabel = isPaired ? 'UNPAIR / RE-PAIR' : 'PAIR PHONE / QR CODE';
+
+            cv.roundRect(pairX, pairY, pairW, pairH, 8, pairBg);
+            cv.strokeRoundRect(pairX, pairY, pairW, pairH, 8, 1.5, pairBorder);
+            cv.text(pairLabel, pairX + pairW / 2, pairY + 25, 14, pairTextCol, { align: 'center', font: 'bold', spacing: 1 });
+            cv.target(pairX, pairY, pairW, pairH, () => {
+                if (isPaired) {
+                    ai.config.geminiApiKey = null;
+                    ai.config.apiKey = null;
+                    ai.config.sessionToken = null;
+                    ai.config.paired = false;
+                    ai.saveConfig();
+                    cachedQr = null;
+                    cachedQrUrl = null;
+                    cloudPair.reset();
+                    cloudPair.startPolling();
+                    showPairing = true;
+                    notify('AI Unpaired. Scan QR code to re-pair.');
+                } else {
+                    showPairing = true;
+                }
+                render(true);
+            }, 'btn_pair_unpair', 8);
+
+            // Panel 2 (Right): Interactive Touch Keyboard OR Dialogue Stream
+            if (showKeyboard) {
+                drawKeyboard(cv, t, now);
+                return;
+            }
+
             G.panel(cv, t, 510, 52, 1050, 410, 'Dialogue: ' + currentPrompt);
 
             // Live Engine Vitals in header
@@ -539,19 +705,28 @@ mgu.run({
 
         /* ---------- HMI Button & Touch Interactions ---------- */
         ui.onClick('BTN_PROMPT', () => {
-            const currentCat = TOPIC_CATEGORIES[activeCategory] || TOPIC_CATEGORIES[0];
-            const currentTopic = currentCat.topics[selectedTopicIdx] || currentCat.topics[0];
-            askCopilot(currentTopic.query, currentTopic.title);
+            if (showKeyboard && customQuery.trim()) {
+                const q = customQuery.trim();
+                customQuery = '';
+                showKeyboard = false;
+                askCopilot(q, 'Custom: ' + (q.length > 25 ? q.slice(0, 25) + '...' : q));
+            } else {
+                const currentCat = TOPIC_CATEGORIES[activeCategory] || TOPIC_CATEGORIES[0];
+                const currentTopic = currentCat.topics[selectedTopicIdx] || currentCat.topics[0];
+                askCopilot(currentTopic.query, currentTopic.title);
+            }
             return render(true);
         });
 
         ui.onClick('BTN_REPAIR', () => {
             showPairing = !showPairing;
+            showKeyboard = false;
             return render(true);
         });
 
         ctx.onTab(() => {
             showPairing = false;
+            showKeyboard = false;
             return render(true);
         });
 

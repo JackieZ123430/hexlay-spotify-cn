@@ -11,6 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { resolveYouTubeStream } = require('./stream_resolver.js');
 
 function extractYouTubeId(urlOrId) {
     if (!urlOrId) return null;
@@ -123,6 +124,30 @@ class VideoPlayer {
             return false;
         }
 
+        // If playing a YouTube video, resolve direct 720p H.264 stream for mgu-vidplay
+        if (ytId && (!streamUrl || !streamUrl.includes('googlevideo.com'))) {
+            this.log.info(`[M-Cinema:Player] Resolving direct YouTube stream for: ${ytId}`);
+            resolveYouTubeStream(ytId, this.log).then((resolved) => {
+                if (resolved && resolved.url) {
+                    this.log.info(`[M-Cinema:Player] Direct stream resolved: ${resolved.quality} (${resolved.width}x${resolved.height})`);
+                    if (resolved.durationSec > 0 && !this.totalDurationSec) {
+                        this.totalDurationSec = resolved.durationSec;
+                    }
+                    this._spawnPlayer(bin, resolved.url);
+                } else {
+                    this._spawnPlayer(bin, streamUrl);
+                }
+            }).catch((err) => {
+                this.log.warn(`[M-Cinema:Player] Direct stream resolution fallback: ${err.message}`);
+                this._spawnPlayer(bin, streamUrl);
+            });
+            return true;
+        }
+
+        return this._spawnPlayer(bin, streamUrl);
+    }
+
+    _spawnPlayer(bin, mediaUrl) {
         try {
             // Setup FIFOs
             try { if (!fs.existsSync(this.ctrlPath)) fs.unlinkSync(this.ctrlPath); } catch (e) {}
@@ -135,7 +160,7 @@ class VideoPlayer {
                 '--fps', '30',
                 '--ctrl', this.ctrlPath,
                 '--status', this.statusPath,
-                streamUrl
+                mediaUrl
             ];
 
             this.log.info(`[M-Cinema:Player] Spawning native player: ${bin} ${args.join(' ')}`);

@@ -83,11 +83,30 @@ mgu.run({
         let statusMsg = null;
         let statusTime = 0;
         let lastMotionLocked = false;
+        let isFullscreen = false;
+
+        function updateVideoBounds() {
+            if (!process.send) return;
+            const b = isFullscreen ?
+                { x: 64, y: 158, w: 1472, h: 236, r: 8 } :
+                { x: 64, y: 158, w: 992, h: 236, r: 8 };
+            process.send({ t: 'video', action: 'place', x: b.x, y: b.y, w: b.w, h: b.h, r: b.r });
+        }
+
+        function toggleFullscreen() {
+            isFullscreen = !isFullscreen;
+            notify(isFullscreen ? 'Cinema Fullscreen' : 'Standard View');
+            updateVideoBounds();
+            render().catch(() => {});
+        }
 
         function setPage(idx) {
             page = idx;
             if (process.send) {
                 process.send({ t: 'video', action: page === 0 && isPlaying && !lastMotionLocked ? 'show' : 'hide' });
+            }
+            if (page === 0 && isPlaying && !lastMotionLocked) {
+                updateVideoBounds();
             }
         }
 
@@ -169,7 +188,10 @@ mgu.run({
 
             // Start native video engine playback
             const streamUrl = video.streamUrl || video.url || ('https://youtube.com/watch?v=' + (video.ytId || ''));
-            player.play(streamUrl, totalDurationSec, video);
+            const b = isFullscreen ?
+                { x: 64, y: 158, w: 1472, h: 236, r: 8 } :
+                { x: 64, y: 158, w: 992, h: 236, r: 8 };
+            player.play(streamUrl, totalDurationSec, Object.assign({}, video, b));
 
             notify('Playing: ' + video.title);
             render().catch(() => {});
@@ -261,6 +283,11 @@ mgu.run({
                 }
             }
 
+            if (isFullscreen) {
+                drawFullscreenPlayer(cv, t, now, video, motionLocked);
+                return;
+            }
+
             // Left / Main Media Viewport (1040 x 410)
             G.panel(cv, t, 40, 52, 1040, 410, 'Video Display');
 
@@ -272,7 +299,7 @@ mgu.run({
                 cv.roundRect(vx - 2, vy - 2, vw + 4, vh + 4, 10, withAlpha('#0066b1', glowAlpha));
             }
 
-            drawVideoScreen(cv, vx, vy, vw, vh, video, now, motionLocked);
+            drawVideoScreen(cv, vx, vy, vw, vh, video, now, motionLocked, false);
 
             // Scrubber Bar
             const sy = 405, sw = 992;
@@ -298,7 +325,16 @@ mgu.run({
             const timeStr = `${formatTime(currentTimeSec)} / ${durDisplay}`;
             cv.text(timeStr, vx, 442, 16, t.dim, { font: 'num' });
             cv.text('720p HD', vx + 160, 442, 13, '#00a3e0', { font: 'bold' });
-            cv.text(isPlaying ? 'PLAYING' : 'PAUSED', vx + sw - 12, 442, 15, isPlaying ? '#2af575' : '#ffb703', { font: 'bold', align: 'right' });
+
+            // Fullscreen Button below video
+            const btnFsW = 148, btnFsH = 34;
+            const btnFsX = vx + sw - btnFsW, btnFsY = 425;
+            cv.roundRect(btnFsX, btnFsY, btnFsW, btnFsH, 6, '#0f1724');
+            cv.strokeRoundRect(btnFsX, btnFsY, btnFsW, btnFsH, 6, 1, '#1e324c');
+            cv.text('FULLSCREEN', btnFsX + btnFsW / 2, btnFsY + 22, 13, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
+            cv.target(btnFsX, btnFsY, btnFsW, btnFsH, () => {
+                toggleFullscreen();
+            }, 'btn_fullscreen_std', 10);
 
             // Right Panel (460px): Track Info & Controls
             G.panel(cv, t, 1100, 52, 460, 410, 'Track Info');
@@ -338,8 +374,74 @@ mgu.run({
             cv.text('Audio output: Vehicle stereo via Bluetooth / CarPlay', 1124 + btnW / 2, 428, 12, '#64748b', { align: 'center' });
         }
 
+        /* ---------- Fullscreen Theater Player (1520 x 410 Cockpit Screen) ---------- */
+        function drawFullscreenPlayer(cv, t, now, video, motionLocked) {
+            // Full-width Grand Theater Panel
+            G.panel(cv, t, 40, 52, 1520, 410, 'Cockpit Cinema Theater');
+
+            const vx = 64, vy = 114, vw = 1472, vh = 280;
+
+            if (settings.ambilight !== 'off' && !motionLocked) {
+                const pulse = (Math.sin(now / 400) + 1) * 0.5;
+                const glowAlpha = isPlaying ? (0.22 + pulse * 0.14) : 0.06;
+                cv.roundRect(vx - 2, vy - 2, vw + 4, vh + 4, 10, withAlpha('#0066b1', glowAlpha));
+            }
+
+            drawVideoScreen(cv, vx, vy, vw, vh, video, now, motionLocked, true);
+
+            // Widescreen Scrubber Bar across full 1472px
+            const sy = 405, sw = 1472;
+            cv.roundRect(vx, sy, sw, 6, 3, t.track);
+            const thumbX = vx + Math.floor(sw * playProgress);
+            cv.roundRect(vx, sy, Math.max(6, thumbX - vx), 6, 3, '#0066b1');
+            cv.circle(thumbX, sy + 3, 7, '#ffffff');
+            cv.arc(thumbX, sy + 3, 7, 9, 0, 360, '#00a3e0');
+
+            // 38px tall touch target centered on the scrubber
+            cv.target(vx, sy - 16, sw, 38, (touchX) => {
+                const rel = Math.max(0, Math.min(1, (touchX - vx) / sw));
+                playProgress = rel;
+                if (totalDurationSec > 0) {
+                    currentTimeSec = Math.floor(rel * totalDurationSec);
+                    player.seek(currentTimeSec);
+                }
+                notify(`Seek: ${formatTime(currentTimeSec)}`);
+                render().catch(() => {});
+            }, 'scrub_fs', 8);
+
+            // Left: Timecode and Quality badge
+            const durDisplay = totalDurationSec > 0 ? formatTime(totalDurationSec) : (video.duration || '0:00');
+            const timeStr = `${formatTime(currentTimeSec)} / ${durDisplay}`;
+            cv.text(timeStr, vx, 442, 16, t.dim, { font: 'num' });
+            cv.text('720p HD', vx + 160, 442, 13, '#00a3e0', { font: 'bold' });
+
+            // Center: Play / Pause Control Button
+            const btnPlayW = 140, btnPlayH = 34;
+            const btnPlayX = vx + Math.floor((sw - btnPlayW) / 2), btnPlayY = 425;
+            cv.roundRect(btnPlayX, btnPlayY, btnPlayW, btnPlayH, 6, isPlaying ? '#162233' : '#0066b1');
+            cv.strokeRoundRect(btnPlayX, btnPlayY, btnPlayW, btnPlayH, 6, 1, isPlaying ? '#23364f' : '#00a3e0');
+            cv.text(isPlaying ? 'PAUSE' : 'PLAY', btnPlayX + btnPlayW / 2, btnPlayY + 22, 13, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+            cv.target(btnPlayX, btnPlayY, btnPlayW, btnPlayH, () => {
+                isPlaying = !isPlaying;
+                if (isPlaying) player.resume();
+                else player.pause();
+                notify(isPlaying ? 'Resumed' : 'Paused');
+                render().catch(() => {});
+            }, 'btn_play_toggle_fs', 10);
+
+            // Right: Normal View Exit Button
+            const btnExitW = 150, btnExitH = 34;
+            const btnExitX = vx + sw - btnExitW, btnExitY = 425;
+            cv.roundRect(btnExitX, btnExitY, btnExitW, btnExitH, 6, '#0f1724');
+            cv.strokeRoundRect(btnExitX, btnExitY, btnExitW, btnExitH, 6, 1, '#1e324c');
+            cv.text('NORMAL VIEW', btnExitX + btnExitW / 2, btnExitY + 22, 13, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
+            cv.target(btnExitX, btnExitY, btnExitW, btnExitH, () => {
+                toggleFullscreen();
+            }, 'btn_exit_fs_bot', 10);
+        }
+
         /* ---------- Video Screen Canvas Renderer (Debloated 60 fps Vector Stage) ---------- */
-        function drawVideoScreen(cv, x, y, w, h, video, now, motionLocked) {
+        function drawVideoScreen(cv, x, y, w, h, video, now, motionLocked, isFs = false) {
             cv.roundRect(x, y, w, h, 8, '#060a12');
             cv.strokeRoundRect(x, y, w, h, 8, 1, '#1a273b');
 
@@ -369,17 +471,30 @@ mgu.run({
             cv.text('YOUTUBE', x + 58, y + 27, 11, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
 
             // Video Title
-            const titleText = trunc(video.title || 'Ready to Play', 46);
+            const maxTitleLen = isFs ? 68 : 46;
+            const titleText = trunc(video.title || 'Ready to Play', maxTitleLen);
             cv.text(titleText, x + 112, y + 28, 15, '#ffffff', { font: 'bold' });
 
-            // Quality Badge
-            cv.text('720p HD', x + w - 20, y + 28, 13, '#00a3e0', { align: 'right', font: 'bold' });
+            if (isFs) {
+                // Top-right exit button in fullscreen HUD
+                const btnX = x + w - 124, btnY = y + 8, btnW = 112, btnH = 28;
+                cv.roundRect(btnX, btnY, btnW, btnH, 4, withAlpha('#0c1420', 0.9));
+                cv.strokeRoundRect(btnX, btnY, btnW, btnH, 4, 1, '#0066b1');
+                cv.text('NORMAL', btnX + btnW / 2, btnY + 19, 12, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
+                cv.target(btnX, btnY, btnW, btnH, () => {
+                    toggleFullscreen();
+                }, 'btn_exit_fs_top', 12);
+                cv.text('720p HD', btnX - 16, y + 28, 13, '#00a3e0', { align: 'right', font: 'bold' });
+            } else {
+                // Quality Badge
+                cv.text('720p HD', x + w - 20, y + 28, 13, '#00a3e0', { align: 'right', font: 'bold' });
+            }
 
             // Center Stage: Refined Minimalist Playback Indicator & Hardware Video Surface
             if (video.ytId) {
                 // Render live hardware video via Protocol 4 OP_VIDEO 19
                 if (cv.video) {
-                    cv.video(1, x, y, w, h, 8);
+                    cv.video(1, x, y + 44, w, h - 44, 8);
                 }
 
                 if (isPlaying) {
@@ -709,6 +824,10 @@ mgu.run({
         // Controller rotary knob & tilt
         ctx.controller.grab(true);
         ctx.controller.onInput((ev) => {
+            if (page === 0 && isFullscreen && (ev.tilt === 'W' || ev.tilt === 'S')) {
+                toggleFullscreen();
+                return;
+            }
             if (page === 0 && ev.knobTicks) {
                 if (totalDurationSec > 0) {
                     currentTimeSec = Math.max(0, Math.min(totalDurationSec, currentTimeSec + ev.knobTicks * 5));

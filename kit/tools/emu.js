@@ -670,6 +670,7 @@ function start(id) {
             else if (m.t === 'focus' || m.t === 'note') toPages(m);
             else if (m.t === 'video') {
                 if (m.action === 'stop') App.video = null;
+                else if (m.action === 'place' && App.video) Object.assign(App.video, m);
                 else App.video = m;
                 appLog('info', 'emu: video ' + m.action + (m.ytId ? ' [' + m.ytId + ']' : ''));
                 toPages(m);

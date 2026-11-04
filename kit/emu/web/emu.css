@@ -172,6 +172,7 @@ select { text-overflow: ellipsis; }
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease, border-radius 0.25s ease;
 }
 #video-layer[hidden], #video-layer.hidden {
   display: none !important;

@@ -417,6 +417,15 @@ function handleVideoEvent(m) {
       layer.hidden = false;
     }
     break;
+  case 'place':
+    if (!lastVideoMsg) lastVideoMsg = {};
+    if (typeof m.x === 'number') lastVideoMsg.x = m.x;
+    if (typeof m.y === 'number') lastVideoMsg.y = m.y;
+    if (typeof m.w === 'number') lastVideoMsg.w = m.w;
+    if (typeof m.h === 'number') lastVideoMsg.h = m.h;
+    if (typeof m.r === 'number') lastVideoMsg.r = m.r;
+    updateVideoPlacement();
+    break;
   case 'stop':
     if (autoPlayTimer) {
       clearInterval(autoPlayTimer);

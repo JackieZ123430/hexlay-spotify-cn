@@ -84,6 +84,11 @@ class VideoPlayer {
         this.isPlaying = true;
 
         const ytId = (videoMeta && (videoMeta.ytId || videoMeta.id)) || extractYouTubeId(streamUrl) || null;
+        const bX = (videoMeta && typeof videoMeta.x === 'number') ? videoMeta.x : 64;
+        const bY = (videoMeta && typeof videoMeta.y === 'number') ? videoMeta.y : 158;
+        const bW = (videoMeta && typeof videoMeta.w === 'number') ? videoMeta.w : 992;
+        const bH = (videoMeta && typeof videoMeta.h === 'number') ? videoMeta.h : 236;
+        const bR = (videoMeta && typeof videoMeta.r === 'number') ? videoMeta.r : 8;
         if (process.send) {
             process.send({
                 t: 'video',
@@ -93,11 +98,11 @@ class VideoPlayer {
                 title: (videoMeta && videoMeta.title) || '',
                 duration: this.totalDurationSec,
                 time: this.currentTimeSec,
-                x: 64,
-                y: 158,
-                w: 992,
-                h: 236,
-                r: 8
+                x: bX,
+                y: bY,
+                w: bW,
+                h: bH,
+                r: bR
             });
         }
 

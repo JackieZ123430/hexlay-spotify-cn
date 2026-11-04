@@ -35,6 +35,7 @@ const { YouTubeSearchEngine } = require('./youtube_search');
 const { YouTubeLoungeReceiver } = require('./lounge');
 const { VideoPlayer } = require('./player');
 const { ThumbnailManager, THUMB_BASE_ID } = require('./thumbnail_manager');
+const qrcodegen = require('./qrcodegen');
 
 const W = 1600, H = 520;
 const PAGES = ['Now Playing', 'Search', 'Connect'];
@@ -296,7 +297,7 @@ mgu.run({
             onCodeUpdated() {
                 render().catch(() => {});
             }
-        }, log);
+        }, log, ctx);
         loungeReceiver.start().catch((e) => log.warn('Lounge start err: ' + e.message));
 
         /* ---------- Vector Play / Pause Icon ---------- */
@@ -832,12 +833,33 @@ mgu.run({
             cv.strokeRoundRect(lx, ly + 110, 932, 214, 10, 1, '#1e2d42');
 
             cv.text('HOW TO CAST FROM OFFICIAL YOUTUBE APP (IPHONE / ANDROID):', lx + 24, ly + 144, 16, '#ffffff', { font: 'bold' });
-            cv.text('1. Open the official YouTube app on your smartphone', lx + 24, ly + 174, 15, '#cbd5e1');
+            cv.text('1. Open official YouTube app on your smartphone (or scan QR)', lx + 24, ly + 174, 15, '#cbd5e1');
             cv.text('2. Tap Settings (gear icon) > Watch on TV', lx + 24, ly + 200, 15, '#cbd5e1');
             cv.text('3. Tap "Link with TV code" and type the 12-digit code above', lx + 24, ly + 226, 15, '#00a3e0', { font: 'bold' });
             cv.text('4. Tap Cast icon in YouTube app — vehicle appears as "BMW iDrive 7"!', lx + 24, ly + 252, 15, '#cbd5e1');
-            cv.text('5. Connect smartphone to car Bluetooth / CarPlay for vehicle stereo audio.', lx + 24, ly + 278, 15, '#2af575', { font: 'bold' });
+            cv.text('5. Connect smartphone to car Bluetooth / CarPlay for stereo audio.', lx + 24, ly + 278, 15, '#2af575', { font: 'bold' });
             cv.text('6. Any video you tap on phone streams directly to your cockpit screen.', lx + 24, ly + 304, 14, '#94a3b8');
+
+            // Official YouTube Link QR Code (youtube.com/pair)
+            try {
+                const qr = qrcodegen.QrCode.encodeText('https://www.youtube.com/pair', qrcodegen.QrCode.Ecc.MEDIUM);
+                const qrx = lx + 740, qry = ly + 125, qrsz = 150;
+                const modCount = qr.size;
+                const modPx = Math.floor(qrsz / modCount);
+                const actualSz = modPx * modCount;
+                const ox = qrx + Math.floor((qrsz - actualSz) / 2);
+                const oy = qry + Math.floor((qrsz - actualSz) / 2);
+
+                cv.roundRect(ox - 8, oy - 8, actualSz + 16, actualSz + 16, 8, '#ffffff');
+                for (let r = 0; r < modCount; r++) {
+                    for (let c = 0; c < modCount; c++) {
+                        if (qr.getModule(c, r)) {
+                            cv.fillRect(ox + c * modPx, oy + r * modPx, modPx, modPx, '#000000');
+                        }
+                    }
+                }
+                cv.text('SCAN TO LINK APP', qrx + qrsz / 2, qry + qrsz + 18, 11, '#00f0ff', { align: 'center', font: 'bold' });
+            } catch (e) {}
 
             // Right Panel (520px): System Status & Audio Routing
             G.panel(cv, t, 1040, 52, 520, 410, 'Status & Audio');

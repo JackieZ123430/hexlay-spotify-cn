@@ -190,6 +190,18 @@ mgu.run({
         authServer.start();
 
         const cloudPair = new CloudPairManager(ctx, spotify);
+        cloudPair.onPaired = () => {
+            notify('Spotify Paired via Secure Cloud!');
+            render(true).catch(() => {});
+        };
+        cloudPair.onUnpaired = () => {
+            spotify.logout();
+            cachedQr = null;
+            cloudPair.reset();
+            cloudPair.startPolling();
+            notify('Spotify Disconnected.');
+            render(true).catch(() => {});
+        };
         cloudPair.startPolling();
 
         // Default to Online mode (demo !== 'on')
@@ -793,6 +805,7 @@ mgu.run({
                 cv.text('DISCONNECT / SWITCH ACCOUNT', dcX + dcW / 2, dcY + 28, 14, '#e1001a', { align: 'center', font: 'bold', spacing: 1 });
 
                 cv.target(dcX, dcY, dcW, dcH, () => {
+                    cloudPair.notifyUnpair();
                     spotify.logout();
                     cachedQr = null;
                     cloudPair.reset();

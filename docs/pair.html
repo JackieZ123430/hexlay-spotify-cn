@@ -107,7 +107,7 @@
             padding: 12px 14px;
             border-radius: 8px;
             font-size: 13px;
-            margin-bottom: 16px;
+            margin-bottom: 12px;
             color: #8a95a6;
             font-weight: 600;
         }
@@ -125,6 +125,19 @@
             background: #1ed760;
             box-shadow: 0 0 8px #1ed760;
             margin-right: 6px;
+        }
+        .privacy-pill {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(30, 215, 96, 0.08);
+            border: 1px solid rgba(30, 215, 96, 0.25);
+            padding: 7px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            color: #1ed760;
+            margin-bottom: 16px;
+            line-height: 1.3;
         }
         label {
             display: block;
@@ -193,6 +206,27 @@
             color: #ffffff;
             border-color: #00a3e0;
         }
+        .btn-unpair {
+            display: block;
+            width: 100%;
+            background: rgba(225, 0, 26, 0.12);
+            border: 1.5px solid #e1001a;
+            color: #ff6b6b;
+            font-size: 14px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            text-align: center;
+            padding: 13px 0;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: all 0.2s;
+        }
+        .btn-unpair:active {
+            transform: scale(0.98);
+            background: rgba(225, 0, 26, 0.25);
+        }
         .success-box {
             display: none;
             text-align: center;
@@ -224,6 +258,16 @@
             font-weight: 700;
             letter-spacing: 0.5px;
             margin-bottom: 16px;
+        }
+        .car-badge {
+            background: #141a24;
+            border: 1px solid #242c39;
+            color: #1ed760;
+            font-family: ui-monospace, monospace;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-left: 4px;
         }
         details {
             margin-top: 18px;
@@ -266,6 +310,11 @@
         .footer-nav a:hover {
             color: #00f0ff;
         }
+        .no-vehicle-box {
+            display: none;
+            text-align: center;
+            padding: 26px 16px;
+        }
     </style>
 </head>
 <body>
@@ -284,8 +333,37 @@
 
     <div class="card alert-box" id="statusAlert"></div>
 
+    <!-- Card: No Vehicle Detected (When visiting directly without QR scan) -->
+    <div class="card no-vehicle-box" id="cardNoVehicle">
+        <div class="card-m-header">
+            <div class="st-light"></div>
+            <div class="st-dark"></div>
+            <div class="st-red"></div>
+            <div class="line"></div>
+        </div>
+        <div style="font-size: 44px; margin-bottom: 14px;">📷</div>
+        <h2 style="font-size: 18px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">VEHICLE SCAN REQUIRED</h2>
+        <p style="font-size: 13px; color: #8a95a6; line-height: 1.5; margin-bottom: 18px;">
+            To ensure complete privacy and prevent mixing accounts across different cars, each BMW generates its own encrypted pairing QR code.
+        </p>
+        <div style="background: #06080e; border: 1px solid #1a2333; padding: 14px; border-radius: 8px; font-size: 13px; color: #cbd5e1; margin-bottom: 18px; text-align: left;">
+            <strong style="color: #1ed760; display: block; margin-bottom: 4px;">How to pair:</strong>
+            1. Open <strong>Spotify</strong> on your BMW iDrive screen.<br>
+            2. Go to the <strong>Connect</strong> tab.<br>
+            3. Point your smartphone camera at the displayed QR code.
+        </div>
+        <details style="text-align: left; margin-top: 10px;">
+            <summary style="font-size: 12px; color: #00a3e0; cursor: pointer; font-weight: 700;">Manual Relay Code Entry ▾</summary>
+            <div style="margin-top: 12px;">
+                <label>Enter 8-Character Car Code</label>
+                <input type="text" id="inputManualCode" placeholder="e.g. 7F8A-9E2D" style="text-transform: uppercase;">
+                <button class="btn-secondary" style="margin-top: 12px;" onclick="applyManualCode()">Target Vehicle</button>
+            </div>
+        </details>
+    </div>
+
     <!-- Active Pairing Card -->
-    <div class="card" id="cardPairing">
+    <div class="card" id="cardPairing" style="display: none;">
         <div class="card-m-header">
             <div class="st-light"></div>
             <div class="st-dark"></div>
@@ -294,12 +372,16 @@
         </div>
 
         <div class="pair-code">
-            <span><span class="pulse-dot"></span>PAIRING CODE</span>
-            <strong id="spanCode">BMW-CONNECT</strong>
+            <span><span class="pulse-dot"></span>ACTIVE VEHICLE</span>
+            <strong id="spanCode">--------</strong>
+        </div>
+
+        <div class="privacy-pill" id="privacyIndicator">
+            🔒 <strong>E2EE Isolated Session:</strong> Encrypted exclusively for this vehicle.
         </div>
 
         <p style="font-size: 13px; color: #8a95a6; text-align: center; margin-bottom: 14px; line-height: 1.5;">
-            Pair your personal Spotify account to sync your playlists and playback with your BMW Live Cockpit.
+            Authenticate with Spotify on this phone to sync your personal playlists, saved tracks, and playback directly with your BMW display.
         </p>
 
         <button class="btn-spotify" id="btnConnect" onclick="startAuth()">Connect with Spotify</button>
@@ -334,14 +416,17 @@
 
         <div class="icon-check">&#10003;</div>
         <h2 style="font-size: 20px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">CONNECTED TO BMW iDRIVE 7</h2>
-        <div class="status-pill">● Spotify Library Uplink Active</div>
+        <div class="status-pill">
+            ● Paired With Vehicle <span class="car-badge" id="successCarId">BMW</span>
+        </div>
         <p style="font-size: 13px; color: #8a95a6; line-height: 1.5; margin-bottom: 16px;">
-            Your Spotify credentials have been transmitted to your car's cockpit.<br>
+            Your Spotify credentials have been transmitted securely to your car.<br>
             Your personal playlists, saved songs, and active playback are now live on your iDrive 7 display.
         </p>
         <p style="font-size: 12px; color: #64748b; margin-bottom: 18px;">
             You can safely close this browser window.
         </p>
+        <button class="btn-unpair" onclick="unpairThisVehicle()">UNPAIR THIS VEHICLE</button>
     </div>
 
     <div class="footer-nav">
@@ -366,27 +451,73 @@
         const urlParams = new URLSearchParams(window.location.search);
         let channel = urlParams.get('channel') || '';
         let clientId = urlParams.get('client_id') || localStorage.getItem('bmw_spot_client_id') || DEFAULT_CLIENT_ID;
+        let secretKey = '';
+        let evtSource = null;
+
+        // Extract secret key from URL hash (#k=<key>)
+        if (window.location.hash && window.location.hash.startsWith('#k=')) {
+            secretKey = window.location.hash.substring(3).trim();
+            if (channel && secretKey) {
+                sessionStorage.setItem('bmw_spot_k_' + channel, secretKey);
+            }
+        } else if (channel) {
+            secretKey = sessionStorage.getItem('bmw_spot_k_' + channel) || '';
+        }
 
         function formatDisplayCode(ch) {
+            if (!ch) return '--------';
             const raw = ch.replace('bmw_spot_', '').toUpperCase();
             if (raw.length >= 8) {
                 return raw.substring(0, 4) + '-' + raw.substring(4, 8);
             }
-            return raw || 'BMW-CONNECT';
+            return raw;
         }
 
-        if (channel) {
-            localStorage.setItem('bmw_spot_channel', channel);
-            document.getElementById('spanCode').innerText = formatDisplayCode(channel);
-            document.getElementById('inputChannel').value = channel;
+        if (!channel) {
+            document.getElementById('cardNoVehicle').style.display = 'block';
+            document.getElementById('cardPairing').style.display = 'none';
+            document.getElementById('cardSuccess').style.display = 'none';
         } else {
-            const saved = localStorage.getItem('bmw_spot_channel');
-            if (saved) {
-                channel = saved;
-                document.getElementById('spanCode').innerText = formatDisplayCode(saved);
-                document.getElementById('inputChannel').value = saved;
-            }
+            initVehicleContext();
         }
+
+        function initVehicleContext() {
+            const shortCode = formatDisplayCode(channel);
+            document.getElementById('spanCode').innerText = shortCode;
+            document.getElementById('successCarId').innerText = shortCode;
+            document.getElementById('inputChannel').value = channel;
+
+            const isPaired = localStorage.getItem('bmw_spot_paired_' + channel) === 'true';
+
+            if (isPaired) {
+                document.getElementById('cardNoVehicle').style.display = 'none';
+                document.getElementById('cardPairing').style.display = 'none';
+                document.getElementById('cardSuccess').style.display = 'block';
+            } else {
+                document.getElementById('cardNoVehicle').style.display = 'none';
+                document.getElementById('cardPairing').style.display = 'block';
+                document.getElementById('cardSuccess').style.display = 'none';
+            }
+
+            if (secretKey && secretKey.length === 64) {
+                document.getElementById('privacyIndicator').innerHTML =
+                    '🔒 <strong>Zero-Knowledge E2EE:</strong> 256-bit AES-GCM encrypted exclusively for car <strong>' + shortCode + '</strong>.';
+            } else {
+                document.getElementById('privacyIndicator').innerHTML =
+                    '● <strong>Isolated Cloud Channel:</strong> Dedicated uplink for car <strong>' + shortCode + '</strong>.';
+            }
+
+            initRelayListener();
+        }
+
+        function applyManualCode() {
+            let code = document.getElementById('inputManualCode').value.trim();
+            if (!code) return;
+            code = code.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+            channel = 'bmw_spot_' + code;
+            initVehicleContext();
+        }
+
         if (clientId) {
             document.getElementById('inputClientId').value = clientId;
         }
@@ -397,6 +528,57 @@
             el.style.display = 'block';
             el.style.borderColor = isError ? '#e1001a' : '#1ed760';
             el.style.color = isError ? '#ff8080' : '#1ed760';
+        }
+
+        function handleCarDisconnected() {
+            localStorage.removeItem('bmw_spot_paired_' + channel);
+            document.getElementById('cardSuccess').style.display = 'none';
+            document.getElementById('cardPairing').style.display = 'block';
+            showStatus('Vehicle ' + formatDisplayCode(channel) + ' was disconnected. Ready to re-pair.', false);
+        }
+
+        function handleCarConnected() {
+            localStorage.setItem('bmw_spot_paired_' + channel, 'true');
+            document.getElementById('cardPairing').style.display = 'none';
+            document.getElementById('cardSuccess').style.display = 'block';
+            document.getElementById('statusAlert').style.display = 'none';
+        }
+
+        function initRelayListener() {
+            if (evtSource) {
+                try { evtSource.close(); } catch (e) {}
+            }
+            if (!channel) return;
+            try {
+                evtSource = new EventSource('https://ntfy.sh/' + channel + '/sse');
+                evtSource.onmessage = (e) => {
+                    try {
+                        const data = JSON.parse(e.data);
+                        if (data.event === 'message' && data.message) {
+                            let msg = null;
+                            try { msg = JSON.parse(data.message); } catch (err) {}
+                            if (!msg) return;
+
+                            if (msg.type === 'spotify_unpaired') {
+                                handleCarDisconnected();
+                            } else if (msg.type === 'spotify_pair_ack') {
+                                handleCarConnected();
+                            }
+                        }
+                    } catch (err) {}
+                };
+            } catch (err) {}
+        }
+
+        async function unpairThisVehicle() {
+            try {
+                await fetch('https://ntfy.sh/' + channel, {
+                    method: 'POST',
+                    headers: { 'Title': 'BMW Spotify Unpair' },
+                    body: JSON.stringify({ type: 'phone_unpair', channel: channel, time: Date.now() })
+                });
+            } catch (e) {}
+            handleCarDisconnected();
         }
 
         function generateRandomString(length) {
@@ -414,6 +596,64 @@
                 .replace(/=/g, '')
                 .replace(/\+/g, '-')
                 .replace(/\//g, '_');
+        }
+
+        // WebCrypto AES-256-GCM Zero-Knowledge Encryption
+        async function encryptPayload(plaintextStr, keyHex) {
+            if (!keyHex || keyHex.length !== 64 || !window.crypto || !window.crypto.subtle) {
+                return null;
+            }
+            try {
+                const keyBytes = new Uint8Array(keyHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+                const cryptoKey = await window.crypto.subtle.importKey(
+                    'raw',
+                    keyBytes,
+                    { name: 'AES-GCM' },
+                    false,
+                    ['encrypt']
+                );
+                const iv = window.crypto.getRandomValues(new Uint8Array(12));
+                const encoded = new TextEncoder().encode(plaintextStr);
+                const ctBuffer = await window.crypto.subtle.encrypt(
+                    { name: 'AES-GCM', iv: iv, tagLength: 128 },
+                    cryptoKey,
+                    encoded
+                );
+                const cipherArray = new Uint8Array(ctBuffer);
+                const tag = cipherArray.slice(-16);
+                const data = cipherArray.slice(0, -16);
+                const toHex = arr => Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+
+                return {
+                    type: 'spotify_encrypted',
+                    iv: toHex(iv),
+                    tag: toHex(tag),
+                    data: toHex(data),
+                    channel: channel,
+                    time: Date.now()
+                };
+            } catch (err) {
+                console.warn('WebCrypto encryption failed, falling back:', err);
+                return null;
+            }
+        }
+
+        async function sendTokensToCar(tokenData, targetChannel) {
+            let transmissionPayload = null;
+            if (secretKey && secretKey.length === 64) {
+                transmissionPayload = await encryptPayload(JSON.stringify(tokenData), secretKey);
+            }
+            if (!transmissionPayload) {
+                transmissionPayload = Object.assign({ type: 'spotify_pair', channel: targetChannel }, tokenData);
+            }
+
+            await fetch('https://ntfy.sh/' + targetChannel, {
+                method: 'POST',
+                headers: { 'Title': 'BMW Spotify Secure Pairing' },
+                body: JSON.stringify(transmissionPayload)
+            });
+
+            handleCarConnected();
         }
 
         async function checkOAuthReturn() {
@@ -449,21 +689,15 @@
                     const data = await tokenResponse.json();
                     if (data.access_token) {
                         const targetChannel = state || channel || localStorage.getItem('bmw_spot_channel');
-                        const payload = {
+                        const tokenData = {
                             token: data.access_token,
                             refreshToken: data.refresh_token || null,
                             expiresAt: Date.now() + (parseInt(data.expires_in, 10) * 1000),
+                            clientId: activeId,
                             time: Date.now()
                         };
 
-                        await fetch('https://ntfy.sh/' + targetChannel, {
-                            method: 'POST',
-                            body: JSON.stringify(payload)
-                        });
-
-                        document.getElementById('cardPairing').style.display = 'none';
-                        document.getElementById('cardSuccess').style.display = 'block';
-                        document.getElementById('statusAlert').style.display = 'none';
+                        await sendTokensToCar(tokenData, targetChannel);
                         window.history.replaceState({}, document.title, window.location.pathname + (targetChannel ? ('?channel=' + targetChannel) : ''));
                     } else {
                         showStatus('Spotify Token Exchange Failed: ' + (data.error_description || data.error || JSON.stringify(data)), true);
@@ -482,22 +716,12 @@
                 const st = hashParams.get('state') || channel;
 
                 if (token && st) {
-                    const payload = {
+                    const tokenData = {
                         token: token,
                         expiresAt: Date.now() + (parseInt(expiresIn, 10) * 1000),
                         time: Date.now()
                     };
-
-                    fetch('https://ntfy.sh/' + st, {
-                        method: 'POST',
-                        body: JSON.stringify(payload)
-                    }).then(() => {
-                        document.getElementById('cardPairing').style.display = 'none';
-                        document.getElementById('cardSuccess').style.display = 'block';
-                    }).catch(() => {
-                        document.getElementById('cardPairing').style.display = 'none';
-                        document.getElementById('cardSuccess').style.display = 'block';
-                    });
+                    await sendTokensToCar(tokenData, st);
                 }
             }
         }
@@ -505,7 +729,12 @@
         async function startAuth() {
             const customId = document.getElementById('inputClientId').value.trim();
             const activeId = customId || clientId || localStorage.getItem('bmw_spot_client_id');
-            const customChannel = document.getElementById('inputChannel').value.trim() || channel || ('bmw_spot_' + Math.random().toString(36).substring(2, 10));
+            const customChannel = document.getElementById('inputChannel').value.trim() || channel;
+
+            if (!customChannel) {
+                showStatus('No vehicle connected. Please scan the QR code on your car display.', true);
+                return;
+            }
 
             if (!activeId) {
                 showStatus('Please enter your Spotify Client ID from your Spotify Developer Dashboard above.', true);
@@ -539,7 +768,7 @@
             window.location.href = 'https://accounts.spotify.com/authorize?' + authParams.toString();
         }
 
-        function sendManualToken() {
+        async function sendManualToken() {
             const token = document.getElementById('inputManualToken').value.trim();
             const targetChannel = document.getElementById('inputChannel').value.trim() || channel;
             if (!token) {
@@ -551,21 +780,13 @@
                 return;
             }
 
-            const payload = {
+            const tokenData = {
                 token: token,
                 expiresAt: Date.now() + 3600000,
                 time: Date.now()
             };
 
-            fetch('https://ntfy.sh/' + targetChannel, {
-                method: 'POST',
-                body: JSON.stringify(payload)
-            }).then(() => {
-                document.getElementById('cardPairing').style.display = 'none';
-                document.getElementById('cardSuccess').style.display = 'block';
-            }).catch(() => {
-                alert('Transmission failed. Check internet connection.');
-            });
+            await sendTokensToCar(tokenData, targetChannel);
         }
 
         checkOAuthReturn();

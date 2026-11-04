@@ -11,6 +11,8 @@
  */
 const https = require('https');
 const querystring = require('querystring');
+const fs = require('fs');
+const path = require('path');
 
 function httpsGet(url) {
     return new Promise((resolve, reject) => {
@@ -50,9 +52,10 @@ function httpsPost(url, postData) {
 }
 
 class YouTubeLoungeReceiver {
-    constructor(callbacks, log) {
+    constructor(callbacks, log, ctx) {
         this.cb = callbacks || {};
         this.log = log || console;
+        this.ctx = ctx || null;
         this.screenId = null;
         this.loungeToken = null;
         this.deviceId = null;
@@ -66,6 +69,9 @@ class YouTubeLoungeReceiver {
         this.isStarted = false;
         this.refreshTimer = null;
         this.lastCastVid = null;
+
+        const baseDir = (this.ctx && this.ctx.dataDir) ? this.ctx.dataDir : __dirname;
+        this.authFile = path.join(baseDir, 'lounge_auth.json');
     }
 
     getPairingCode() {
@@ -93,19 +99,41 @@ class YouTubeLoungeReceiver {
     }
 
     async initSession() {
-        // Step 1: Generate screen ID
-        this.screenId = await httpsGet('https://www.youtube.com/api/lounge/pairing/generate_screen_id');
+        // Step 0: Try loading persisted screenId and loungeToken
+        try {
+            if (fs.existsSync(this.authFile)) {
+                const data = JSON.parse(fs.readFileSync(this.authFile, 'utf8'));
+                if (data && data.screenId) this.screenId = data.screenId;
+                if (data && data.loungeToken) this.loungeToken = data.loungeToken;
+            }
+        } catch (e) {}
+
+        // Step 1: Generate unique screen ID for this vehicle if not already saved
+        if (!this.screenId) {
+            this.screenId = await httpsGet('https://www.youtube.com/api/lounge/pairing/generate_screen_id');
+        }
         this.deviceId = 'bmw-idrive7-' + this.screenId;
 
-        // Step 2: Fetch Lounge Token Batch via POST
-        const tokenRes = await httpsPost(
-            'https://www.youtube.com/api/lounge/pairing/get_lounge_token_batch',
-            querystring.stringify({ screen_ids: this.screenId })
-        );
-        const tokenObj = JSON.parse(tokenRes.data);
-        if (tokenObj && tokenObj.screens && tokenObj.screens[0]) {
-            this.loungeToken = tokenObj.screens[0].loungeToken;
+        // Step 2: Fetch Lounge Token Batch via POST if not already saved
+        if (!this.loungeToken) {
+            const tokenRes = await httpsPost(
+                'https://www.youtube.com/api/lounge/pairing/get_lounge_token_batch',
+                querystring.stringify({ screen_ids: this.screenId })
+            );
+            const tokenObj = JSON.parse(tokenRes.data);
+            if (tokenObj && tokenObj.screens && tokenObj.screens[0]) {
+                this.loungeToken = tokenObj.screens[0].loungeToken;
+            }
         }
+
+        // Persist to car internal disk
+        try {
+            fs.writeFileSync(this.authFile, JSON.stringify({
+                screenId: this.screenId,
+                loungeToken: this.loungeToken,
+                savedAt: new Date().toISOString()
+            }, null, 2), 'utf8');
+        } catch (e) {}
 
         // Step 3: Fetch 12-digit TV Pairing Code via POST with full device registration
         await this.refreshPairingCode();

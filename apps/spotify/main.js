@@ -196,22 +196,26 @@ mgu.run({
         const cloudPair = new CloudPairManager(ctx, spotify);
         cloudPair.onPaired = () => {
             notify('Spotify Paired via Secure Cloud!');
-            render(true).catch(() => {});
+            page = 0; // Automatically switch to Playlists upon pairing!
+            spotify.initialFetch();
+            render().catch(() => {});
         };
         cloudPair.onUnpaired = () => {
             spotify.logout();
             cachedQr = null;
+            cachedQrUrl = null;
             cloudPair.reset();
             cloudPair.startPolling();
+            page = 3;
             notify('Spotify Disconnected.');
-            render(true).catch(() => {});
+            render().catch(() => {});
         };
         cloudPair.startPolling();
 
         // Default to Online mode (demo !== 'on')
         // If not authenticated, open directly on the Connect tab!
         const isOnlineMode = settings.get('demo') !== 'on';
-        let page = (isOnlineMode && !spotify.token) ? 3 : 0;
+        let page = (isOnlineMode && !spotify.isAuthenticated()) ? 3 : 0;
         let selectedPlaylistIdx = 0;
         let playlistScroll = 0;
         let trackScroll = 0;
@@ -392,7 +396,7 @@ mgu.run({
             const playlists = spotify.getPlaylists();
 
             if (!playlists || playlists.length === 0) {
-                if (!spotify.token || !spotify.paired) {
+                if (isOnlineMode && !spotify.isAuthenticated()) {
                     drawRequireConnect(cv, t);
                 } else {
                     G.panel(cv, t, 40, 52, 1520, 388, 'Your Playlists (0)');
@@ -527,8 +531,7 @@ mgu.run({
 
         /* ---------- Page 1: Liked Songs ---------- */
         function drawLibrary(cv, t) {
-            const isOnline = settings.get('demo') !== 'on';
-            if (isOnline && (!spotify.token || !spotify.paired)) {
+            if (isOnlineMode && !spotify.isAuthenticated()) {
                 drawRequireConnect(cv, t);
                 return;
             }
@@ -601,8 +604,7 @@ mgu.run({
 
         /* ---------- Page 2: Now Playing & Queue ---------- */
         function drawNowPlaying(cv, t) {
-            const isOnline = settings.get('demo') !== 'on';
-            if (isOnline && (!spotify.token || !spotify.paired)) {
+            if (isOnlineMode && !spotify.isAuthenticated()) {
                 drawRequireConnect(cv, t);
                 return;
             }
@@ -788,9 +790,9 @@ mgu.run({
         /* ---------- Page 3: Connect & Real Cloud Pairing ---------- */
         function drawConnect(cv, t) {
             // Left: Real Cloud Pairing QR Code or Connected Status
-            G.panel(cv, t, 40, 52, 580, 388, spotify.isOnline ? 'Spotify Account Status' : 'Scan to Connect Phone');
+            G.panel(cv, t, 40, 52, 580, 388, spotify.isAuthenticated() ? 'Spotify Account Status' : 'Scan to Connect Phone');
 
-            if (spotify.isOnline && spotify.token) {
+            if (spotify.isAuthenticated()) {
                 // Connected Card
                 cv.roundRect(70, 108, 520, 260, 14, '#0a1612');
                 cv.strokeRoundRect(70, 108, 520, 260, 14, 1.5, '#1ed760');
@@ -915,7 +917,7 @@ mgu.run({
             }
 
             // 2. Authentication check: In Online mode, if unauthenticated, force Connect or Gating
-            if (isOnline && (!spotify.token || !spotify.paired)) {
+            if (isOnline && !spotify.isAuthenticated()) {
                 if (page === 3) {
                     drawConnect(cv, t);
                 } else {

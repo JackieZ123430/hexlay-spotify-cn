@@ -106,6 +106,18 @@ const DEMO_DEVICES = [
 ];
 
 class SpotifyClient {
+    isAuthenticated() {
+        return !!(this.token || this.refreshToken);
+    }
+
+    get paired() {
+        return !!(this.token || this.refreshToken);
+    }
+
+    set paired(val) {
+        this._paired = !!val;
+    }
+
     constructor(ctx) {
         this.ctx = ctx;
         this.log = ctx.log;
@@ -200,12 +212,11 @@ class SpotifyClient {
     }
 
     saveAuthTokens(data) {
-        if (!data || !data.token) return;
-        this.token = data.token;
+        if (!data || (!data.token && !data.refreshToken)) return;
+        if (data.token) this.token = data.token;
         if (data.refreshToken) this.refreshToken = data.refreshToken;
         if (data.expiresAt) this.expiresAt = data.expiresAt;
         if (data.clientId) this.clientId = data.clientId;
-        this.paired = true;
         this.isOnline = true;
 
         const paths = [
@@ -213,17 +224,20 @@ class SpotifyClient {
             path.join(__dirname, 'spotify_auth.json')
         ].filter(Boolean);
 
-        const out = {
-            token: this.token,
-            refreshToken: this.refreshToken,
-            expiresAt: this.expiresAt,
-            clientId: this.clientId,
-            clientSecret: this.clientSecret,
-            savedAt: new Date().toISOString()
-        };
-
         paths.forEach(p => {
             try {
+                let existing = {};
+                try {
+                    if (fs.existsSync(p)) existing = JSON.parse(fs.readFileSync(p, 'utf8')) || {};
+                } catch (err) {}
+                const out = Object.assign({}, existing, {
+                    token: this.token,
+                    refreshToken: this.refreshToken,
+                    expiresAt: this.expiresAt,
+                    clientId: this.clientId,
+                    clientSecret: this.clientSecret,
+                    savedAt: new Date().toISOString()
+                });
                 fs.writeFileSync(p, JSON.stringify(out, null, 2), 'utf8');
                 this.log.info('SpotifyClient: Saved auth tokens to ' + p);
             } catch (e) {
@@ -238,9 +252,20 @@ class SpotifyClient {
         try {
             const dataPath = this.ctx && this.ctx.dataDir ? path.join(this.ctx.dataDir, 'spotify_auth.json') : null;
             const localPath = path.join(__dirname, 'spotify_auth.json');
-            const configPath = (dataPath && fs.existsSync(dataPath)) ? dataPath : localPath;
 
-            if (fs.existsSync(configPath)) {
+            // Check dataPath first; if dataPath has no valid tokens, fall back to localPath
+            let configPath = null;
+            if (dataPath && fs.existsSync(dataPath)) {
+                try {
+                    const d = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
+                    if (d && (d.token || d.refreshToken)) configPath = dataPath;
+                } catch (e) {}
+            }
+            if (!configPath && fs.existsSync(localPath)) {
+                configPath = localPath;
+            }
+
+            if (configPath && fs.existsSync(configPath)) {
                 const data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
                 if (data.token || data.refreshToken) {
                     this.token = data.token;
@@ -248,7 +273,6 @@ class SpotifyClient {
                     this.expiresAt = data.expiresAt || 0;
                     this.clientId = data.clientId;
                     this.clientSecret = data.clientSecret;
-                    this.paired = true;
                     this.isOnline = true;
                     this.log.info('Loaded Spotify auth token from ' + configPath);
                 }
@@ -268,7 +292,6 @@ class SpotifyClient {
     logout() {
         this.token = null;
         this.refreshToken = null;
-        this.paired = false;
         this.isOnline = false;
         this.playlists = DEMO_PLAYLISTS;
         this.currentPlaylist = this.playlists[0];
@@ -281,7 +304,14 @@ class SpotifyClient {
 
         paths.forEach(p => {
             try {
-                if (fs.existsSync(p)) fs.unlinkSync(p);
+                if (fs.existsSync(p)) {
+                    let existing = {};
+                    try { existing = JSON.parse(fs.readFileSync(p, 'utf8')) || {}; } catch (e) {}
+                    delete existing.token;
+                    delete existing.refreshToken;
+                    delete existing.expiresAt;
+                    fs.writeFileSync(p, JSON.stringify(existing, null, 2), 'utf8');
+                }
             } catch (e) {}
         });
 
@@ -418,14 +448,15 @@ class SpotifyClient {
                             if (refreshed) {
                                 return this._request(method, endpoint, body).then(resolve).catch(reject);
                             }
-                            this.token = null;
-                            this.paired = false;
-                            reject(new Error('Spotify session expired. Please re-authenticate.'));
+                            if (!this.token) {
+                                reject(new Error('Spotify session expired. Please re-authenticate.'));
+                            } else {
+                                reject(new Error('Spotify token refresh temporarily unavailable.'));
+                            }
                         }).catch(reject);
                     }
                     if (res.statusCode === 401 && !this.refreshToken) {
                         this.token = null;
-                        this.paired = false;
                         return reject(new Error('Spotify session expired. Please re-authenticate.'));
                     }
                     try {

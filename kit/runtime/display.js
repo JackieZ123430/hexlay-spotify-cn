@@ -75,6 +75,9 @@ const FULL = {
 };
 const LAYOUTS = ['full', 'standard'];
 
+// the HMI's page animation when a screen opens (the picture shows after it)
+const SHOW_DELAY_MS = 350;
+
 class Display {
     constructor(ui, log, spec, settings, themeFn) {
         this.ui = ui; this.log = log; this.spec = spec; this.settings = settings; this.theme = themeFn;
@@ -587,6 +590,7 @@ class Display {
         this._hmiBar();
         this.recorders.clear();             // text sizes depend on the scale
         this.app = null; this.outRec = null;
+        this.lastWords = null;              // a new placement (or its dropped resources) needs a frame, the same or not
         this.log.info('display: renderer placement ' + JSON.stringify(pl) + ' (layout ' + v + ')');
         // (only a real change: hideButton places again for every button it hides)
         const key = JSON.stringify([pl, this.own(), this.screen ? this.buttons().map((b) => b.id) : []]);
@@ -603,6 +607,7 @@ class Display {
         if (pl.oy === oy) return;
         pl.oy = oy;
         this.gpu.place(pl);                 // (the same scale: the renderer keeps our resources)
+        this.lastWords = null;              // the renderer draws the page at the new oy with the next frame
     }
 
     /** the screen is up and not covered by an HMI popup */
@@ -614,7 +619,21 @@ class Display {
     _syncVisible() {
         if (!this.gpu) return;
         const on = this._shown();
-        if (on && !this.gpu.visible) { this.shownT = Date.now(); this.softDone = false; }
+        if (!on && this.showTimer) { clearTimeout(this.showTimer); this.showTimer = null; }
+        if (on && !this.gpu.visible) {
+            // the HMI zooms / slides its page in when the screen opens: the picture shows once the page
+            // stands where it ends, not shifted and too big for a moment on top of the animation
+            if (!this.showTimer) {
+                this.showTimer = setTimeout(() => {
+                    this.showTimer = null;
+                    if (!this.gpu || this.gpu.visible || !this._shown()) return;
+                    this.shownT = Date.now(); this.softDone = false;
+                    this.gpu.show(true);
+                    this.lastWords = null;
+                }, SHOW_DELAY_MS);
+            }
+            return;
+        }
         this.gpu.show(on);
         if (on) this.lastWords = null;
     }
@@ -707,7 +726,7 @@ class Display {
         // unchanged frame (parked car, steady values): nothing to send - but at least one a
         // second, the renderer hides an app that goes quiet for 3 s (hung app over the HMI)
         const now = Date.now();
-        if (!force && this.lastWords && now - this.lastSent < 1000 && this.lastWords.length === w.length && Buffer.from(w.buffer, w.byteOffset, w.byteLength).equals(this.lastWords)) return;
+        if (!force && this.lastWords && now - this.lastSent < 1000 && this.lastWords.length === w.byteLength && Buffer.from(w.buffer, w.byteOffset, w.byteLength).equals(this.lastWords)) return;
         this.lastSent = now;
         this.gpu.frame(out);
         this.lastWords = Buffer.from(Buffer.from(w.buffer, w.byteOffset, w.byteLength));

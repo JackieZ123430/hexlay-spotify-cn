@@ -158,7 +158,7 @@ class CloudPairManager {
 
         const check = () => {
             if (!this.isPolling) return;
-            if (this.spotify && this.spotify.isOnline && this.spotify.token) {
+            if (this.spotify && (this.spotify.isAuthenticated ? this.spotify.isAuthenticated() : (this.spotify.isOnline && this.spotify.token))) {
                 this.stopPolling();
                 return;
             }

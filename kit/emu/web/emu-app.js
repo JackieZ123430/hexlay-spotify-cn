@@ -103,15 +103,20 @@ function ensureVideoLayer() {
   return videoLayer;
 }
 
-function tryUnmute() {
+function sendYtCmd(func, args = '') {
   if (activeVideoElem && activeVideoElem.tagName === 'IFRAME') {
     try {
-      activeVideoElem.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: '' }), '*');
-      activeVideoElem.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
+      activeVideoElem.contentWindow?.postMessage(JSON.stringify({ event: 'command', func, args }), '*');
     } catch (e) {}
   }
 }
-stage.addEventListener('pointerdown', tryUnmute, { capture: true });
+
+function triggerPlayAndUnmute() {
+  sendYtCmd('playVideo');
+  sendYtCmd('unMute');
+  sendYtCmd('setVolume', [100]);
+}
+stage.addEventListener('pointerdown', triggerPlayAndUnmute, { capture: true });
 
 function handleVideoEvent(m) {
   const layer = ensureVideoLayer();
@@ -147,13 +152,16 @@ function handleVideoEvent(m) {
           allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture',
           allowfullscreen: 'true'
         });
+        iframe.addEventListener('load', () => {
+          triggerPlayAndUnmute();
+          setTimeout(triggerPlayAndUnmute, 400);
+          setTimeout(triggerPlayAndUnmute, 1200);
+          setTimeout(triggerPlayAndUnmute, 2500);
+        });
         activeVideoElem = iframe;
         layer.append(iframe);
-        setTimeout(tryUnmute, 1000);
       } else {
-        try {
-          activeVideoElem.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: '' }), '*');
-        } catch (e) {}
+        triggerPlayAndUnmute();
       }
     } else if (m.url) {
       currentYtId = null;
@@ -171,9 +179,7 @@ function handleVideoEvent(m) {
   case 'pause':
     if (activeVideoElem) {
       if (activeVideoElem.tagName === 'IFRAME') {
-        try {
-          activeVideoElem.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: '' }), '*');
-        } catch (e) {}
+        sendYtCmd('pauseVideo');
       } else if (typeof activeVideoElem.pause === 'function') {
         activeVideoElem.pause();
       }
@@ -182,9 +188,7 @@ function handleVideoEvent(m) {
   case 'resume':
     if (activeVideoElem) {
       if (activeVideoElem.tagName === 'IFRAME') {
-        try {
-          activeVideoElem.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: '' }), '*');
-        } catch (e) {}
+        triggerPlayAndUnmute();
       } else if (typeof activeVideoElem.play === 'function') {
         activeVideoElem.play();
       }
@@ -193,9 +197,8 @@ function handleVideoEvent(m) {
   case 'seek':
     if (activeVideoElem && typeof m.time === 'number') {
       if (activeVideoElem.tagName === 'IFRAME') {
-        try {
-          activeVideoElem.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [m.time, true] }), '*');
-        } catch (e) {}
+        sendYtCmd('seekTo', [m.time, true]);
+        sendYtCmd('playVideo');
       } else {
         activeVideoElem.currentTime = m.time;
       }

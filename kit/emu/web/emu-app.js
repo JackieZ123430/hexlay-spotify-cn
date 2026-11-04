@@ -84,6 +84,13 @@ function onBinary(u8) {
 let videoLayer = null;
 let activeVideoElem = null;
 let currentYtId = null;
+let ytPlayer = null;
+let ytApiReady = false;
+
+window.onYouTubeIframeAPIReady = function() {
+  ytApiReady = true;
+  initYtPlayer();
+};
 
 function extractYtId(s) {
   if (!s) return null;
@@ -111,12 +118,40 @@ function sendYtCmd(func, args = '') {
   }
 }
 
-function triggerPlayAndUnmute() {
-  sendYtCmd('playVideo');
+function unmuteAudio() {
+  if (ytPlayer && typeof ytPlayer.unMute === 'function') {
+    try {
+      ytPlayer.unMute();
+      ytPlayer.setVolume(100);
+    } catch (e) {}
+  }
   sendYtCmd('unMute');
   sendYtCmd('setVolume', [100]);
+  const btn = $('#video-unmute-btn');
+  if (btn) btn.style.display = 'none';
 }
-stage.addEventListener('pointerdown', triggerPlayAndUnmute, { capture: true });
+
+function initYtPlayer() {
+  if (ytPlayer || !activeVideoElem || activeVideoElem.id !== 'emu-yt-iframe') return;
+  if (window.YT && window.YT.Player) {
+    try {
+      ytPlayer = new window.YT.Player('emu-yt-iframe', {
+        events: {
+          onReady: (event) => {
+            try {
+              event.target.playVideo();
+            } catch (e) {}
+          }
+        }
+      });
+    } catch (e) {}
+  }
+}
+
+stage.addEventListener('pointerdown', (e) => {
+  // If user interacted with stage or video, unmute audio on user gesture
+  if (activeVideoElem) unmuteAudio();
+}, { capture: true });
 
 function handleVideoEvent(m) {
   const layer = ensureVideoLayer();
@@ -144,27 +179,66 @@ function handleVideoEvent(m) {
 
     const ytId = m.ytId || extractYtId(m.url);
     if (ytId) {
-      if (currentYtId !== ytId || !activeVideoElem || activeVideoElem.tagName !== 'IFRAME') {
+      if (currentYtId !== ytId) {
         currentYtId = ytId;
+        if (ytPlayer && typeof ytPlayer.destroy === 'function') {
+          try { ytPlayer.destroy(); } catch (e) {}
+          ytPlayer = null;
+        }
         layer.replaceChildren();
+
         const iframe = el('iframe', {
-          src: `https://www.youtube.com/embed/${ytId}?enablejsapi=1&autoplay=1&mute=1&controls=0&modestbranding=1&rel=0&playsinline=1&iv_load_policy=3&origin=${encodeURIComponent(location.origin)}`,
-          allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture',
+          id: 'emu-yt-iframe',
+          src: `https://www.youtube.com/embed/${ytId}?autoplay=1&mute=1&controls=0&modestbranding=1&rel=0&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`,
+          allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
           allowfullscreen: 'true'
         });
-        iframe.addEventListener('load', () => {
-          triggerPlayAndUnmute();
-          setTimeout(triggerPlayAndUnmute, 400);
-          setTimeout(triggerPlayAndUnmute, 1200);
-          setTimeout(triggerPlayAndUnmute, 2500);
-        });
-        activeVideoElem = iframe;
         layer.append(iframe);
+        activeVideoElem = iframe;
+
+        const unmuteBtn = el('div', { id: 'video-unmute-btn', class: 'video-unmute-btn' });
+        unmuteBtn.innerHTML = `
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+          </svg>
+          <span>Tap to Unmute</span>
+        `;
+        unmuteBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          unmuteAudio();
+        });
+        layer.append(unmuteBtn);
+
+        iframe.addEventListener('load', () => {
+          sendYtCmd('playVideo');
+          initYtPlayer();
+        });
+
+        if (window.YT && window.YT.Player) {
+          initYtPlayer();
+        } else {
+          let count = 0;
+          const waitT = setInterval(() => {
+            count++;
+            if (window.YT && window.YT.Player) {
+              clearInterval(waitT);
+              initYtPlayer();
+            } else if (count > 30) {
+              clearInterval(waitT);
+            }
+          }, 100);
+        }
+      } else if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+        try { ytPlayer.playVideo(); } catch (e) {}
       } else {
-        triggerPlayAndUnmute();
+        sendYtCmd('playVideo');
       }
     } else if (m.url) {
       currentYtId = null;
+      if (ytPlayer && typeof ytPlayer.destroy === 'function') {
+        try { ytPlayer.destroy(); } catch (e) {}
+        ytPlayer = null;
+      }
       layer.replaceChildren();
       const vid = el('video', {
         src: m.url,
@@ -177,7 +251,9 @@ function handleVideoEvent(m) {
     break;
   }
   case 'pause':
-    if (activeVideoElem) {
+    if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+      try { ytPlayer.pauseVideo(); } catch (e) {}
+    } else if (activeVideoElem) {
       if (activeVideoElem.tagName === 'IFRAME') {
         sendYtCmd('pauseVideo');
       } else if (typeof activeVideoElem.pause === 'function') {
@@ -186,7 +262,9 @@ function handleVideoEvent(m) {
     }
     break;
   case 'resume':
-    if (activeVideoElem) {
+    if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+      try { ytPlayer.playVideo(); } catch (e) {}
+    } else if (activeVideoElem) {
       if (activeVideoElem.tagName === 'IFRAME') {
         triggerPlayAndUnmute();
       } else if (typeof activeVideoElem.play === 'function') {
@@ -195,12 +273,19 @@ function handleVideoEvent(m) {
     }
     break;
   case 'seek':
-    if (activeVideoElem && typeof m.time === 'number') {
-      if (activeVideoElem.tagName === 'IFRAME') {
-        sendYtCmd('seekTo', [m.time, true]);
-        sendYtCmd('playVideo');
-      } else {
-        activeVideoElem.currentTime = m.time;
+    if (typeof m.time === 'number') {
+      if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
+        try {
+          ytPlayer.seekTo(m.time, true);
+          ytPlayer.playVideo();
+        } catch (e) {}
+      } else if (activeVideoElem) {
+        if (activeVideoElem.tagName === 'IFRAME') {
+          sendYtCmd('seekTo', [m.time, true]);
+          sendYtCmd('playVideo');
+        } else {
+          activeVideoElem.currentTime = m.time;
+        }
       }
     }
     break;
@@ -212,13 +297,17 @@ function handleVideoEvent(m) {
     }
     break;
   case 'show':
-    if (layer && activeVideoElem) {
+    if (layer && (activeVideoElem || ytPlayer)) {
       layer.style.display = 'flex';
       layer.hidden = false;
     }
     break;
   case 'stop':
     currentYtId = null;
+    if (ytPlayer && typeof ytPlayer.destroy === 'function') {
+      try { ytPlayer.destroy(); } catch (e) {}
+      ytPlayer = null;
+    }
     activeVideoElem = null;
     if (layer) {
       layer.style.display = 'none';
@@ -321,7 +410,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 let down = null;
 const at = (e) => { const r = stage.getBoundingClientRect(); return { x: Math.round((e.clientX - r.left) * W / r.width), y: Math.round((e.clientY - r.top) * H / r.height) }; };
 stage.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || e.target.closest('button, #picker')) return;
+  if (e.button !== 0 || e.target.closest('button, #picker, #video-layer, .video-unmute-btn')) return;
   try { stage.setPointerCapture(e.pointerId); } catch (x) { /* a pointer already gone */ }
   stage.focus({ preventScroll: true });
   down = e.pointerId;

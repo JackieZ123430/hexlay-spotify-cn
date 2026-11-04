@@ -507,6 +507,7 @@ function onPage(ws, m) {
         break;
     case 'video-fullscreen': toChild({ t: 'video-fullscreen', on: !!m.on }); break;
     case 'video-state': toChild({ t: 'video-state', playing: !!m.playing }); break;
+    case 'video-progress': toChild({ t: 'video-progress', time: m.time, duration: m.duration, playing: !!m.playing }); break;
     case 'click': toChild({ t: 'click', id: String(m.id) }); break;
     case 'set': toChild({ t: 'set', k: String(m.k), v: m.v }); break;
     case 'sig':

@@ -260,7 +260,7 @@ function updateVideoPlacement() {
     videoLayer.style.setProperty('border-radius', '0px', 'important');
     videoLayer.style.setProperty('z-index', '50', 'important');
     videoLayer.style.setProperty('background', '#000000', 'important');
-    const child = videoLayer.querySelector('iframe, video');
+    const child = videoLayer.querySelector('video');
     if (child) {
       child.style.setProperty('width', '100%', 'important');
       child.style.setProperty('height', '100%', 'important');
@@ -275,7 +275,7 @@ function updateVideoPlacement() {
   stage.classList.remove('cinema-fullscreen');
   videoLayer.style.removeProperty('z-index');
   videoLayer.style.removeProperty('background');
-  const child = videoLayer.querySelector('iframe, video');
+  const child = videoLayer.querySelector('video');
   if (child) {
     child.style.removeProperty('object-fit');
   }
@@ -424,6 +424,37 @@ document.addEventListener('visibilitychange', () => {
 
 window.addEventListener('pagehide', () => destroyVideoPlayer());
 
+let videoProgressTimer = null;
+function startProgressReporting() {
+  if (videoProgressTimer) clearInterval(videoProgressTimer);
+  videoProgressTimer = setInterval(() => {
+    if (!activeVideoElem) return;
+    let time = 0, duration = 0, isPlaying = false;
+    if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
+      try {
+        time = ytPlayer.getCurrentTime() || 0;
+        duration = ytPlayer.getDuration() || 0;
+        const state = ytPlayer.getPlayerState();
+        isPlaying = (state === 1);
+      } catch (e) {}
+    } else if (activeVideoElem.tagName === 'VIDEO') {
+      time = activeVideoElem.currentTime || 0;
+      duration = activeVideoElem.duration || 0;
+      isPlaying = !activeVideoElem.paused;
+    }
+    if (duration > 0 || time > 0) {
+      send({ t: 'video-progress', time, duration, playing: isPlaying });
+    }
+  }, 1000);
+}
+
+function stopProgressReporting() {
+  if (videoProgressTimer) {
+    clearInterval(videoProgressTimer);
+    videoProgressTimer = null;
+  }
+}
+
 function destroyVideoPlayer() {
   lastVideoMsg = null;
   currentYtId = null;
@@ -431,6 +462,7 @@ function destroyVideoPlayer() {
     clearInterval(autoPlayTimer);
     autoPlayTimer = null;
   }
+  stopProgressReporting();
   setFullscreen(false);
   if (ytPlayer && typeof ytPlayer.destroy === 'function') {
     try { ytPlayer.destroy(); } catch (e) {}
@@ -457,6 +489,7 @@ function handleVideoEvent(m) {
     layer.hidden = false;
     if (m.fullscreen) setFullscreen(true);
     updateVideoPlacement();
+    startProgressReporting();
 
     const ytId = m.ytId || extractYtId(m.url);
     if (ytId) {
@@ -588,15 +621,18 @@ function handleVideoEvent(m) {
     break;
   case 'seek':
     if (typeof m.time === 'number') {
+      const wasPlaying = lastVideoMsg && lastVideoMsg.action === 'play';
       if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
         try {
           ytPlayer.seekTo(m.time, true);
-          ytPlayer.playVideo();
+          if (wasPlaying) ytPlayer.playVideo();
+          else ytPlayer.pauseVideo();
         } catch (e) {}
       } else if (activeVideoElem) {
         if (activeVideoElem.tagName === 'IFRAME') {
           sendYtCmd('seekTo', [m.time, true]);
-          sendYtCmd('playVideo');
+          if (wasPlaying) sendYtCmd('playVideo');
+          else sendYtCmd('pauseVideo');
         } else {
           activeVideoElem.currentTime = m.time;
         }

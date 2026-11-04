@@ -166,7 +166,7 @@ select { text-overflow: ellipsis; }
 #video-layer {
   position: absolute;
   pointer-events: auto;
-  overflow: hidden;
+  overflow: hidden !important;
   z-index: 5;
   background: #000;
   display: flex;
@@ -179,16 +179,22 @@ select { text-overflow: ellipsis; }
   display: none !important;
 }
 #video-layer iframe {
-  width: 100%;
-  height: 100%;
+  position: absolute !important;
+  top: -26.5% !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 153% !important;
   border: 0;
   display: block;
-  pointer-events: none;
+  pointer-events: none !important;
   object-fit: cover;
 }
 #video-layer video {
-  width: 100%;
-  height: 100%;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
   border: 0;
   display: block;
   pointer-events: auto;
@@ -215,13 +221,28 @@ select { text-overflow: ellipsis; }
   border-radius: 0 !important;
   z-index: 50 !important;
   background: #000 !important;
+  overflow: hidden !important;
 }
 
-#video-layer.fullscreen iframe,
+#video-layer.fullscreen iframe {
+  position: absolute !important;
+  top: -12% !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 124% !important;
+  border-radius: 0 !important;
+  pointer-events: none !important;
+  object-fit: cover !important;
+}
+
 #video-layer.fullscreen video {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
   width: 100% !important;
   height: 100% !important;
   border-radius: 0 !important;
+  pointer-events: auto !important;
   object-fit: cover !important;
 }
 

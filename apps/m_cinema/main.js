@@ -115,10 +115,26 @@ mgu.run({
                     toggleFullscreen();
                 }
             } else if (m.t === 'video-state') {
-                if (typeof m.playing === 'boolean' && isPlaying !== m.playing) {
+                if (typeof m.playing === 'boolean') {
                     isPlaying = m.playing;
+                    player.isPlaying = m.playing;
                     render().catch(() => {});
                 }
+            } else if (m.t === 'video-progress') {
+                if (typeof m.time === 'number') {
+                    currentTimeSec = Math.floor(m.time);
+                }
+                if (typeof m.duration === 'number' && m.duration > 0) {
+                    totalDurationSec = Math.floor(m.duration);
+                }
+                if (typeof m.playing === 'boolean') {
+                    isPlaying = m.playing;
+                    player.isPlaying = m.playing;
+                }
+                if (totalDurationSec > 0) {
+                    playProgress = Math.min(1, Math.max(0, currentTimeSec / totalDurationSec));
+                }
+                render().catch(() => {});
             }
         });
 
@@ -263,18 +279,6 @@ mgu.run({
             render().catch(() => {});
         }
 
-        // Active Playback Progress Ticker (fallback if not driven by native player)
-        const playbackTimer = setInterval(() => {
-            if (isPlaying && totalDurationSec > 0 && !player.proc) {
-                currentTimeSec++;
-                playProgress = Math.min(1, currentTimeSec / totalDurationSec);
-                if (currentTimeSec >= totalDurationSec) {
-                    currentTimeSec = 0;
-                    playProgress = 0;
-                }
-                render().catch(() => {});
-            }
-        }, 1000);
 
         // Initialize Official YouTube on TV Lounge Receiver
         const loungeReceiver = new YouTubeLoungeReceiver({
@@ -375,17 +379,27 @@ mgu.run({
             cv.circle(thumbX, sy + 3, 7, '#ffffff');
             cv.arc(thumbX, sy + 3, 7, 9, 0, 360, '#00a3e0');
 
-            // 38px tall touch target centered on the scrubber
-            cv.target(vx, sy - 16, sw, 38, (touchX) => {
-                const rel = Math.max(0, Math.min(1, (touchX - vx) / sw));
-                playProgress = rel;
-                if (totalDurationSec > 0) {
-                    currentTimeSec = Math.floor(rel * totalDurationSec);
-                    player.seek(currentTimeSec);
-                }
-                notify(`Seek: ${formatTime(currentTimeSec)}`);
-                render().catch(() => {});
-            }, 'scrub', 8);
+            // Discrete segmented touch targets across the 992px scrubber bar
+            const numSegments = 50;
+            const segW = sw / numSegments;
+            for (let si = 0; si < numSegments; si++) {
+                const segX = vx + Math.floor(si * segW);
+                const segActualW = Math.ceil(segW) + 2;
+                const nominalRel = (si + 0.5) / numSegments;
+                cv.target(segX, sy - 16, segActualW, 38, (touchX) => {
+                    let rel = nominalRel;
+                    if (typeof touchX === 'number' && !isNaN(touchX) && touchX >= vx && touchX <= vx + sw) {
+                        rel = Math.max(0, Math.min(1, (touchX - vx) / sw));
+                    }
+                    playProgress = rel;
+                    if (totalDurationSec > 0) {
+                        currentTimeSec = Math.floor(rel * totalDurationSec);
+                        player.seek(currentTimeSec);
+                    }
+                    notify(`Seek: ${formatTime(currentTimeSec)}`);
+                    render().catch(() => {});
+                }, 'scrub_' + si, 8);
+            }
 
             const durDisplay = totalDurationSec > 0 ? formatTime(totalDurationSec) : (video.duration || '0:00');
             const timeStr = `${formatTime(currentTimeSec)} / ${durDisplay}`;

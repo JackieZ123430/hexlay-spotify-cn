@@ -423,7 +423,7 @@ class Display {
                 else {
                     this.pressed = key; this.pressedT = Date.now(); this._repaint();
                     setTimeout(() => this._repaint(), 320);
-                    try { Promise.resolve(tgt.run()).catch((e) => this.log.error('target', e)); } catch (e) { this.log.error('target', e); }
+                    try { Promise.resolve(tgt.run(this.downAt ? this.downAt.x : x, this.downAt ? this.downAt.y : y)).catch((e) => this.log.error('target', e)); } catch (e) { this.log.error('target', e); }
                 }
                 return;
             }

@@ -234,6 +234,9 @@ class VideoPlayer {
         if (process.send) {
             process.send({ t: 'video', action: 'seek', time: this.currentTimeSec });
         }
+        if (this.onProgress) {
+            this.onProgress(this.currentTimeSec, this.totalDurationSec, this.isPlaying);
+        }
     }
 
     stop() {

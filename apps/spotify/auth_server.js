@@ -20,6 +20,8 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const querystring = require('querystring');
+const url = require('url');
 
 const PORT = 8888;
 const SCOPES = [
@@ -67,7 +69,7 @@ class SpotifyAuthServer {
 
         this.server = http.createServer((req, res) => {
             const host = req.headers.host || `${this.ip}:${this.port}`;
-            const url = new URL(req.url, `http://${host}`);
+            const parsedUrl = url.parse(req.url, true);
 
             // CORS headers
             res.setHeader('Access-Control-Allow-Origin', '*');
@@ -81,31 +83,31 @@ class SpotifyAuthServer {
             }
 
             // Route: Home -> Login
-            if (url.pathname === '/' || url.pathname === '/login') {
+            if (parsedUrl.pathname === '/' || parsedUrl.pathname === '/login') {
                 this.handleLogin(req, res, host);
                 return;
             }
 
             // Route: Start OAuth Redirect
-            if (url.pathname === '/authorize') {
-                this.handleAuthorize(req, res, url, host);
+            if (parsedUrl.pathname === '/authorize') {
+                this.handleAuthorize(req, res, parsedUrl, host);
                 return;
             }
 
             // Route: OAuth Callback
-            if (url.pathname === '/callback') {
-                this.handleCallback(req, res, url, host);
+            if (parsedUrl.pathname === '/callback') {
+                this.handleCallback(req, res, parsedUrl, host);
                 return;
             }
 
             // Route: Direct Token Save (Alternative)
-            if (url.pathname === '/save_token' && req.method === 'POST') {
+            if (parsedUrl.pathname === '/save_token' && req.method === 'POST') {
                 this.handleSaveToken(req, res);
                 return;
             }
 
             // Route: Status check
-            if (url.pathname === '/status') {
+            if (parsedUrl.pathname === '/status') {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
                     isOnline: this.spotify.isOnline,
@@ -190,9 +192,10 @@ class SpotifyAuthServer {
         res.end(this.renderMobileHtml(host, clientId, clientSecret, isOnline));
     }
 
-    handleAuthorize(req, res, url, host) {
-        const qClientId = url.searchParams.get('client_id');
-        const qClientSecret = url.searchParams.get('client_secret');
+    handleAuthorize(req, res, parsedUrl, host) {
+        const query = parsedUrl.query || {};
+        const qClientId = query.client_id;
+        const qClientSecret = query.client_secret;
 
         const creds = this.getSavedCredentials();
         const clientId = (qClientId || creds.clientId || '').trim();
@@ -212,7 +215,7 @@ class SpotifyAuthServer {
         // Redirect URI: use the exact host reachable by this phone
         const redirectUri = `http://${host}/callback`;
 
-        const authParams = new URLSearchParams({
+        const authParams = querystring.stringify({
             response_type: 'code',
             client_id: clientId,
             scope: SCOPES,
@@ -220,13 +223,14 @@ class SpotifyAuthServer {
             show_dialog: 'true'
         });
 
-        res.writeHead(302, { Location: 'https://accounts.spotify.com/authorize?' + authParams.toString() });
+        res.writeHead(302, { Location: 'https://accounts.spotify.com/authorize?' + authParams });
         res.end();
     }
 
-    handleCallback(req, res, url, host) {
-        const code = url.searchParams.get('code');
-        const error = url.searchParams.get('error');
+    handleCallback(req, res, parsedUrl, host) {
+        const query = parsedUrl.query || {};
+        const code = query.code;
+        const error = query.error;
 
         if (error) {
             res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -279,8 +283,8 @@ class SpotifyAuthServer {
         req.on('data', chunk => { body += chunk; });
         req.on('end', () => {
             try {
-                const params = new URLSearchParams(body);
-                const token = (params.get('token') || '').trim();
+                const params = querystring.parse(body);
+                const token = (params.token || '').trim();
                 if (token) {
                     this.saveCredentialsAndTokens({
                         token,
@@ -301,11 +305,11 @@ class SpotifyAuthServer {
             return cb(new Error('Missing Client ID or Client Secret'));
         }
 
-        const postData = new URLSearchParams({
+        const postData = querystring.stringify({
             grant_type: 'authorization_code',
             code: code,
             redirect_uri: redirectUri
-        }).toString();
+        });
 
         const authHeader = 'Basic ' + Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
 

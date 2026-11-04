@@ -11,6 +11,7 @@
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const querystring = require('querystring');
 
 function decodeHtmlEntities(str) {
     if (!str || typeof str !== 'string') return '';
@@ -285,7 +286,7 @@ class SpotifyClient {
                 refresh_token: this.refreshToken,
                 client_id: this.clientId
             };
-            const postData = new URLSearchParams(params).toString();
+            const postData = querystring.stringify(params);
 
             const headers = {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -477,7 +478,7 @@ class SpotifyClient {
             const res = await this._request('GET', '/v1/me/playlists?limit=25');
             if (res && res.items) {
                 const list = res.items.map((pl, i) => {
-                    const count = pl.tracks ? (pl.tracks.total ?? 0) : (pl.items ? (pl.items.total ?? 0) : 0);
+                    const count = pl.tracks ? (pl.tracks.total != null ? pl.tracks.total : 0) : (pl.items ? (pl.items.total != null ? pl.items.total : 0) : 0);
                     return {
                         id: pl.id,
                         name: decodeHtmlEntities(pl.name),

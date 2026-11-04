@@ -15,6 +15,8 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
+const querystring = require('querystring');
+const url = require('url');
 
 const PORT = 8888;
 const REDIRECT_URI = `http://127.0.0.1:${PORT}/callback`;
@@ -72,10 +74,10 @@ Option B: Full Automatic OAuth (Auto-refreshes forever)
 
 // OAuth Flow
 const server = http.createServer((req, res) => {
-    const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
-    if (url.pathname === '/callback') {
-        const code = url.searchParams.get('code');
-        const error = url.searchParams.get('error');
+    const parsedUrl = url.parse(req.url, true);
+    if (parsedUrl.pathname === '/callback') {
+        const code = parsedUrl.query ? parsedUrl.query.code : null;
+        const error = parsedUrl.query ? parsedUrl.query.error : null;
 
         if (error) {
             res.writeHead(400, { 'Content-Type': 'text/html' });
@@ -115,12 +117,12 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-    const authUrl = 'https://accounts.spotify.com/authorize?' + new URLSearchParams({
+    const authUrl = 'https://accounts.spotify.com/authorize?' + querystring.stringify({
         response_type: 'code',
         client_id: clientId,
         scope: SCOPES,
         redirect_uri: REDIRECT_URI,
-    }).toString();
+    });
 
     console.log('Waiting for authorization on ' + REDIRECT_URI + '...');
     console.log('Opening browser for Spotify login...');
@@ -129,11 +131,11 @@ server.listen(PORT, '127.0.0.1', () => {
 });
 
 function exchangeCodeForToken(code, callback) {
-    const postData = new URLSearchParams({
+    const postData = querystring.stringify({
         grant_type: 'authorization_code',
         code: code,
         redirect_uri: REDIRECT_URI,
-    }).toString();
+    });
 
     const authHeader = Buffer.from(clientId + ':' + clientSecret).toString('base64');
     const req = https.request({

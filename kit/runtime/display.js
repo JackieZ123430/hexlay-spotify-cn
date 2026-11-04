@@ -182,7 +182,23 @@ class Display {
                 this._lost();                       // (shows the HMI's bar again)
             }, 1500);
         });
-        gpu.on('ccu', (v) => { if (this.gpu !== gpu) return; if (this.onCcu && !this.own()) this.onCcu(v); else this._ccu(v); });
+        gpu.on('ccu', (v) => {
+            if (this.gpu !== gpu) return;
+            if (this.onCcu && (this.grabbing || !this.own())) {
+                const k = Number(v.frontRotaryEncoderOperation), pb = Number(v.frontRotaryEncoderPushButton), df = Number(v.frontRotaryEncoderDeflection);
+                const L = this.ccuLast;
+                this.ccuLast = { k, pb, df };
+                if (pb === 15 && df === 15) return;
+                let d = L ? ((k - L.k + 32768) & 0xffff) - 32768 : 0;
+                if (Math.abs(d) > 64) d = 0;
+                const down = (x) => x === 1 || x === 2;
+                const press = down(pb) && !(L && down(L.pb));
+                const tilt = TILT[df] && !(L && TILT[L.df] === TILT[df]) ? TILT[df] : null;
+                try { this.onCcu({ knobTicks: d, press, tilt, k, pb, df, raw: v }); } catch (e) { this.log.error('onCcu', e); }
+            } else {
+                this._ccu(v);
+            }
+        });
         gpu.on('touch', (phase, x, y) => { if (this.gpu === gpu) this._touch(phase, x, y); });
         // the HMI was touched outside the tabs: shown again unless that left the screen
         gpu.on('closed', () => setTimeout(() => { if (this.gpu === gpu) this._syncVisible(); }, 700));
@@ -406,54 +422,55 @@ class Display {
     /**
      * Touch (logical px): a tap (down and up on the same thing) on a tab opens its page; with the kit
      * running the screen also on a bar button (pressed), a sheet's targets, or the page (ctx.onTap).
+     * Works across both hardware layer (own) and embed/software fallback placements.
      */
     _touch(phase, x, y) {
         const inside = (r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
-        if (this.own()) {
-            const pl = this.place, sx = x * pl.scale + pl.ox, sy = y * pl.scale + pl.oy;
-            const bar = sy >= pl.h - this.barH() ? this.buttons().find((b) => sx >= b.x - this.barOff - pl.x && sx < b.x - this.barOff - pl.x + b.w) : null;
-            // the header's tabs (Settings among them) work over a sheet too
-            const tab = !bar && (this.tabs || []).find(inside);
-            const tgt = !bar && !tab && !this.sheet ? (this.pageTargets || []).find(inside) : null;
-            const key = bar ? 'bar:' + bar.id : tab ? 'tab:' + tab.i : tgt ? 'tgt:' + tgt.key : this.sheet ? 'sheet:' + (this.sheetTargets || []).findIndex(inside) : null;
-            if (phase === 3 && this.dragging && !this.sheet) { this.dragging = false; this.ownDown = null; return; }
-            if (phase === 3 && !this.dragging && key && key === this.ownDown && (tab || tgt)) {
-                this.ownDown = null;
-                if (tab) this._openTab(tab.i);
-                else {
-                    this.pressed = key; this.pressedT = Date.now(); this._repaint();
-                    setTimeout(() => this._repaint(), 320);
-                    try { Promise.resolve(tgt.run(this.downAt ? this.downAt.x : x, this.downAt ? this.downAt.y : y)).catch((e) => this.log.error('target', e)); } catch (e) { this.log.error('target', e); }
-                }
+        const pl = this.place || { scale: 1, ox: 0, oy: 0, x: 0, y: 0, w: 1920, h: 720 };
+        const sx = x * pl.scale + pl.ox, sy = y * pl.scale + pl.oy;
+        const bar = sy >= pl.h - this.barH() ? this.buttons().find((b) => sx >= b.x - this.barOff - pl.x && sx < b.x - this.barOff - pl.x + b.w) : null;
+        // the header's tabs (Settings among them) work over a sheet too
+        const tab = !bar && (this.tabs || []).find(inside);
+        const tgt = !bar && !tab && !this.sheet ? (this.pageTargets || []).find(inside) : null;
+        const key = bar ? 'bar:' + bar.id : tab ? 'tab:' + tab.i : tgt ? 'tgt:' + tgt.key : this.sheet ? 'sheet:' + (this.sheetTargets || []).findIndex(inside) : null;
+        if (phase === 3 && this.dragging && !this.sheet) { this.dragging = false; this.ownDown = null; return; }
+        if (phase === 3 && !this.dragging && key && key === this.ownDown && (tab || tgt)) {
+            this.ownDown = null;
+            if (tab) this._openTab(tab.i);
+            else {
+                this.pressed = key; this.pressedT = Date.now(); this._repaint();
+                setTimeout(() => this._repaint(), 320);
+                try { Promise.resolve(tgt.run(this.downAt ? this.downAt.x : x, this.downAt ? this.downAt.y : y)).catch((e) => this.log.error('target', e)); } catch (e) { this.log.error('target', e); }
+            }
+            return;
+        }
+        // a finger moved on a sheet: its list follows (no tap then)
+        if (phase === 1) { this.ownDown = key; this.downAt = { x, y }; this.lastY = y; this.dragging = false; } else if (phase === 2) {
+            if (!this.sheet && this.pageScroll && this.onScroll && !bar && !tab && this.downAt) {
+                if (!this.dragging && Math.abs(y - this.downAt.y) > 14) this.dragging = true;
+                if (this.dragging) this._scrollBy(this.lastY - y);
+            }
+            if (this.sheet && this.sheet.scroll && !bar && this.downAt) {
+                if (!this.dragging && Math.abs(y - this.downAt.y) > 14) this.dragging = true;
+                if (this.dragging) { this.sheet.scroll(this.lastY - y); this._paintSheet(); }
+            }
+            this.lastY = y;
+        } else if (phase === 3) {
+            const was = this.ownDown;
+            this.ownDown = null;
+            if (this.dragging) { this.dragging = false; if (this.sheet && this.sheet.release) this.sheet.release(); return; }
+            if (bar && was === key) { this._click(bar.id); return; }
+            if (this.sheet) {
+                const i = (this.sheetTargets || []).findIndex(inside);
+                if (i >= 0 && was === key) this._sheetResult(this.sheetTargets[i].act());
                 return;
             }
-            // a finger moved on a sheet: its list follows (no tap then)
-            if (phase === 1) { this.ownDown = key; this.downAt = { x, y }; this.lastY = y; this.dragging = false; } else if (phase === 2) {
-                if (!this.sheet && this.pageScroll && this.onScroll && !bar && !tab && this.downAt) {
-                    if (!this.dragging && Math.abs(y - this.downAt.y) > 14) this.dragging = true;
-                    if (this.dragging) this._scrollBy(this.lastY - y);
-                }
-                if (this.sheet && this.sheet.scroll && !bar && this.downAt) {
-                    if (!this.dragging && Math.abs(y - this.downAt.y) > 14) this.dragging = true;
-                    if (this.dragging) { this.sheet.scroll(this.lastY - y); this._paintSheet(); }
-                }
-                this.lastY = y;
-            } else if (phase === 3) {
-                const was = this.ownDown;
-                this.ownDown = null;
-                if (this.dragging) { this.dragging = false; if (this.sheet && this.sheet.release) this.sheet.release(); return; }
-                if (bar && was === key) { this._click(bar.id); return; }
-                if (this.sheet) {
-                    const i = (this.sheetTargets || []).findIndex(inside);
-                    if (i >= 0 && was === key) this._sheetResult(this.sheetTargets[i].act());
-                    return;
-                }
-                if (was && was.indexOf('bar:') === 0) return;
-            }
-            if (bar || this.sheet || tab || tgt) return;
+            if (was && was.indexOf('bar:') === 0) return;
         }
+        if (bar || this.sheet || tab || tgt) return;
+
         const at = (this.tabs || []).find(inside);
-        if (!at && this.onTap && this.own() && phase === 3 && this.downAt && Math.abs(x - this.downAt.x) < 30 && Math.abs(y - this.downAt.y) < 30) {
+        if (!at && this.onTap && phase === 3 && this.downAt && Math.abs(x - this.downAt.x) < 30 && Math.abs(y - this.downAt.y) < 30) {
             Promise.resolve().then(() => this.onTap(x, y)).catch((e) => this.log.error('tap', e));
         }
         if (phase === 1) this.tabDown = at ? at.i : -1;
@@ -466,7 +483,7 @@ class Display {
 
     /** The tabs of the frame just sent (rects in logical px, or in the surface's for the header). */
     _claimTabs(rects, r) {
-        const pl = this.place;
+        const pl = this.place || { scale: 1, ox: 0, oy: 0, x: 0, y: 0, w: 1920, h: 720 };
         const logical = (q) => (r ? q : { i: q.i, x: (q.x - pl.ox) / pl.scale, y: (q.y - pl.oy) / pl.scale, w: q.w / pl.scale, h: q.h / pl.scale });
         this.tabs = (rects || []).map(logical);
         const W = pl.w, hx = HMI.left - pl.x, by = pl.h - this.barH();
@@ -475,9 +492,10 @@ class Display {
             this.gpu.claim([{ x: hx, y: 0, w: this.headEnd - hx, h: this.headH() }, { x: hx, y: this.headH(), w: W - hx, h: pl.h - this.headH() }].map(logical));
             return;
         }
-        if (!this.onTab || this.tabs.length < 2) { this.gpu.claim([]); return; }
-        this.gpu.claim(r ? [{ x: 0, y: 0, w: r.w, h: r.h }]
-            : [{ x: hx, y: 0, w: this.headEnd - hx, h: this.headH() }, { x: hx, y: this.headH(), w: W - hx, h: by - this.headH() }].map(logical));
+        if (this.gpu) {
+            this.gpu.claim(r ? [{ x: 0, y: 0, w: r.w, h: r.h }]
+                : [{ x: hx, y: 0, w: this.headEnd - hx, h: this.headH() }, { x: hx, y: this.headH(), w: W - hx, h: by - this.headH() }].map(logical));
+        }
     }
 
     /** GPU path gone (or off): the HMI's own image shows again - push a frame now. */

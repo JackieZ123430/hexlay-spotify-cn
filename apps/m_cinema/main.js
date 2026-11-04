@@ -103,6 +103,9 @@ mgu.run({
 
         function toggleFullscreen() {
             isFullscreen = !isFullscreen;
+            if (ctx.controller && ctx.controller.grab) {
+                ctx.controller.grab(isFullscreen);
+            }
             notify(isFullscreen ? 'Cinema Fullscreen' : 'Standard View');
             updateVideoBounds();
             render().catch(() => {});
@@ -378,27 +381,20 @@ mgu.run({
             cv.circle(thumbX, sy + 3, 7, '#ffffff');
             cv.arc(thumbX, sy + 3, 7, 9, 0, 360, '#00a3e0');
 
-            // Discrete segmented touch targets across the 992px scrubber bar
-            const numSegments = 50;
-            const segW = sw / numSegments;
-            for (let si = 0; si < numSegments; si++) {
-                const segX = vx + Math.floor(si * segW);
-                const segActualW = Math.ceil(segW) + 2;
-                const nominalRel = (si + 0.5) / numSegments;
-                cv.target(segX, sy - 16, segActualW, 38, (touchX) => {
-                    let rel = nominalRel;
-                    if (typeof touchX === 'number' && !isNaN(touchX) && touchX >= vx && touchX <= vx + sw) {
-                        rel = Math.max(0, Math.min(1, (touchX - vx) / sw));
-                    }
-                    playProgress = rel;
-                    if (totalDurationSec > 0) {
-                        currentTimeSec = Math.floor(rel * totalDurationSec);
-                        player.seek(currentTimeSec);
-                    }
-                    notify(`Seek: ${formatTime(currentTimeSec)}`);
-                    render().catch(() => {});
-                }, 'scrub_' + si, 8);
-            }
+            // High-precision touch scrubber target across the 992px scrubber bar
+            cv.target(vx, sy - 16, sw, 38, (touchX) => {
+                let rel = 0.5;
+                if (typeof touchX === 'number' && !isNaN(touchX) && touchX >= vx && touchX <= vx + sw) {
+                    rel = Math.max(0, Math.min(1, (touchX - vx) / sw));
+                }
+                playProgress = rel;
+                if (totalDurationSec > 0) {
+                    currentTimeSec = Math.floor(rel * totalDurationSec);
+                    player.seek(currentTimeSec);
+                }
+                notify(`Seek: ${formatTime(currentTimeSec)}`);
+                render().catch(() => {});
+            }, 'seekbar_std', 8);
 
             const durDisplay = totalDurationSec > 0 ? formatTime(totalDurationSec) : (video.duration || '0:00');
             const timeStr = `${formatTime(currentTimeSec)} / ${durDisplay}`;
@@ -526,27 +522,20 @@ mgu.run({
             cv.circle(fsThumbX, fsSy + 3, 7, '#ffffff');
             cv.arc(fsThumbX, fsSy + 3, 7, 9, 0, 360, '#00a3e0');
 
-            // Discrete segmented touch targets across the fullscreen scrubber bar
-            const fsSegments = 60;
-            const fsSegW = fsW / fsSegments;
-            for (let si = 0; si < fsSegments; si++) {
-                const segX = fsX + Math.floor(si * fsSegW);
-                const segActualW = Math.ceil(fsSegW) + 2;
-                const nominalRel = (si + 0.5) / fsSegments;
-                cv.target(segX, fsSy - 20, segActualW, 40, (touchX) => {
-                    let rel = nominalRel;
-                    if (typeof touchX === 'number' && !isNaN(touchX) && touchX >= fsX && touchX <= fsX + fsW) {
-                        rel = Math.max(0, Math.min(1, (touchX - fsX) / fsW));
-                    }
-                    playProgress = rel;
-                    if (totalDurationSec > 0) {
-                        currentTimeSec = Math.floor(rel * totalDurationSec);
-                        player.seek(currentTimeSec);
-                    }
-                    notify(`Seek: ${formatTime(currentTimeSec)}`);
-                    render().catch(() => {});
-                }, 'scrub_fs_' + si, 16);
-            }
+            // High-precision touch scrubber target across the fullscreen scrubber bar
+            cv.target(fsX, fsSy - 20, fsW, 40, (touchX) => {
+                let rel = 0.5;
+                if (typeof touchX === 'number' && !isNaN(touchX) && touchX >= fsX && touchX <= fsX + fsW) {
+                    rel = Math.max(0, Math.min(1, (touchX - fsX) / fsW));
+                }
+                playProgress = rel;
+                if (totalDurationSec > 0) {
+                    currentTimeSec = Math.floor(rel * totalDurationSec);
+                    player.seek(currentTimeSec);
+                }
+                notify(`Seek: ${formatTime(currentTimeSec)}`);
+                render().catch(() => {});
+            }, 'seekbar_fs', 16);
         }
 
         /* ---------- Video Screen Canvas Renderer (Debloated 60 fps Vector Stage) ---------- */
@@ -942,51 +931,55 @@ mgu.run({
             return ctx.openSettings ? ctx.openSettings() : null;
         });
 
-        // Controller rotary knob & tilt
-        ctx.controller.grab(true);
+        // Controller rotary knob & tilt (exclusive grab only in Fullscreen Cinema Mode)
+        ctx.controller.grab(false);
         ctx.controller.onInput((ev) => {
-            if (page === 0 && isFullscreen && (ev.tilt === 'W' || ev.tilt === 'S')) {
+            if (!ev) return;
+            if (isFullscreen && (ev.tilt === 'W' || ev.tilt === 'S')) {
                 toggleFullscreen();
                 return;
             }
-            if (page === 0 && ev.knobTicks) {
+            if (isFullscreen && ev.knobTicks) {
                 if (totalDurationSec > 0) {
                     currentTimeSec = Math.max(0, Math.min(totalDurationSec, currentTimeSec + ev.knobTicks * 5));
                     playProgress = currentTimeSec / totalDurationSec;
+                    player.seek(currentTimeSec);
                     notify(`Seek: ${formatTime(currentTimeSec)}`);
                 }
                 render().catch(() => {});
-            } else if (page === 1 && ev.knobTicks) {
+                return;
+            }
+            if (isFullscreen && ev.press) {
+                isPlaying = !isPlaying;
+                if (isPlaying) player.resume();
+                else player.pause();
+                render().catch(() => {});
+                return;
+            }
+            if (page === 1 && ev.knobTicks) {
                 if (ev.knobTicks > 0) {
                     searchScroll = Math.min(Math.max(0, searchResults.length - 4), searchScroll + 1);
                 } else {
                     searchScroll = Math.max(0, searchScroll - 1);
                 }
                 render().catch(() => {});
+                return;
             }
-            if (ev.press) {
-                if (page === 0) {
-                    isPlaying = !isPlaying;
-                    if (isPlaying) player.resume();
-                    else player.pause();
-                    render().catch(() => {});
-                    return;
-                } else if (page === 1 && searchResults.length > 0) {
-                    const first = searchResults[searchScroll];
-                    if (first) {
-                        playVideo({
-                            ytId: first.id,
-                            title: first.title,
-                            channel: first.channel,
-                            duration: first.duration,
-                            durationSec: first.durationSec || parseDurationSec(first.duration),
-                            views: first.views,
-                            quality: '720p HD',
-                            glow: '#0066b1',
-                            desc: first.channel ? `${first.channel}  |  ${first.duration}  |  ${first.views}` : first.url,
-                            url: first.url
-                        });
-                    }
+            if (page === 1 && ev.press && searchResults.length > 0) {
+                const first = searchResults[searchScroll];
+                if (first) {
+                    playVideo({
+                        ytId: first.id,
+                        title: first.title,
+                        channel: first.channel,
+                        duration: first.duration,
+                        durationSec: first.durationSec || parseDurationSec(first.duration),
+                        views: first.views,
+                        quality: '720p HD',
+                        glow: '#0066b1',
+                        desc: first.channel ? `${first.channel}  |  ${first.duration}  |  ${first.views}` : first.url,
+                        url: first.url
+                    });
                 }
                 render().catch(() => {});
             }

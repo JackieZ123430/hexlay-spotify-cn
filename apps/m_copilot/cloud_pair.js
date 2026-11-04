@@ -1,16 +1,14 @@
 'use strict';
 /**
- * Cloud Pairing & Voice Relay Manager for BMW iDrive 7 M-Copilot.
+ * Cloud Pairing Manager for BMW iDrive 7 M-Copilot.
  *
- * Provides smartphone-to-car cloud pairing & real-time voice input:
+ * Provides smartphone-to-car cloud pairing:
  *   1. Displays QR code pointing to:
  *      https://hexlay.github.io/idrive7-custom-apps/copilot.html?channel=<CHANNEL>
  *   2. User scans QR code with smartphone over 4G, 5G, or Wi-Fi (no 127.0.0.1 / localhost).
  *   3. User enters free Google Gemini API Key or custom key and taps Connect.
  *   4. Mobile browser publishes payload to secure relay channel.
  *   5. Car head unit receives configuration, verifies uplink, saves to copilot_auth.json.
- *   6. Once paired, continues polling for real-time Voice Input & queries from smartphone,
- *      and sends AI answers back to phone for optional Bluetooth Text-to-Speech (TTS).
  */
 const https = require('https');
 
@@ -35,7 +33,6 @@ class CloudPairManager {
         this.lastSince = Math.floor(Date.now() / 1000) - (this.ai && this.ai.isConfigured() ? 2 : 7200);
 
         this.onPaired = null;
-        this.onVoiceQuery = null;
     }
 
     getPairingUrl() {
@@ -63,6 +60,10 @@ class CloudPairManager {
 
         const check = () => {
             if (!this.isPolling) return;
+            if (this.ai && this.ai.isConfigured()) {
+                this.stopPolling();
+                return;
+            }
 
             let url = `https://ntfy.sh/${this.channel}/json?poll=1`;
             if (this.lastMsgId) {
@@ -90,7 +91,6 @@ class CloudPairManager {
                                 this.handleIncomingMessage(item.message);
                             }
                         } catch (e) {
-                            // Non-json raw fallback
                             this.handleIncomingMessage(line);
                         }
                     }
@@ -100,7 +100,7 @@ class CloudPairManager {
             req.on('timeout', () => { req.destroy(); });
         };
 
-        this.pollInterval = setInterval(check, 2000);
+        this.pollInterval = setInterval(check, 2500);
         check();
     }
 
@@ -124,52 +124,12 @@ class CloudPairManager {
 
         if (!parsed) return;
 
-        // 1. Credentials Pairing Event
+        // Credentials Pairing Event
         if (parsed.geminiApiKey || parsed.apiKey || parsed.sessionToken) {
             this.log.info('CloudPair: Received AI credentials via cloud relay!');
             this.ai.saveCredentials(parsed);
+            this.stopPolling();
             if (this.onPaired) this.onPaired();
-            return;
-        }
-
-        // 2. Real-time Voice Query or Remote Prompt
-        if (parsed.type === 'voice_query' || parsed.type === 'prompt' || parsed.type === 'voice') {
-            const queryText = (parsed.query || parsed.prompt || parsed.text || '').trim();
-            if (queryText) {
-                this.log.info(`CloudPair: Received voice query from smartphone: "${queryText}"`);
-                if (this.onVoiceQuery) {
-                    this.onVoiceQuery(queryText, parsed.title || 'Voice Assistant', parsed.lang);
-                }
-            }
-        }
-    }
-
-    sendResponse(query, answer) {
-        try {
-            const payload = JSON.stringify({
-                type: 'copilot_response',
-                query: query,
-                answer: answer,
-                time: Date.now()
-            });
-            const replyTopic = this.channel + '_reply';
-            const req = https.request('https://ntfy.sh/' + replyTopic, {
-                method: 'POST',
-                headers: {
-                    'Title': 'M-Copilot Answer',
-                    'Content-Type': 'application/json',
-                    'Content-Length': Buffer.byteLength(payload)
-                },
-                timeout: 5000
-            }, (res) => {
-                res.resume();
-            });
-            req.on('error', () => {});
-            req.on('timeout', () => { req.destroy(); });
-            req.write(payload);
-            req.end();
-        } catch (e) {
-            this.log.warn('CloudPair: sendResponse error: ' + e.message);
         }
     }
 

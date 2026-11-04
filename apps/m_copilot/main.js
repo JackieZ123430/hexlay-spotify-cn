@@ -6,10 +6,9 @@
  *   1. Zero Duplicate Tabs:
  *      Single unified screen ('M-Copilot'). When unconfigured, it seamlessly displays the
  *      Setup & Pairing QR code. Once paired, it unlocks the full AI Co-Driver interface.
- *   2. Cloud Pairing & Real-time Voice Relay (Zero 127.0.0.1 / localhost):
+ *   2. Cloud Pairing (Zero 127.0.0.1 / localhost):
  *      QR Code points to https://hexlay.github.io/idrive7-custom-apps/copilot.html?channel=...
  *      Allows pairing from any smartphone over 4G/5G/Wi-Fi with free Google Gemini API Key.
- *      Enables live Smartphone Microphone Voice Input and Bluetooth Text-to-Speech (TTS).
  *   3. 20 Technical Co-Driver Topics across 4 Categories:
  *      - Dynamics & Track (Launch, Drift/xDrive, Mountain Pass, M Brakes, Shift Speed)
  *      - Thermal & DME (Turbo Cooling, Oil Warm-Up, Intercooling, Air Flaps, Cat Warm)
@@ -95,7 +94,6 @@ mgu.run({
         cloudPair.startPolling();
 
         let showPairing = false;
-        let showVoiceModal = false;
         let isThinking = false;
         let thinkTimer = null;
         let lastRenderTime = 0;
@@ -105,7 +103,7 @@ mgu.run({
         let selectedTopicIdx = 0;
 
         let currentPrompt = TOPIC_CATEGORIES[0].topics[0].title;
-        let currentResponse = 'M-Copilot ready. Select a category & topic chip or speak via smartphone microphone.';
+        let currentResponse = 'M-Copilot ready. Select a category & topic chip or ask a vehicle question.';
         let statusMsg = null;
         let statusTime = 0;
 
@@ -177,16 +175,6 @@ mgu.run({
             render(true).catch(() => {});
         };
 
-        // Real-time Voice Query Handler from smartphone
-        cloudPair.onVoiceQuery = (queryText, title) => {
-            showVoiceModal = false;
-            showPairing = false;
-            const preview = queryText.length > 28 ? queryText.slice(0, 28) + '...' : queryText;
-            notify('Voice: "' + preview + '"');
-            currentPrompt = title && title !== 'Voice Assistant' ? title : ('Voice: ' + preview);
-            askCopilot(queryText, currentPrompt);
-        };
-
         function notify(msg) {
             statusMsg = msg;
             statusTime = Date.now();
@@ -232,8 +220,6 @@ mgu.run({
             try {
                 const answer = await ai.ask(queryText, telemetry, { persona });
                 currentResponse = answer;
-                // Dispatch answer back to smartphone relay for Bluetooth Text-to-Speech (TTS)
-                cloudPair.sendResponse(queryText, answer);
             } catch (e) {
                 currentResponse = 'Error: ' + e.message;
             } finally {
@@ -367,7 +353,7 @@ mgu.run({
             cv.text('GOOGLE GEMINI AI SETUP', ix, 170, 24, '#00a3e0', { font: 'bold', spacing: 1 });
             cv.text('M-Copilot connects directly to Google Gemini 1.5/2.0 Flash (Free Tier @ $0.00).', ix, 206, 17, '#ffffff');
             cv.text('Scan the QR code with your phone (Zero 127.0.0.1 / localhost - works anywhere over 4G/5G/Wi-Fi).', ix, 234, 16, '#94a3b8');
-            cv.text('Enter your free Gemini API key on the phone page to link your car co-driver and enable voice input.', ix, 258, 16, '#94a3b8');
+            cv.text('Enter your free Gemini API key on the phone page to link your car co-driver.', ix, 258, 16, '#94a3b8');
 
             // Status indicator
             cv.roundRect(ix, 290, 380, 36, 8, withAlpha('#00a3e0', 0.15));
@@ -384,81 +370,6 @@ mgu.run({
                     showPairing = false;
                     render(true);
                 }, 'btn_back_copilot', 10);
-            }
-        }
-
-        /* ---------- Voice Co-Driver Station (Panel 2 Overlay) ---------- */
-        function drawVoiceStation(cv, t, now) {
-            G.panel(cv, t, 510, 52, 1050, 410, 'Voice Co-Driver Station');
-
-            // Live Engine Vitals in header
-            cv.text(`${telemetry.oilTemp}°C OIL  ·  ${telemetry.coolantTemp}°C COOLANT  ·  ${telemetry.batteryVoltage}V`, 1530, 80, 13, t.dim, { align: 'right', font: 'num' });
-
-            // Voice Station Card
-            const rx = 530, ry = 104, rw = 1010, rh = 340;
-            cv.roundRect(rx, ry, rw, rh, 12, '#090e15');
-            cv.strokeRoundRect(rx, ry, rw, rh, 12, 1, t.panelEdge);
-
-            // Left decorative M stripe
-            cv.fillRect(rx + 2, ry + 12, 4, rh - 24, '#00a3e0');
-
-            // Mic Icon & Animated Voice Soundwave Ripples
-            const cx = 615, cy = 185;
-            const pulse = (now % 1600) / 1600;
-            cv.circle(cx, cy, 38 + Math.floor(pulse * 14), withAlpha('#00a3e0', (1 - pulse) * 0.45));
-            cv.circle(cx, cy, 32, withAlpha('#004e8c', 0.85));
-            cv.arc(cx, cy, 30.5, 32, 0, 360, '#00f0ff');
-            cv.text('MIC', cx, cy + 5, 12, '#00f0ff', { align: 'center', font: 'bold' });
-
-            // Title & Subtitle
-            cv.text('VOICE CO-DRIVER (SMARTPHONE MIC)', 675, 168, 21, '#00a3e0', { font: 'bold', spacing: 1 });
-            cv.text('Speak freely into your paired smartphone microphone to ask any vehicle question.', 675, 196, 14, '#ffffff');
-
-            // Channel Status Badge
-            const chW = 460, chH = 34, chX = 675, chY = 216;
-            cv.roundRect(chX, chY, chW, chH, 6, withAlpha('#00a3e0', 0.15));
-            cv.strokeRoundRect(chX, chY, chW, chH, 6, 1, '#00a3e0');
-            cv.text(`LISTENING ON RELAY: ${cloudPair.getShortCode()}  ·  CELLULAR / WI-FI`, chX + chW / 2, chY + 23, 13, '#00f0ff', { align: 'center', font: 'bold' });
-
-            // Suggested Voice Queries
-            cv.text('Sample voice questions to try:', 565, 276, 14, '#cbd5e1', { font: 'bold' });
-            cv.text('· "Is the engine oil warm enough to launch right now?"', 575, 299, 14, '#94a3b8');
-            cv.text('· "Check tire pressures and rubber compound grip window"', 575, 320, 14, '#94a3b8');
-            cv.text('· "What are the recommended factory oil specifications?"', 575, 341, 14, '#94a3b8');
-            cv.text('· "Scan powertrain for any pending OBD-II fault codes"', 575, 362, 14, '#94a3b8');
-
-            // Back to Dialogue button
-            const bBackX = 565, bBackY = 388, bBackW = 220, bBackH = 40;
-            cv.roundRect(bBackX, bBackY, bBackW, bBackH, 8, '#004e8c');
-            cv.strokeRoundRect(bBackX, bBackY, bBackW, bBackH, 8, 1.5, '#00a3e0');
-            cv.text('BACK TO DIALOGUE', bBackX + bBackW / 2, bBackY + 25, 14, '#ffffff', { align: 'center', font: 'bold' });
-            cv.target(bBackX, bBackY, bBackW, bBackH, () => {
-                showVoiceModal = false;
-                render(true);
-            }, 'btn_close_voice', 10);
-
-            // Right side Companion QR Card to open Phone Mic
-            const qr = getPairingQr();
-            if (qr) {
-                const qrx = 1250, qry = 135, qrsz = 180;
-                const modCount = qr.size;
-                const modPx = Math.floor(qrsz / modCount);
-                const actualSz = modPx * modCount;
-                const ox = qrx + Math.floor((qrsz - actualSz) / 2);
-                const oy = qry + Math.floor((qrsz - actualSz) / 2);
-
-                cv.roundRect(ox - 8, oy - 8, actualSz + 16, actualSz + 16, 8, '#ffffff');
-                for (let r = 0; r < modCount; r++) {
-                    for (let c = 0; c < modCount; c++) {
-                        if (qr.getModule(c, r)) {
-                            cv.fillRect(ox + c * modPx, oy + r * modPx, modPx, modPx, '#000000');
-                        }
-                    }
-                }
-
-                cv.text('OPEN PHONE MIC', 1340, 345, 14, '#00f0ff', { align: 'center', font: 'bold' });
-                cv.text('Scan with phone camera', 1340, 366, 12, '#94a3b8', { align: 'center' });
-                cv.text('Speaks answers via Bluetooth audio', 1340, 386, 11, '#64748b', { align: 'center' });
             }
         }
 
@@ -517,37 +428,17 @@ mgu.run({
                 askCopilot(currentTopic.query, currentTopic.title);
             }, 'btn_ask', 10);
 
-            // Dual Bottom Action Row: [ 🎙️ VOICE INPUT ] & [ PAIR / QR ]
-            const botY = 402, botH = 38;
-            const vW = 195, vX = 60;
-            cv.roundRect(vX, botY, vW, botH, 8, withAlpha('#00a3e0', showVoiceModal ? 0.35 : 0.14));
-            cv.strokeRoundRect(vX, botY, vW, botH, 8, 1.5, showVoiceModal ? '#00f0ff' : '#00a3e0');
-            cv.text('VOICE INPUT', vX + vW / 2, botY + 24, 13, showVoiceModal ? '#ffffff' : '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
-            cv.target(vX, botY, vW, botH, () => {
-                if (!ai.isConfigured()) {
-                    showPairing = true;
-                } else {
-                    showVoiceModal = !showVoiceModal;
-                }
-                render(true);
-            }, 'btn_voice_mode', 8);
-
-            const pW = 195, pX = 265;
-            cv.roundRect(pX, botY, pW, botH, 8, withAlpha('#00a3e0', 0.12));
-            cv.strokeRoundRect(pX, botY, pW, botH, 8, 1.5, '#00a3e0');
-            cv.text('PAIR / QR', pX + pW / 2, botY + 24, 13, '#00a3e0', { align: 'center', font: 'bold', spacing: 1 });
-            cv.target(pX, botY, pW, botH, () => {
+            // Secondary Re-pair / QR Code button
+            const pairW = 400, pairH = 38, pairX = 60, pairY = 404;
+            cv.roundRect(pairX, pairY, pairW, pairH, 8, withAlpha('#00a3e0', 0.12));
+            cv.strokeRoundRect(pairX, pairY, pairW, pairH, 8, 1.5, '#00a3e0');
+            cv.text('PAIR PHONE / QR CODE', pairX + pairW / 2, pairY + 24, 14, '#00a3e0', { align: 'center', font: 'bold', spacing: 1 });
+            cv.target(pairX, pairY, pairW, pairH, () => {
                 showPairing = true;
-                showVoiceModal = false;
                 render(true);
             }, 'btn_relink', 8);
 
-            // Panel 2 (Right): Dialogue Stream OR Voice Co-Driver Station
-            if (showVoiceModal) {
-                drawVoiceStation(cv, t, now);
-                return;
-            }
-
+            // Panel 2 (Right): Dialogue Stream
             G.panel(cv, t, 510, 52, 1050, 410, 'Dialogue: ' + currentPrompt);
 
             // Live Engine Vitals in header
@@ -656,13 +547,11 @@ mgu.run({
 
         ui.onClick('BTN_REPAIR', () => {
             showPairing = !showPairing;
-            showVoiceModal = false;
             return render(true);
         });
 
         ctx.onTab(() => {
             showPairing = false;
-            showVoiceModal = false;
             return render(true);
         });
 

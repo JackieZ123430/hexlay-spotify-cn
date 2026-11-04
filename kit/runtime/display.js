@@ -164,18 +164,18 @@ class Display {
         const gpu = this.gpu = new RenderClient(this.spec.id, this.log, Object.assign({ native }, file ? { file } : {}));
         gpu.on('ready', () => { if (this.gpu !== gpu) return; this._place(); this._syncVisible(); this._grab(); });
         gpu.on('tick', () => { if (this.gpu === gpu) { this.tickT = Date.now(); this.tickHandlers.forEach((fn) => fn()); } });
-        gpu.on('close', () => { if (this.gpu === gpu) { this.blocked = false; this._lost(); } });
+        gpu.on('close', () => { if (this.gpu === gpu) { clearTimeout(this.frontTimer); this.blocked = false; this._lost(); } });
         gpu.on('stats', (s) => { this.gpuStats = s; });
         // mgu-render/1: the renderer shows the app only while its foreground gate has it in front. A screen
         // that stays shown here while the gate says otherwise (seen: a leftover install claiming the same
         // RHMI uuid, which the gate then ignores) is drawn in the HMI's own image until the gate agrees.
         gpu.on('state', (st) => {
             if (this.gpu !== gpu) return;
+            clearTimeout(this.frontTimer);
             if (st.front) {
                 if (this.blocked) { this.blocked = false; this.log.info('display: renderer has the app in front again'); this.lastWords = null; this._syncVisible(); this._grab(); this._hmiBar(); }
                 return;
             }
-            clearTimeout(this.frontTimer);
             this.frontTimer = setTimeout(() => {
                 if (this.gpu !== gpu || gpu.onScreen || this.blocked || !this._shown()) return;
                 this.blocked = true;
@@ -187,7 +187,6 @@ class Display {
         });
         gpu.on('ccu', (v) => {
             if (this.gpu !== gpu) return;
-            let handled = false;
             if (this.onCcu && (this.grabbing || !this.own())) {
                 const k = Number(v.frontRotaryEncoderOperation), pb = Number(v.frontRotaryEncoderPushButton), df = Number(v.frontRotaryEncoderDeflection);
                 const L = this.ccuLast;
@@ -199,10 +198,9 @@ class Display {
                 const press = down(pb) && !(L && down(L.pb));
                 const tilt = TILT[df] && !(L && TILT[L.df] === TILT[df]) ? TILT[df] : null;
                 try {
-                    handled = this.onCcu({ knobTicks: d, press, tilt, k, pb, df, raw: v }) !== false;
+                    this.onCcu({ knobTicks: d, press, tilt, k, pb, df, raw: v });
                 } catch (e) { this.log.error('onCcu', e); }
-            }
-            if (!handled) {
+            } else {
                 this._ccu(v);
             }
         });
@@ -302,7 +300,10 @@ class Display {
         this.tickHandlers.forEach((fn) => fn());         // the app draws its next frame
         if (sh.onClose) try { sh.onClose(); } catch (e) { this.log.error(e); }
     }
-    _sheetResult(res) {
+    /** Run fn (the sheet's press, back or a target's act; from the socket's data handler) and act on what it returns. */
+    _sheetResult(fn) {
+        let res;
+        try { res = fn(); } catch (e) { res = Promise.reject(e); }
         Promise.resolve(res).then((v) => { if (v === 'close') this.closeSheet(); else this._paintSheet(); })
             .catch((e) => { this.log.error('sheet', e); this._paintSheet(); });
     }
@@ -359,8 +360,8 @@ class Display {
                 return;
             }
             if (d) { this.sheet.move(d); this._paintSheet(); }
-            if (press) this._sheetResult(this.sheet.press());
-            if (tilt === 'W') this._sheetResult(this.sheet.back());
+            if (press) this._sheetResult(() => this.sheet.press());
+            if (tilt === 'W') this._sheetResult(() => this.sheet.back());
             return;
         }
         // pushed up / down / left / right: the nearest place that way; left with nothing there goes back (leaves the app)
@@ -436,55 +437,54 @@ class Display {
     /**
      * Touch (logical px): a tap (down and up on the same thing) on a tab opens its page; with the kit
      * running the screen also on a bar button (pressed), a sheet's targets, or the page (ctx.onTap).
-     * Works across both hardware layer (own) and embed/software fallback placements.
      */
     _touch(phase, x, y) {
         const inside = (r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
-        const pl = this.place || { scale: 1, ox: 0, oy: 0, x: 0, y: 0, w: 1920, h: 720 };
-        const sx = x * pl.scale + pl.ox, sy = y * pl.scale + pl.oy;
-        const bar = sy >= pl.h - this.barH() ? this.buttons().find((b) => sx >= b.x - this.barOff - pl.x && sx < b.x - this.barOff - pl.x + b.w) : null;
-        // the header's tabs (Settings among them) work over a sheet too
-        const tab = !bar && (this.tabs || []).find(inside);
-        const tgt = !bar && !tab && !this.sheet ? (this.pageTargets || []).find(inside) : null;
-        const key = bar ? 'bar:' + bar.id : tab ? 'tab:' + tab.i : tgt ? 'tgt:' + tgt.key : this.sheet ? 'sheet:' + (this.sheetTargets || []).findIndex(inside) : null;
-        if (phase === 3 && this.dragging && !this.sheet) { this.dragging = false; this.ownDown = null; return; }
-        if (phase === 3 && !this.dragging && key && key === this.ownDown && (tab || tgt)) {
-            this.ownDown = null;
-            if (tab) this._openTab(tab.i);
-            else {
-                this.pressed = key; this.pressedT = Date.now(); this._repaint();
-                setTimeout(() => this._repaint(), 320);
-                try { Promise.resolve(tgt.run(this.downAt ? this.downAt.x : x, this.downAt ? this.downAt.y : y)).catch((e) => this.log.error('target', e)); } catch (e) { this.log.error('target', e); }
-            }
-            return;
-        }
-        // a finger moved on a sheet: its list follows (no tap then)
-        if (phase === 1) { this.ownDown = key; this.downAt = { x, y }; this.lastY = y; this.dragging = false; } else if (phase === 2) {
-            if (!this.sheet && this.pageScroll && this.onScroll && !bar && !tab && this.downAt) {
-                if (!this.dragging && Math.abs(y - this.downAt.y) > 14) this.dragging = true;
-                if (this.dragging) this._scrollBy(this.lastY - y);
-            }
-            if (this.sheet && this.sheet.scroll && !bar && this.downAt) {
-                if (!this.dragging && Math.abs(y - this.downAt.y) > 14) this.dragging = true;
-                if (this.dragging) { this.sheet.scroll(this.lastY - y); this._paintSheet(); }
-            }
-            this.lastY = y;
-        } else if (phase === 3) {
-            const was = this.ownDown;
-            this.ownDown = null;
-            if (this.dragging) { this.dragging = false; if (this.sheet && this.sheet.release) this.sheet.release(); return; }
-            if (bar && was === key) { this._click(bar.id); return; }
-            if (this.sheet) {
-                const i = (this.sheetTargets || []).findIndex(inside);
-                if (i >= 0 && was === key) this._sheetResult(this.sheetTargets[i].act());
+        if (this.own()) {
+            const pl = this.place, sx = x * pl.scale + pl.ox, sy = y * pl.scale + pl.oy;
+            const bar = sy >= pl.h - this.barH() ? this.buttons().find((b) => sx >= b.x - this.barOff - pl.x && sx < b.x - this.barOff - pl.x + b.w) : null;
+            // the header's tabs (Settings among them) work over a sheet too
+            const tab = !bar && (this.tabs || []).find(inside);
+            const tgt = !bar && !tab && !this.sheet ? (this.pageTargets || []).find(inside) : null;
+            const key = bar ? 'bar:' + bar.id : tab ? 'tab:' + tab.i : tgt ? 'tgt:' + tgt.key : this.sheet ? 'sheet:' + (this.sheetTargets || []).findIndex(inside) : null;
+            if (phase === 3 && this.dragging && !this.sheet) { this.dragging = false; this.ownDown = null; return; }
+            if (phase === 3 && !this.dragging && key && key === this.ownDown && (tab || tgt)) {
+                this.ownDown = null;
+                if (tab) this._openTab(tab.i);
+                else {
+                    this.pressed = key; this.pressedT = Date.now(); this._repaint();
+                    setTimeout(() => this._repaint(), 320);
+                    try { Promise.resolve(tgt.run(this.downAt ? this.downAt.x : x, this.downAt ? this.downAt.y : y)).catch((e) => this.log.error('target', e)); } catch (e) { this.log.error('target', e); }
+                }
                 return;
             }
-            if (was && was.indexOf('bar:') === 0) return;
+            // a finger moved on a sheet: its list follows (no tap then)
+            if (phase === 1) { this.ownDown = key; this.downAt = { x, y }; this.lastY = y; this.dragging = false; } else if (phase === 2) {
+                if (!this.sheet && this.pageScroll && this.onScroll && !bar && !tab && this.downAt) {
+                    if (!this.dragging && Math.abs(y - this.downAt.y) > 14) this.dragging = true;
+                    if (this.dragging) this._scrollBy(this.lastY - y);
+                }
+                if (this.sheet && this.sheet.scroll && !bar && this.downAt) {
+                    if (!this.dragging && Math.abs(y - this.downAt.y) > 14) this.dragging = true;
+                    if (this.dragging) { this.sheet.scroll(this.lastY - y); this._paintSheet(); }
+                }
+                this.lastY = y;
+            } else if (phase === 3) {
+                const was = this.ownDown;
+                this.ownDown = null;
+                if (this.dragging) { this.dragging = false; if (this.sheet && this.sheet.release) this.sheet.release(); return; }
+                if (bar && was === key) { this._click(bar.id); return; }
+                if (this.sheet) {
+                    const i = (this.sheetTargets || []).findIndex(inside);
+                    if (i >= 0 && was === key) this._sheetResult(() => this.sheetTargets[i].act());
+                    return;
+                }
+                if (was && was.indexOf('bar:') === 0) return;
+            }
+            if (bar || this.sheet || tab || tgt) return;
         }
-        if (bar || this.sheet || tab || tgt) return;
-
         const at = (this.tabs || []).find(inside);
-        if (!at && this.onTap && phase === 3 && this.downAt && Math.abs(x - this.downAt.x) < 30 && Math.abs(y - this.downAt.y) < 30) {
+        if (!at && this.onTap && this.own() && phase === 3 && this.downAt && Math.abs(x - this.downAt.x) < 30 && Math.abs(y - this.downAt.y) < 30) {
             Promise.resolve().then(() => this.onTap(x, y)).catch((e) => this.log.error('tap', e));
         }
         if (phase === 1) this.tabDown = at ? at.i : -1;
@@ -497,7 +497,7 @@ class Display {
 
     /** The tabs of the frame just sent (rects in logical px, or in the surface's for the header). */
     _claimTabs(rects, r) {
-        const pl = this.place || { scale: 1, ox: 0, oy: 0, x: 0, y: 0, w: 1920, h: 720 };
+        const pl = this.place;
         const logical = (q) => (r ? q : { i: q.i, x: (q.x - pl.ox) / pl.scale, y: (q.y - pl.oy) / pl.scale, w: q.w / pl.scale, h: q.h / pl.scale });
         this.tabs = (rects || []).map(logical);
         const W = pl.w, hx = HMI.left - pl.x, by = pl.h - this.barH();
@@ -506,10 +506,9 @@ class Display {
             this.gpu.claim([{ x: hx, y: 0, w: this.headEnd - hx, h: this.headH() }, { x: hx, y: this.headH(), w: W - hx, h: pl.h - this.headH() }].map(logical));
             return;
         }
-        if (this.gpu) {
-            this.gpu.claim(r ? [{ x: 0, y: 0, w: r.w, h: r.h }]
-                : [{ x: hx, y: 0, w: this.headEnd - hx, h: this.headH() }, { x: hx, y: this.headH(), w: W - hx, h: by - this.headH() }].map(logical));
-        }
+        if (!this.onTab || this.tabs.length < 2) { this.gpu.claim([]); return; }
+        this.gpu.claim(r ? [{ x: 0, y: 0, w: r.w, h: r.h }]
+            : [{ x: hx, y: 0, w: this.headEnd - hx, h: this.headH() }, { x: hx, y: this.headH(), w: W - hx, h: by - this.headH() }].map(logical));
     }
 
     /** GPU path gone (or off): the HMI's own image shows again - push a frame now. */

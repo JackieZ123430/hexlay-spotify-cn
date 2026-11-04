@@ -109,8 +109,17 @@ class ThumbnailManager {
     _fetchUrl(targetUrl, cb, redirectCount = 0) {
         if (redirectCount > 4) return cb(null);
         try {
-            const client = targetUrl.startsWith('https://') ? https : http;
-            const req = client.get(targetUrl, { timeout: 5000 }, (res) => {
+            const isHttps = targetUrl.startsWith('https://');
+            const client = isHttps ? https : http;
+            const u = url.parse(targetUrl);
+            const options = {
+                hostname: u.hostname,
+                port: u.port || (isHttps ? 443 : 80),
+                path: u.path,
+                headers: { 'User-Agent': 'Mozilla/5.0 (BMW iDrive 7)' },
+                timeout: 5000
+            };
+            const req = client.get(options, (res) => {
                 if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                     const nextUrl = res.headers.location.startsWith('http') ?
                         res.headers.location :

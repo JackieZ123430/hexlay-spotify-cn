@@ -68,6 +68,7 @@
 
 #define MAX_CLIENTS 16
 #define MAX_MSG (24u << 20)
+#define MAX_IN (MAX_MSG + (1u << 17))  /* an app's input buffer: a whole MAX_MSG message, its header and some of the next */
 #define LAYER_BASE layer_base      /* "MR"; the community renderers use "MG", 0x4d470000 and 0x4d470100 */
 #define SURF_BASE surf_base
 static uint32_t layer_base = 0x4d520000u, surf_base = 0x4d520100u;
@@ -118,7 +119,8 @@ void touch_unmap(int *x, int *y) {
 }
 
 /* yield surfaces (camera, video): layer mode hides while one is visible */
-static struct { uint32_t id; struct ivi_controller_surface *s; int visible; } yield[CFG_MAX_YIELD];
+/* an HMI surface the layer apps yield to: visible and with a size (its configuration); a visible 0x0 one shows nothing */
+static struct { uint32_t id; struct ivi_controller_surface *s; int visible, w, h; } yield[CFG_MAX_YIELD];
 static int nyield, yielding;
 
 typedef struct client {
@@ -193,20 +195,29 @@ static void c_screen(void *d, struct ivi_controller *c, uint32_t id, struct ivi_
 static void c_layer(void *d, struct ivi_controller *c, uint32_t id) { (void)d, (void)c, (void)id; }
 
 static void update_all(void);
-static void y_visibility(void *d, struct ivi_controller_surface *s, int32_t v) {
-    (void)s;
-    int i = (int)(intptr_t)d, any = 0;
-    yield[i].visible = v != 0;
-    for (int k = 0; k < nyield; k++) any |= yield[k].visible;
+static void yield_update(int i) {
+    int any = 0;
+    for (int k = 0; k < nyield; k++) any |= yield[k].visible && yield[k].w > 0 && yield[k].h > 0;
     if (any != yielding) {
         yielding = any;
         log_info(any ? "surface %#x visible: layer apps yield the screen" : "surface %#x hidden: layer apps may show", yield[i].id);
         update_all();
     }
 }
+static void y_visibility(void *d, struct ivi_controller_surface *s, int32_t v) {
+    (void)s;
+    int i = (int)(intptr_t)d;
+    yield[i].visible = v != 0;
+    yield_update(i);
+}
 static void y_opacity(void *d, struct ivi_controller_surface *s, wl_fixed_t o) { (void)d, (void)s, (void)o; }
 static void y_rect(void *d, struct ivi_controller_surface *s, int32_t x, int32_t y, int32_t w, int32_t h) { (void)d, (void)s, (void)x, (void)y, (void)w, (void)h; }
-static void y_config(void *d, struct ivi_controller_surface *s, int32_t w, int32_t h) { (void)d, (void)s, (void)w, (void)h; }
+static void y_config(void *d, struct ivi_controller_surface *s, int32_t w, int32_t h) {
+    (void)s;
+    int i = (int)(intptr_t)d;
+    yield[i].w = w; yield[i].h = h;
+    yield_update(i);
+}
 static void y_int(void *d, struct ivi_controller_surface *s, int32_t v) { (void)d, (void)s, (void)v; }
 static void y_layer(void *d, struct ivi_controller_surface *s, struct ivi_controller_layer *l) { (void)d, (void)s, (void)l; }
 static void y_stats(void *d, struct ivi_controller_surface *s, uint32_t a, uint32_t b, uint32_t c, uint32_t p, const char *n) {
@@ -216,7 +227,8 @@ static void y_destroyed(void *d, struct ivi_controller_surface *s) {
     int i = (int)(intptr_t)d;
     wl_proxy_destroy((struct wl_proxy *)s);
     yield[i].s = NULL;
-    y_visibility(d, NULL, 0);
+    yield[i].visible = 0;
+    yield_update(i);
 }
 static const struct ivi_controller_surface_listener yield_listener = {
     y_visibility, y_opacity, y_rect, y_rect, y_config, y_int, y_int, y_layer, y_stats, y_destroyed, y_int,
@@ -300,7 +312,7 @@ static void c_surface(void *d, struct ivi_controller *c, uint32_t id) {
         while (k < nyield && yield[k].id != id) k++;
         if (k == nyield) { if (nyield == CFG_MAX_YIELD) return; nyield++; }
         if (yield[k].s) return;
-        yield[k].id = id; yield[k].visible = 0;
+        yield[k].id = id; yield[k].visible = 0; yield[k].w = yield[k].h = 0;
         yield[k].s = ivi_controller_surface_create(c, id);
         ivi_controller_surface_add_listener(yield[k].s, &yield_listener, (void *)(intptr_t)k);
         log_info("watching surface %#x", id);
@@ -402,7 +414,7 @@ static int gate_applies(const client *c) {
  * when their screen goes; for them the gate only hides while it names another app in front, so a gate that reads
  * nothing (on a unit it cannot read) leaves them as they were without it. */
 static int in_front(const client *c) {
-    if (!gate_applies(c)) return 1;
+    if (!gate_applies(c) || gate_unavailable()) return 1;
     if (legacy(c) && c->mode == MODE_LAYER) return !gate_any_front() || gate_front(c->uid);
     return gate_reported() && gate_front(c->uid);
 }
@@ -1113,7 +1125,7 @@ static int handle(client *c, uint32_t type, const uint8_t *p, uint32_t len) {
     case M_RAMP: {
         if (nw < 2 || w[1] > 64 || nw < 2 + (size_t)w[1]) return -1;
         make_current_any(c);
-        gfx_ramp(&c->g, w[0], (int)w[1], w + 2);
+        if (gfx_ramp(&c->g, w[0], (int)w[1], w + 2) < 0) { log_warn("%s: %s", c->app, gfx_error()); send_error(c, gfx_error()); }
         return 0;
     }
     case M_LAYER: {
@@ -1330,16 +1342,8 @@ static void record(client *c, uint32_t type, const uint8_t *msg, uint32_t len) {
     if (c->rec) fwrite(msg, 1, 8 + (size_t)len, c->rec);
 }
 
-static int client_read(client *c) {
-    for (;;) {
-        if (c->incap - c->inlen < 65536) { c->incap = c->incap ? c->incap * 2 : 262144; c->in = realloc(c->in, c->incap); }
-        ssize_t r = recv(c->fd, c->in + c->inlen, c->incap - c->inlen, MSG_DONTWAIT);
-        if (r == 0) return -1;
-        if (r < 0) { if (errno == EAGAIN || errno == EWOULDBLOCK) break; if (errno == EINTR) continue; return -1; }
-        c->inlen += (size_t)r;
-        c->last_msg = now_us();
-        if (c->stale) { c->stale = 0; log_info("%s: talking again", c->app); update_all(); }
-    }
+/* the whole messages in c->in; makes room for the one that is not whole yet */
+static int client_parse(client *c) {
     if (!c->started && c->inlen >= 4 && dbr_is_magic(c->in)) {
         c->dialect = DIALECT_DBR;
         snprintf(c->app, sizeof c->app, "display-bridge app (uid %u)", c->uid);
@@ -1374,13 +1378,35 @@ static int client_read(client *c) {
         /* payload must be 4-byte aligned for the word views: copy if it is not */
         const uint8_t *pl = c->in + off + 8;
         uint8_t *tmp = NULL;
-        if (((uintptr_t)pl & 3) != 0) { tmp = malloc(len + 4); memcpy(tmp, pl, len); pl = tmp; }
+        if (((uintptr_t)pl & 3) != 0) { if (!(tmp = malloc(len + 4))) return -1; memcpy(tmp, pl, len); pl = tmp; }
         int rc = handle(c, type, pl, len);
         free(tmp);
         if (rc < 0) { log_warn("%s: bad message %u (len %u)", c->app, type, len); return -1; }
         off += 8 + len;
     }
     if (off) { memmove(c->in, c->in + off, c->inlen - off); c->inlen -= off; }
+    return 0;
+}
+
+/* parses between reads: the buffer holds at most one message being received (MAX_IN), however fast the app sends.
+   Reads about MAX_IN a wakeup: an app that never pauses does not hold up the others (poll comes back for the rest). */
+static int client_read(client *c) {
+    for (size_t got = 0; got < MAX_IN;) {
+        if (c->incap - c->inlen < 65536 && c->incap < MAX_IN) {
+            size_t cap = c->incap ? c->incap * 2 : 262144;
+            if (cap > MAX_IN) cap = MAX_IN;
+            uint8_t *n = realloc(c->in, cap);
+            if (!n) { log_warn("%s: out of memory for its messages", c->app); return -1; }
+            c->in = n; c->incap = cap;
+        }
+        ssize_t r = recv(c->fd, c->in + c->inlen, c->incap - c->inlen, MSG_DONTWAIT);
+        if (r == 0) return -1;
+        if (r < 0) { if (errno == EAGAIN || errno == EWOULDBLOCK) return 0; if (errno == EINTR) continue; return -1; }
+        c->inlen += (size_t)r; got += (size_t)r;
+        c->last_msg = now_us();
+        if (c->stale) { c->stale = 0; log_info("%s: talking again", c->app); update_all(); }
+        if (client_parse(c) < 0) return -1;
+    }
     return 0;
 }
 

@@ -471,16 +471,6 @@ mgu.run({
                 cv.video(1, 0, 0, W, H, 0);
             }
 
-            if (isPlaying) {
-                // Sleek minimalist Spectrum Visualizer in bottom-right corner
-                const eqX = W - 180, eqY = H - 20;
-                for (let bi = 0; bi < 16; bi++) {
-                    const wave = Math.abs(Math.sin((now / 160) + bi * 0.6));
-                    const barH = 4 + Math.floor(wave * 22);
-                    const col = bi < 5 ? '#0066b1' : (bi < 11 ? '#00a3e0' : '#e1001a');
-                    cv.roundRect(eqX + bi * 9, eqY - barH, 6, barH, 2, col);
-                }
-            }
 
             // Floating Normal View Exit Button in top-right corner
             const btnExitW = 160, btnExitH = 42;
@@ -505,6 +495,61 @@ mgu.run({
                 notify(isPlaying ? 'Resumed' : 'Paused');
                 render().catch(() => {});
             }, 'btn_play_toggle_fs', 15);
+
+            // Fullscreen Cinema Bottom Scrubber Bar & Time HUD
+            const fsX = 48, fsW = W - 96;
+            const fsY = H - 54;
+            const durDisplay = totalDurationSec > 0 ? formatTime(totalDurationSec) : ((video && video.duration) || '0:00');
+            const timeStr = `${formatTime(currentTimeSec)} / ${durDisplay}`;
+
+            // HUD Background Pill for Scrubber info
+            cv.roundRect(fsX - 12, fsY - 6, fsW + 24, 48, 10, withAlpha('#080d16', 0.85));
+            cv.strokeRoundRect(fsX - 12, fsY - 6, fsW + 24, 48, 10, 1, withAlpha('#00a3e0', 0.3));
+
+            // Time & Quality badges
+            cv.text(timeStr, fsX + 8, fsY + 12, 14, '#e2e8f0', { font: 'num' });
+            cv.text('720p HD', fsX + 170, fsY + 12, 11, '#00a3e0', { font: 'bold' });
+
+            // Spectrum Visualizer inside the HUD pill
+            if (isPlaying) {
+                const eqX = fsX + fsW - 152, eqY = fsY + 14;
+                for (let bi = 0; bi < 16; bi++) {
+                    const wave = Math.abs(Math.sin((now / 160) + bi * 0.6));
+                    const barH = 3 + Math.floor(wave * 14);
+                    const col = bi < 5 ? '#0066b1' : (bi < 11 ? '#00a3e0' : '#e1001a');
+                    cv.roundRect(eqX + bi * 9, eqY - barH, 6, barH, 2, col);
+                }
+            }
+
+            // Scrubber Track
+            const fsSy = fsY + 24;
+            cv.roundRect(fsX, fsSy, fsW, 6, 3, '#1e293b');
+            const fsThumbX = fsX + Math.floor(fsW * playProgress);
+            cv.roundRect(fsX, fsSy, Math.max(6, fsThumbX - fsX), 6, 3, '#0066b1');
+            cv.circle(fsThumbX, fsSy + 3, 7, '#ffffff');
+            cv.arc(fsThumbX, fsSy + 3, 7, 9, 0, 360, '#00a3e0');
+
+            // Discrete segmented touch targets across the fullscreen scrubber bar
+            const fsSegments = 60;
+            const fsSegW = fsW / fsSegments;
+            for (let si = 0; si < fsSegments; si++) {
+                const segX = fsX + Math.floor(si * fsSegW);
+                const segActualW = Math.ceil(fsSegW) + 2;
+                const nominalRel = (si + 0.5) / fsSegments;
+                cv.target(segX, fsSy - 20, segActualW, 40, (touchX) => {
+                    let rel = nominalRel;
+                    if (typeof touchX === 'number' && !isNaN(touchX) && touchX >= fsX && touchX <= fsX + fsW) {
+                        rel = Math.max(0, Math.min(1, (touchX - fsX) / fsW));
+                    }
+                    playProgress = rel;
+                    if (totalDurationSec > 0) {
+                        currentTimeSec = Math.floor(rel * totalDurationSec);
+                        player.seek(currentTimeSec);
+                    }
+                    notify(`Seek: ${formatTime(currentTimeSec)}`);
+                    render().catch(() => {});
+                }, 'scrub_fs_' + si, 16);
+            }
         }
 
         /* ---------- Video Screen Canvas Renderer (Debloated 60 fps Vector Stage) ---------- */

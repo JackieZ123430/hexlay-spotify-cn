@@ -139,12 +139,15 @@ function ensureVideoLayer() {
     let hideTimer = null;
     const showControls = () => {
       const hud = $('#video-fs-hud');
+      const bottom = $('#video-fs-bottom');
       if (hud) hud.classList.remove('faded');
+      if (bottom) bottom.classList.remove('faded');
       clearTimeout(hideTimer);
       if (videoLayer && videoLayer.classList.contains('fullscreen')) {
         hideTimer = setTimeout(() => {
           if (hud) hud.classList.add('faded');
-        }, 3000);
+          if (bottom) bottom.classList.add('faded');
+        }, 3500);
       }
     };
     stage.addEventListener('pointermove', showControls);
@@ -240,6 +243,49 @@ function ensureFloatingHUD(layer) {
     hud.append(playBtn, exitBtn);
     layer.append(hud);
   }
+
+  let bottom = $('#video-fs-bottom');
+  if (!bottom && layer) {
+    bottom = el('div', { id: 'video-fs-bottom', class: 'video-fs-bottom' });
+    bottom.innerHTML = `
+      <div class="video-fs-meta">
+        <span id="video-fs-time" class="video-fs-time">0:00 / 0:00</span>
+        <span class="video-fs-badge">720p HD</span>
+      </div>
+      <div id="video-fs-track" class="video-fs-track">
+        <div id="video-fs-fill" class="video-fs-fill"></div>
+        <div id="video-fs-thumb" class="video-fs-thumb"></div>
+      </div>
+    `;
+
+    const track = bottom.querySelector('#video-fs-track');
+    const handleSeek = (e) => {
+      e.stopPropagation();
+      const rect = track.getBoundingClientRect();
+      const rel = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      let dur = 0;
+      if (ytPlayer && typeof ytPlayer.getDuration === 'function') dur = ytPlayer.getDuration() || 0;
+      else if (activeVideoElem && activeVideoElem.duration) dur = activeVideoElem.duration;
+      else if (lastVideoMsg && lastVideoMsg.duration) dur = lastVideoMsg.duration;
+      const targetTime = Math.floor(rel * dur);
+      if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
+        const wasPlaying = lastVideoMsg && lastVideoMsg.action === 'play';
+        try {
+          ytPlayer.seekTo(targetTime, true);
+          if (wasPlaying) ytPlayer.playVideo();
+          else ytPlayer.pauseVideo();
+        } catch (err) {}
+      }
+      sendYtCmd('seekTo', [targetTime, true]);
+      if (activeVideoElem && activeVideoElem.tagName === 'VIDEO') activeVideoElem.currentTime = targetTime;
+      send({ t: 'video-progress', time: targetTime, duration: dur, playing: lastVideoMsg && lastVideoMsg.action === 'play' });
+      updateFsProgress(targetTime, dur);
+    };
+
+    track.addEventListener('click', handleSeek);
+    bottom.addEventListener('click', (e) => e.stopPropagation());
+    layer.append(bottom);
+  }
 }
 
 function ensureExitButton(layer) {
@@ -308,7 +354,57 @@ function sendYtCmd(func, args = []) {
   }
 }
 
+function formatTime(sec) {
+  if (!sec || isNaN(sec)) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s < 10 ? '0' : ''}${s}`;
+}
+
+function updateFsProgress(cur, dur) {
+  const timeEl = $('#video-fs-time');
+  const fillEl = $('#video-fs-fill');
+  const thumbEl = $('#video-fs-thumb');
+  if (timeEl && dur > 0) {
+    timeEl.textContent = `${formatTime(cur)} / ${formatTime(dur)}`;
+  }
+  const pct = dur > 0 ? Math.min(100, Math.max(0, (cur / dur) * 100)) : 0;
+  if (fillEl) fillEl.style.width = `${pct}%`;
+  if (thumbEl) thumbEl.style.left = `${pct}%`;
+}
+
+function enforcePlayerPreferences() {
+  if (ytPlayer) {
+    try {
+      // Choose 720p HD always if available
+      if (typeof ytPlayer.setPlaybackQuality === 'function') {
+        ytPlayer.setPlaybackQuality('hd720');
+      }
+      if (typeof ytPlayer.setPlaybackQualityRange === 'function') {
+        ytPlayer.setPlaybackQualityRange('hd720', 'hd720');
+      }
+      // Disable captions always
+      if (typeof ytPlayer.unloadModule === 'function') {
+        ytPlayer.unloadModule('captions');
+        ytPlayer.unloadModule('cc');
+      }
+      if (typeof ytPlayer.setOption === 'function') {
+        ytPlayer.setOption('captions', 'track', {});
+        ytPlayer.setOption('cc', 'track', {});
+        ytPlayer.setOption('captions', 'reload', false);
+      }
+    } catch (e) {}
+  }
+  sendYtCmd('setPlaybackQuality', ['hd720']);
+  sendYtCmd('setPlaybackQualityRange', ['hd720', 'hd720']);
+  sendYtCmd('unloadModule', ['captions']);
+  sendYtCmd('unloadModule', ['cc']);
+  sendYtCmd('setOption', ['captions', 'track', {}]);
+  sendYtCmd('setOption', ['cc', 'track', {}]);
+}
+
 function onYtStateChange(state) {
+  enforcePlayerPreferences();
   // YouTube states: 1 = PLAYING, 2 = PAUSED, 0 = ENDED, 3 = BUFFERING
   if (state === 1) {
     if (!lastVideoMsg) lastVideoMsg = {};
@@ -357,6 +453,7 @@ function startAutoplayPolling() {
       try { ytPlayer.playVideo(); } catch (e) {}
     }
     sendYtCmd('playVideo', []);
+    enforcePlayerPreferences();
     if (attempts > 20) {
       clearInterval(autoPlayTimer);
       autoPlayTimer = null;
@@ -372,12 +469,14 @@ function initYtPlayer() {
         events: {
           onReady: (event) => {
             try {
+              enforcePlayerPreferences();
               if (lastVideoMsg && lastVideoMsg.action === 'play') {
                 event.target.playVideo();
               }
             } catch (e) {}
           },
           onStateChange: (event) => {
+            enforcePlayerPreferences();
             onYtStateChange(event.data);
           }
         }
@@ -393,6 +492,7 @@ window.addEventListener('message', (ev) => {
       if (data.event === 'onStateChange' && typeof data.info === 'number') {
         onYtStateChange(data.info);
       } else if (data.event === 'onReady' || data.event === 'initialDelivery') {
+        enforcePlayerPreferences();
         if (lastVideoMsg && lastVideoMsg.action === 'play') {
           sendYtCmd('playVideo', []);
           if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
@@ -444,6 +544,7 @@ function startProgressReporting() {
     }
     if (duration > 0 || time > 0) {
       send({ t: 'video-progress', time, duration, playing: isPlaying });
+      updateFsProgress(time, duration);
     }
   }, 1000);
 }
@@ -500,21 +601,25 @@ function handleVideoEvent(m) {
           currentYtId = ytId;
           if (ytPlayer && typeof ytPlayer.loadVideoById === 'function') {
             try {
-              ytPlayer.loadVideoById({ videoId: ytId, startSeconds: 0 });
+              ytPlayer.loadVideoById({ videoId: ytId, startSeconds: 0, suggestedQuality: 'hd720' });
               ytPlayer.playVideo();
+              enforcePlayerPreferences();
             } catch (e) {
-              sendYtCmd('loadVideoById', [ytId, 0]);
+              sendYtCmd('loadVideoById', [{ videoId: ytId, startSeconds: 0, suggestedQuality: 'hd720' }]);
               sendYtCmd('playVideo');
+              enforcePlayerPreferences();
             }
           } else {
-            sendYtCmd('loadVideoById', [ytId, 0]);
+            sendYtCmd('loadVideoById', [{ videoId: ytId, startSeconds: 0, suggestedQuality: 'hd720' }]);
             sendYtCmd('playVideo');
+            enforcePlayerPreferences();
           }
         } else {
           if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
             try { ytPlayer.playVideo(); } catch (e) {}
           }
           sendYtCmd('playVideo');
+          enforcePlayerPreferences();
         }
         startAutoplayPolling();
       } else {
@@ -528,7 +633,7 @@ function handleVideoEvent(m) {
 
         const iframe = el('iframe', {
           id: 'emu-yt-iframe',
-          src: `https://www.youtube.com/embed/${ytId}?autoplay=1&mute=1&controls=0&modestbranding=1&rel=0&playsinline=1&enablejsapi=1&fs=0&iv_load_policy=3&disablekb=1&origin=${encodeURIComponent(location.origin)}`,
+          src: `https://www.youtube.com/embed/${ytId}?autoplay=1&mute=1&controls=0&modestbranding=1&rel=0&playsinline=1&enablejsapi=1&fs=0&iv_load_policy=3&disablekb=1&cc_load_policy=0&origin=${encodeURIComponent(location.origin)}`,
           allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
           allowfullscreen: 'true',
           sandbox: 'allow-scripts allow-same-origin allow-presentation'

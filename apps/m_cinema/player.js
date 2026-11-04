@@ -106,6 +106,8 @@ class VideoPlayer {
                 duration: this.totalDurationSec,
                 time: this.currentTimeSec,
                 fullscreen: !!(videoMeta && videoMeta.fullscreen),
+                quality: 'hd720',
+                captions: false,
                 x: bX,
                 y: bY,
                 w: bW,

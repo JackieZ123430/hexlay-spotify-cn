@@ -153,6 +153,34 @@ function unmuteAudio() {
   if (btn) btn.style.display = 'none';
 }
 
+let autoPlayTimer = null;
+function startAutoplayPolling() {
+  if (autoPlayTimer) clearInterval(autoPlayTimer);
+  let attempts = 0;
+  autoPlayTimer = setInterval(() => {
+    attempts++;
+    if (!lastVideoMsg || lastVideoMsg.action !== 'play') {
+      clearInterval(autoPlayTimer);
+      autoPlayTimer = null;
+      return;
+    }
+    if (ytPlayer && typeof ytPlayer.getPlayerState === 'function') {
+      const st = ytPlayer.getPlayerState();
+      if (st === 1 || st === 3) {
+        clearInterval(autoPlayTimer);
+        autoPlayTimer = null;
+        return;
+      }
+      try { ytPlayer.playVideo(); } catch (e) {}
+    }
+    sendYtCmd('playVideo');
+    if (attempts > 20) {
+      clearInterval(autoPlayTimer);
+      autoPlayTimer = null;
+    }
+  }, 200);
+}
+
 function initYtPlayer() {
   if (ytPlayer || !activeVideoElem || activeVideoElem.id !== 'emu-yt-iframe') return;
   if (window.YT && window.YT.Player) {
@@ -162,7 +190,16 @@ function initYtPlayer() {
           onReady: (event) => {
             try {
               event.target.playVideo();
+              if (currentYtId) {
+                event.target.loadVideoById({ videoId: currentYtId, startSeconds: 0 });
+                event.target.playVideo();
+              }
             } catch (e) {}
+          },
+          onStateChange: (event) => {
+            if ((event.data === 5 || event.data === -1) && lastVideoMsg && lastVideoMsg.action === 'play') {
+              try { event.target.playVideo(); } catch (e) {}
+            }
           }
         }
       });
@@ -170,10 +207,51 @@ function initYtPlayer() {
   }
 }
 
+window.addEventListener('message', (ev) => {
+  try {
+    const data = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
+    if (data && (data.event === 'onReady' || data.event === 'initialDelivery' || data.event === 'onStateChange')) {
+      if (lastVideoMsg && lastVideoMsg.action === 'play') {
+        sendYtCmd('playVideo');
+        if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+          try { ytPlayer.playVideo(); } catch (err) {}
+        }
+      }
+    }
+  } catch (err) {}
+});
+
 stage.addEventListener('pointerdown', (e) => {
   // If user interacted with stage or video, unmute audio on user gesture
-  if (activeVideoElem) unmuteAudio();
+  if (activeVideoElem) {
+    unmuteAudio();
+    if (lastVideoMsg && lastVideoMsg.action === 'play') {
+      if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+        try { ytPlayer.playVideo(); } catch (err) {}
+      }
+      sendYtCmd('playVideo');
+    }
+  }
 }, { capture: true });
+
+function destroyVideoPlayer() {
+  lastVideoMsg = null;
+  currentYtId = null;
+  if (autoPlayTimer) {
+    clearInterval(autoPlayTimer);
+    autoPlayTimer = null;
+  }
+  if (ytPlayer && typeof ytPlayer.destroy === 'function') {
+    try { ytPlayer.destroy(); } catch (e) {}
+    ytPlayer = null;
+  }
+  activeVideoElem = null;
+  if (videoLayer) {
+    videoLayer.style.display = 'none';
+    videoLayer.hidden = true;
+    videoLayer.replaceChildren();
+  }
+}
 
 window.handleVideoEvent = handleVideoEvent;
 
@@ -188,7 +266,32 @@ function handleVideoEvent(m) {
 
     const ytId = m.ytId || extractYtId(m.url);
     if (ytId) {
-      if (currentYtId !== ytId) {
+      const existingIframe = $('#emu-yt-iframe');
+      if (existingIframe && (activeVideoElem === existingIframe || ytPlayer)) {
+        // Video layer & iframe already active: seamlessly switch video without recreation!
+        if (currentYtId !== ytId) {
+          currentYtId = ytId;
+          if (ytPlayer && typeof ytPlayer.loadVideoById === 'function') {
+            try {
+              ytPlayer.loadVideoById({ videoId: ytId, startSeconds: 0 });
+              ytPlayer.playVideo();
+            } catch (e) {
+              sendYtCmd('loadVideoById', [ytId, 0]);
+              sendYtCmd('playVideo');
+            }
+          } else {
+            sendYtCmd('loadVideoById', [ytId, 0]);
+            sendYtCmd('playVideo');
+          }
+        } else {
+          if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+            try { ytPlayer.playVideo(); } catch (e) {}
+          }
+          sendYtCmd('playVideo');
+        }
+        startAutoplayPolling();
+      } else {
+        // First initialization of video layer
         currentYtId = ytId;
         if (ytPlayer && typeof ytPlayer.destroy === 'function') {
           try { ytPlayer.destroy(); } catch (e) {}
@@ -221,6 +324,7 @@ function handleVideoEvent(m) {
         iframe.addEventListener('load', () => {
           sendYtCmd('playVideo');
           initYtPlayer();
+          startAutoplayPolling();
         });
 
         if (window.YT && window.YT.Player) {
@@ -237,10 +341,7 @@ function handleVideoEvent(m) {
             }
           }, 100);
         }
-      } else if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
-        try { ytPlayer.playVideo(); } catch (e) {}
-      } else {
-        sendYtCmd('playVideo');
+        startAutoplayPolling();
       }
     } else if (m.url) {
       currentYtId = null;
@@ -260,6 +361,10 @@ function handleVideoEvent(m) {
     break;
   }
   case 'pause':
+    if (autoPlayTimer) {
+      clearInterval(autoPlayTimer);
+      autoPlayTimer = null;
+    }
     if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
       try { ytPlayer.pauseVideo(); } catch (e) {}
     } else if (activeVideoElem) {
@@ -275,11 +380,12 @@ function handleVideoEvent(m) {
       try { ytPlayer.playVideo(); } catch (e) {}
     } else if (activeVideoElem) {
       if (activeVideoElem.tagName === 'IFRAME') {
-        triggerPlayAndUnmute();
+        sendYtCmd('playVideo');
       } else if (typeof activeVideoElem.play === 'function') {
         activeVideoElem.play();
       }
     }
+    startAutoplayPolling();
     break;
   case 'seek':
     if (typeof m.time === 'number') {
@@ -312,17 +418,18 @@ function handleVideoEvent(m) {
     }
     break;
   case 'stop':
-    lastVideoMsg = null;
-    currentYtId = null;
-    if (ytPlayer && typeof ytPlayer.destroy === 'function') {
-      try { ytPlayer.destroy(); } catch (e) {}
-      ytPlayer = null;
+    if (autoPlayTimer) {
+      clearInterval(autoPlayTimer);
+      autoPlayTimer = null;
     }
-    activeVideoElem = null;
+    if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+      try { ytPlayer.pauseVideo(); } catch (e) {}
+    } else if (activeVideoElem) {
+      sendYtCmd('pauseVideo');
+    }
     if (layer) {
       layer.style.display = 'none';
       layer.hidden = true;
-      layer.replaceChildren();
     }
     break;
   }
@@ -331,6 +438,7 @@ function handleVideoEvent(m) {
 function onText(m) {
   switch (m.t) {
   case 'hello':
+    if (m.app !== S.app) destroyVideoPlayer();
     S.app = m.app;
     $('#touchroute').checked = m.touch !== false;
     $('#app').replaceChildren(...m.apps.map((id) => el('option', { value: id, textContent: id, selected: id === m.app })));
@@ -354,7 +462,7 @@ function onText(m) {
     break;
   case 'screens':
     S.stack = m.stack; S.closed = !!m.closed; renderHmi(); picker();
-    if (m.closed) handleVideoEvent({ action: 'stop' });
+    if (m.closed) destroyVideoPlayer();
     break;
   case 'video': handleVideoEvent(m); break;
   case 'focus': S.focus = m.id; renderHmi(); break;

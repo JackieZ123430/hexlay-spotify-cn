@@ -34,6 +34,7 @@ const G = require('./kit/gauges');
 const { YouTubeSearchEngine } = require('./youtube_search');
 const { YouTubeLoungeReceiver } = require('./lounge');
 const { VideoPlayer } = require('./player');
+const { ThumbnailManager, THUMB_BASE_ID } = require('./thumbnail_manager');
 
 const W = 1600, H = 520;
 const PAGES = ['Now Playing', 'Search', 'Connect'];
@@ -117,6 +118,7 @@ mgu.run({
         let searchScroll = 0;
         const searchEngine = new YouTubeSearchEngine(log);
         let searchResults = searchEngine.getFeatured();
+        const thumbManager = new ThumbnailManager(log, () => render().catch(() => {}));
 
         // Active YouTube video
         let activeCastVideo = {
@@ -154,11 +156,11 @@ mgu.run({
             video.quality = '720p HD';
             video.ytId = video.ytId || video.id || extractYouTubeId(video.url) || null;
             activeCastVideo = video;
-            setPage(0); // jump directly to Now Playing
             isPlaying = true;
             currentTimeSec = 0;
             totalDurationSec = video.durationSec || parseDurationSec(video.duration);
             playProgress = 0;
+            setPage(0); // jump directly to Now Playing (sends 'show' now that isPlaying is true)
 
             // If connected to YouTube on TV Lounge, notify session
             if (video.ytId && loungeReceiver && loungeReceiver.isConnected) {
@@ -410,6 +412,8 @@ mgu.run({
             // Touch target over entire video screen to toggle Play/Pause
             cv.target(x, y, w, h, () => {
                 isPlaying = !isPlaying;
+                if (isPlaying) player.resume();
+                else player.pause();
                 notify(isPlaying ? 'Play' : 'Pause');
                 render().catch(() => {});
             }, 'vid_screen', 10);
@@ -533,17 +537,30 @@ mgu.run({
                 cv.text('Use keyboard or category chips to search.', listX + itemW / 2, 268, 13, '#475569', { align: 'center' });
             }
 
+            const thumbW = 80;
+            const thumbH = 50;
+            const textStartX = listX + thumbW + 18;
+
             visibleResults.forEach((item, idx) => {
                 cv.roundRect(listX, itemY, itemW, itemH, 8, '#0b111a');
                 cv.strokeRoundRect(listX, itemY, itemW, itemH, 8, 1, '#1b2a3f');
 
-                // Small thumbnail box / play icon
-                cv.roundRect(listX + 8, itemY + 8, 72, 52, 6, '#141e2c');
-                drawPlayGlyph(cv, listX + 44, itemY + 34, 16, '#00a3e0');
+                // Render decoded video thumbnail or fallback glyph
+                const imgId = THUMB_BASE_ID + idx;
+                const thumbUrl = item.thumbnail || ('https://img.youtube.com/vi/' + item.id + '/mqdefault.jpg');
+                const hasThumb = thumbManager.load(item.id, thumbUrl, idx);
+
+                if (hasThumb) {
+                    cv.image(imgId, listX + 8, itemY + 9, thumbW, thumbH);
+                    cv.strokeRoundRect(listX + 8, itemY + 9, thumbW, thumbH, 6, 1, withAlpha('#00a3e0', 0.45));
+                } else {
+                    cv.roundRect(listX + 8, itemY + 9, thumbW, thumbH, 6, '#141e2c');
+                    drawPlayGlyph(cv, listX + 8 + thumbW / 2, itemY + 9 + thumbH / 2, 16, '#00a3e0');
+                }
 
                 // Title, channel and duration
-                cv.text(trunc(item.title, 26), listX + 90, itemY + 28, 14, '#ffffff', { font: 'bold' });
-                cv.text(trunc(item.channel, 22), listX + 90, itemY + 50, 12, '#94a3b8');
+                cv.text(trunc(item.title, 24), textStartX, itemY + 28, 14, '#ffffff', { font: 'bold' });
+                cv.text(trunc(item.channel, 20), textStartX, itemY + 50, 12, '#94a3b8');
                 cv.text(item.duration, listX + itemW - 14, itemY + 50, 12, '#00a3e0', { align: 'right', font: 'num' });
 
                 cv.target(listX, itemY, itemW, itemH, () => {

@@ -77,7 +77,7 @@ class YouTubeSearchEngine {
                                 duration: formatDuration(v.lengthSeconds),
                                 durationSec: v.lengthSeconds || 0,
                                 views: v.viewCountText || (v.viewCount ? (Math.round(v.viewCount / 1000) + 'K views') : ''),
-                                thumbnail: `https://img.youtube.com/vi/${v.videoId}/hqdefault.jpg`,
+                                thumbnail: `https://img.youtube.com/vi/${v.videoId}/mqdefault.jpg`,
                                 url: `https://www.youtube.com/watch?v=${v.videoId}`
                             }));
 
@@ -105,7 +105,7 @@ class YouTubeSearchEngine {
                 duration: '14:29',
                 durationSec: 869,
                 views: '699K views',
-                thumbnail: 'https://img.youtube.com/vi/AvCt8Ggtupc/hqdefault.jpg',
+                thumbnail: 'https://img.youtube.com/vi/AvCt8Ggtupc/mqdefault.jpg',
                 url: 'https://www.youtube.com/watch?v=AvCt8Ggtupc'
             },
             {
@@ -115,7 +115,7 @@ class YouTubeSearchEngine {
                 duration: '8:46',
                 durationSec: 526,
                 views: '2.7M views',
-                thumbnail: 'https://img.youtube.com/vi/Psp14xSAcZM/hqdefault.jpg',
+                thumbnail: 'https://img.youtube.com/vi/Psp14xSAcZM/mqdefault.jpg',
                 url: 'https://www.youtube.com/watch?v=Psp14xSAcZM'
             },
             {
@@ -125,7 +125,7 @@ class YouTubeSearchEngine {
                 duration: '7:20',
                 durationSec: 440,
                 views: '1.4M views',
-                thumbnail: 'https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
+                thumbnail: 'https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg',
                 url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
             },
             {
@@ -135,7 +135,7 @@ class YouTubeSearchEngine {
                 duration: 'Live',
                 durationSec: 0,
                 views: '45K watching',
-                thumbnail: 'https://img.youtube.com/vi/jfKfPfyJRdk/hqdefault.jpg',
+                thumbnail: 'https://img.youtube.com/vi/jfKfPfyJRdk/mqdefault.jpg',
                 url: 'https://www.youtube.com/watch?v=jfKfPfyJRdk'
             }
         ];

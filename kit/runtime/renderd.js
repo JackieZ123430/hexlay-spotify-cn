@@ -297,14 +297,14 @@ class RenderClient extends EventEmitter {
     }
     /** upload a pixel image when this connection hasn't got its current version */
     _ensureImage(id) {
-        if (this.native) { if (!this.imgWarned) { this.imgWarned = true; this.log.warn('renderd: pixel images need the upstream dialect'); } return; }
         const im = rec.imageById.get(id);
         if (!im || !im.data) return;
         if (this.sent.image.get(id) === im.ver) return;
         const head = Buffer.alloc(12);
         head.writeUInt32LE(id, 0); head.writeUInt32LE(im.w, 4); head.writeUInt32LE(im.h, 8);
         const px = Buffer.from(im.data.buffer, im.data.byteOffset, im.w * im.h * 4);
-        this._write(msg(M.IMAGE, Buffer.concat([head, px])));
+        const imgMsgType = this.native ? 10 : 9;
+        this._write(msg(imgMsgType, Buffer.concat([head, px])));
         this.sent.image.set(id, im.ver);
     }
     _ensureLayer(id) {

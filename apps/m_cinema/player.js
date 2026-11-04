@@ -56,8 +56,27 @@ class VideoPlayer {
         return null;
     }
 
+    _resetInternal() {
+        if (this.simTimer) {
+            clearInterval(this.simTimer);
+            this.simTimer = null;
+        }
+        if (this.statusStream) {
+            try { this.statusStream.destroy(); } catch (e) {}
+            this.statusStream = null;
+        }
+        if (this.proc) {
+            this._sendCtrl('quit');
+            const p = this.proc;
+            setTimeout(() => {
+                try { if (p && !p.killed) p.kill('SIGKILL'); } catch (e) {}
+            }, 500);
+            this.proc = null;
+        }
+    }
+
     play(streamUrl, durationSec, videoMeta) {
-        this.stop();
+        this._resetInternal();
         this.activeUrl = streamUrl;
         this.activeMeta = videoMeta || {};
         this.totalDurationSec = durationSec || 0;
@@ -206,22 +225,7 @@ class VideoPlayer {
 
     stop() {
         this.isPlaying = false;
-        if (this.simTimer) {
-            clearInterval(this.simTimer);
-            this.simTimer = null;
-        }
-        if (this.statusStream) {
-            try { this.statusStream.destroy(); } catch (e) {}
-            this.statusStream = null;
-        }
-        if (this.proc) {
-            this._sendCtrl('quit');
-            const p = this.proc;
-            setTimeout(() => {
-                try { if (p && !p.killed) p.kill('SIGKILL'); } catch (e) {}
-            }, 500);
-            this.proc = null;
-        }
+        this._resetInternal();
         if (process.send) {
             process.send({ t: 'video', action: 'stop' });
         }

@@ -14,6 +14,46 @@ const DEFAULT_VISITOR_DATA = 'CgtUQXk5Tlo5V3hGdyj7o6zXBjIKCgJHRRIEGgAgWWKrAgqoAk
 let cachedVisitorData = DEFAULT_VISITOR_DATA;
 let visitorDataTime = 0;
 
+const INVIDIOUS_HOSTS = [
+    'yt.chocolatemoo53.com',
+    'inv.tux.pizza',
+    'invidious.nerdvpn.de',
+    'invidious.projectsegfau.lt'
+];
+
+/**
+ * Checks vehicle internet connectivity by probing YouTube and Invidious endpoints.
+ * Returns Promise<boolean>.
+ */
+function checkInternetConnection() {
+    const probe = (hostname, path = '/') => {
+        return new Promise((resolve) => {
+            const req = https.request({
+                hostname,
+                port: 443,
+                path,
+                method: 'HEAD',
+                timeout: 4000,
+                rejectUnauthorized: false
+            }, (res) => {
+                res.resume();
+                resolve(true);
+            });
+            req.on('error', () => resolve(false));
+            req.on('timeout', () => {
+                req.destroy();
+                resolve(false);
+            });
+            req.end();
+        });
+    };
+
+    return probe('www.youtube.com').then((ok) => {
+        if (ok) return true;
+        return probe('yt.chocolatemoo53.com', '/api/v1/trending');
+    }).catch(() => false);
+}
+
 function fetchVisitorData() {
     return new Promise((resolve) => {
         // Strategy 1: YouTube ServiceWorker data endpoint
@@ -70,15 +110,57 @@ function fetchHomepageVisitorData() {
     });
 }
 
-async function resolveYouTubeStream(videoId, log, retryCount = 0) {
-    if (!videoId) return null;
-    const logger = log || console;
+function resolveInvidiousStream(videoId, logger) {
+    return new Promise((resolve, reject) => {
+        let i = 0;
+        function tryNext() {
+            if (i >= INVIDIOUS_HOSTS.length) {
+                return reject(new Error('All Invidious stream endpoints exhausted'));
+            }
+            const host = INVIDIOUS_HOSTS[i++];
+            const req = https.get({
+                hostname: host,
+                path: `/api/v1/videos/${videoId}`,
+                timeout: 5000,
+                headers: { 'User-Agent': 'Mozilla/5.0' }
+            }, (res) => {
+                if (res.statusCode !== 200) return tryNext();
+                let d = '';
+                res.on('data', c => d += c);
+                res.on('end', () => {
+                    try {
+                        const j = JSON.parse(d);
+                        const all = (j.adaptiveFormats || []).concat(j.formatStreams || []);
+                        const chosen = all.find(f => (f.resolution === '720p' || f.qualityLabel === '720p') && ((f.type && f.type.includes('avc1')) || f.encoding === 'h264') && f.url)
+                                    || all.find(f => (f.resolution === '720p' || f.qualityLabel === '720p') && f.url)
+                                    || all.find(f => (f.resolution === '360p' || f.qualityLabel === '360p') && f.url)
+                                    || all.find(f => f.url);
+                        if (chosen && chosen.url) {
+                            if (logger) logger.info(`[stream_resolver] Stream resolved via Invidious (${host}): ${chosen.resolution || '720p'}`);
+                            return resolve({
+                                url: chosen.url,
+                                quality: chosen.resolution || chosen.qualityLabel || '720p HD',
+                                width: chosen.width || 1280,
+                                height: chosen.height || 720,
+                                fps: chosen.fps || 30,
+                                durationSec: j.lengthSeconds || 0,
+                                title: j.title || ''
+                            });
+                        }
+                        tryNext();
+                    } catch (e) {
+                        tryNext();
+                    }
+                });
+            });
+            req.on('error', tryNext);
+            req.on('timeout', () => { req.destroy(); tryNext(); });
+        }
+        tryNext();
+    });
+}
 
-    // Refresh visitor data every 2 hours if missing or stale
-    if (!cachedVisitorData || (Date.now() - visitorDataTime > 7200000)) {
-        await fetchVisitorData();
-    }
-
+function resolveInnerTubeStream(videoId, logger, retryCount = 0) {
     const payload = JSON.stringify({
         context: {
             client: {
@@ -126,10 +208,10 @@ async function resolveYouTubeStream(videoId, log, retryCount = 0) {
                     const status = json.playabilityStatus ? json.playabilityStatus.status : 'UNKNOWN';
 
                     if ((status === 'LOGIN_REQUIRED' || !json.streamingData) && retryCount < 1) {
-                        logger.info(`[stream_resolver] Status ${status}, refreshing visitorData and retrying...`);
+                        logger.info(`[stream_resolver] InnerTube status ${status}, refreshing visitorData and retrying...`);
                         await fetchVisitorData();
                         try {
-                            const retried = await resolveYouTubeStream(videoId, log, retryCount + 1);
+                            const retried = await resolveInnerTubeStream(videoId, logger, retryCount + 1);
                             return resolve(retried);
                         } catch (re) {
                             return reject(re);
@@ -157,7 +239,7 @@ async function resolveYouTubeStream(videoId, log, retryCount = 0) {
                             title: json.videoDetails ? json.videoDetails.title : ''
                         });
                     } else {
-                        reject(new Error('No stream URL in YouTube response: ' + status));
+                        reject(new Error('No direct stream URL in InnerTube: ' + status));
                     }
                 } catch (e) {
                     reject(e);
@@ -175,6 +257,27 @@ async function resolveYouTubeStream(videoId, log, retryCount = 0) {
     });
 }
 
+async function resolveYouTubeStream(videoId, log, retryCount = 0) {
+    if (!videoId) return null;
+    const logger = log || console;
+
+    // Refresh visitor data every 2 hours if missing or stale
+    if (!cachedVisitorData || (Date.now() - visitorDataTime > 7200000)) {
+        await fetchVisitorData();
+    }
+
+    try {
+        const stream = await resolveInnerTubeStream(videoId, logger, retryCount);
+        if (stream && stream.url) return stream;
+    } catch (err) {
+        logger.info(`[stream_resolver] InnerTube stream resolution fallback: ${err.message}`);
+    }
+
+    // Secondary fallback: Invidious cluster (yt.chocolatemoo53.com, etc.)
+    return resolveInvidiousStream(videoId, logger);
+}
+
 module.exports = {
-    resolveYouTubeStream
+    resolveYouTubeStream,
+    checkInternetConnection
 };

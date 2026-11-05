@@ -9,7 +9,7 @@ STATIC_LIBS = $(PREFIX)/lib/libavformat.a \
               $(PREFIX)/lib/libswscale.a \
               $(PREFIX)/lib/libavutil.a
 
-SYS_LIBS = -lva -lva-drm -lm -lz -lpthread -ldl
+SYS_LIBS = -lm -lz -lpthread -ldl
 LDFLAGS = -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2
 
 all: build/mgu-vidplay

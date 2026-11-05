@@ -6,10 +6,14 @@
  *   - Video frames decoded directly into /dev/shm/mgu-video-cinema (Protocol 4)
  *   - Control FIFO: sends pause, resume, seek, and stop commands
  *   - Status FIFO: receives live timecode and playback state JSON updates
+ *   - Local tmpfs streaming cache: buffers HTTPS video into /tmp/mgu-cinema-stream.mp4
  *   - Simulator / PC fallback: simulates playback timing if native binary is unavailable
  */
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
+const https = require('https');
+const urlMod = require('url');
 const { spawn } = require('child_process');
 const { resolveYouTubeStream } = require('./stream_resolver.js');
 
@@ -23,6 +27,10 @@ function extractYouTubeId(urlOrId) {
 const BIN_CANDIDATES = [
     '/var/opt/mgu-renderd/mgu-vidplay',
     path.join(__dirname, 'bin', 'mgu-vidplay'),
+    path.join(process.cwd(), 'bin', 'mgu-vidplay'),
+    path.join(process.cwd(), 'source', 'javascript', 'bin', 'mgu-vidplay'),
+    path.join(process.cwd(), 'javascript', 'bin', 'mgu-vidplay'),
+    path.resolve(__dirname, '..', 'bin', 'mgu-vidplay'),
     '/usr/local/bin/mgu-vidplay',
     '/tmp/mgu-vidplay'
 ];
@@ -34,9 +42,12 @@ class VideoPlayer {
         this.shmPath = this.opts.shmPath || '/dev/shm/mgu-video-cinema';
         this.ctrlPath = '/tmp/mgu-cinema-ctrl.fifo';
         this.statusPath = '/tmp/mgu-cinema-status.fifo';
+        this.streamLocalFile = '/tmp/mgu-cinema-stream.mp4';
         this.proc = null;
         this.ctrlFd = -1;
         this.statusStream = null;
+        this.activeDownloadReq = null;
+        this.activeWriteStream = null;
         this.activeUrl = null;
         this.isPlaying = false;
         this.currentTimeSec = 0;
@@ -54,15 +65,31 @@ class VideoPlayer {
     _findBinary() {
         for (const p of BIN_CANDIDATES) {
             try {
-                if (fs.existsSync(p) && fs.statSync(p).isFile()) {
-                    return p;
+                if (fs.existsSync(p)) {
+                    try { fs.chmodSync(p, 0o755); } catch (e) {}
+                    if (fs.statSync(p).isFile()) {
+                        return p;
+                    }
                 }
             } catch (e) {}
         }
         return null;
     }
 
+    _abortDownload() {
+        if (this.activeDownloadReq) {
+            try { this.activeDownloadReq.destroy(); } catch (e) {}
+            this.activeDownloadReq = null;
+        }
+        if (this.activeWriteStream) {
+            try { this.activeWriteStream.end(); } catch (e) {}
+            this.activeWriteStream = null;
+        }
+    }
+
     _resetInternal() {
+        this._abortDownload();
+
         if (this.simTimer) {
             clearInterval(this.simTimer);
             this.simTimer = null;
@@ -81,6 +108,12 @@ class VideoPlayer {
                 }
             } catch (e) {}
         }
+
+        try {
+            if (fs.existsSync(this.streamLocalFile)) {
+                fs.unlinkSync(this.streamLocalFile);
+            }
+        } catch (e) {}
     }
 
     play(streamUrl, durationSec, videoMeta) {
@@ -92,11 +125,12 @@ class VideoPlayer {
         this.isPlaying = true;
 
         const ytId = (videoMeta && (videoMeta.ytId || videoMeta.id)) || extractYouTubeId(streamUrl) || null;
-        const bX = (videoMeta && typeof videoMeta.x === 'number') ? videoMeta.x : 64;
-        const bY = (videoMeta && typeof videoMeta.y === 'number') ? videoMeta.y : 112;
-        const bW = (videoMeta && typeof videoMeta.w === 'number') ? videoMeta.w : 992;
-        const bH = (videoMeta && typeof videoMeta.h === 'number') ? videoMeta.h : 288;
+        const bX = (videoMeta && typeof videoMeta.x === 'number') ? videoMeta.x : 52;
+        const bY = (videoMeta && typeof videoMeta.y === 'number') ? videoMeta.y : 102;
+        const bW = (videoMeta && typeof videoMeta.w === 'number') ? videoMeta.w : 1008;
+        const bH = (videoMeta && typeof videoMeta.h === 'number') ? videoMeta.h : 336;
         const bR = (videoMeta && typeof videoMeta.r === 'number') ? videoMeta.r : 8;
+
         if (process.send) {
             process.send({
                 t: 'video',
@@ -124,7 +158,7 @@ class VideoPlayer {
             return false;
         }
 
-        // If playing a YouTube video, resolve direct 720p H.264 stream for mgu-vidplay
+        // If playing YouTube, resolve direct stream first
         if (ytId && (!streamUrl || !streamUrl.includes('googlevideo.com'))) {
             this.log.info(`[M-Cinema:Player] Resolving direct YouTube stream for: ${ytId}`);
             resolveYouTubeStream(ytId, this.log).then((resolved) => {
@@ -133,21 +167,115 @@ class VideoPlayer {
                     if (resolved.durationSec > 0 && !this.totalDurationSec) {
                         this.totalDurationSec = resolved.durationSec;
                     }
-                    this._spawnPlayer(bin, resolved.url);
+                    this._streamAndSpawn(bin, resolved.url);
                 } else {
-                    this._spawnPlayer(bin, streamUrl);
+                    this._streamAndSpawn(bin, streamUrl);
                 }
             }).catch((err) => {
                 this.log.warn(`[M-Cinema:Player] Direct stream resolution fallback: ${err.message}`);
-                this._spawnPlayer(bin, streamUrl);
+                this._streamAndSpawn(bin, streamUrl);
             });
             return true;
         }
 
-        return this._spawnPlayer(bin, streamUrl);
+        return this._streamAndSpawn(bin, streamUrl);
     }
 
-    _spawnPlayer(bin, mediaUrl) {
+    _streamAndSpawn(bin, mediaUrl) {
+        if (!mediaUrl) return false;
+
+        // If it's already a local file path, spawn directly
+        if (!mediaUrl.startsWith('http://') && !mediaUrl.startsWith('https://')) {
+            return this._spawnPlayer(bin, mediaUrl);
+        }
+
+        // Buffer network stream into /tmp/mgu-cinema-stream.mp4 before spawning native engine
+        this.log.info(`[M-Cinema:Player] Buffering HTTPS stream to ${this.streamLocalFile}...`);
+        this._streamVideoToFile(mediaUrl, this.streamLocalFile, (localPath) => {
+            if (this.isPlaying) {
+                this._spawnPlayer(bin, localPath);
+            }
+        });
+
+        return true;
+    }
+
+    _streamVideoToFile(remoteUrl, localPath, onBuffered) {
+        this._abortDownload();
+
+        try { if (fs.existsSync(localPath)) fs.unlinkSync(localPath); } catch (e) {}
+
+        const fileOut = fs.createWriteStream(localPath, { flags: 'w' });
+        this.activeWriteStream = fileOut;
+
+        let totalDownloaded = 0;
+        let triggered = false;
+        const BUFFER_THRESHOLD = 1048576; // 1 MB initial buffer for moov header & first GOP
+
+        const makeReq = (targetUrl, redirectCount = 0) => {
+            if (redirectCount > 5) {
+                this.log.error('[M-Cinema:Player] Too many HTTP redirects');
+                return;
+            }
+            const u = urlMod.parse(targetUrl);
+            const lib = u.protocol === 'http:' ? http : https;
+            const req = lib.get({
+                hostname: u.hostname,
+                port: u.port || (u.protocol === 'http:' ? 80 : 443),
+                path: u.path,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+                    'Accept': '*/*'
+                },
+                timeout: 10000
+            }, (res) => {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    let nextUrl = res.headers.location;
+                    if (!nextUrl.startsWith('http')) {
+                        nextUrl = urlMod.resolve(targetUrl, nextUrl);
+                    }
+                    return makeReq(nextUrl, redirectCount + 1);
+                }
+
+                res.on('data', (chunk) => {
+                    fileOut.write(chunk);
+                    totalDownloaded += chunk.length;
+                    if (!triggered && totalDownloaded >= BUFFER_THRESHOLD) {
+                        triggered = true;
+                        this.log.info(`[M-Cinema:Player] Initial buffer ready (${totalDownloaded} bytes), launching player`);
+                        if (onBuffered) onBuffered(localPath);
+                    }
+                });
+
+                res.on('end', () => {
+                    this.log.info(`[M-Cinema:Player] Video stream download completed (${totalDownloaded} bytes)`);
+                    fileOut.end();
+                    if (!triggered) {
+                        triggered = true;
+                        if (onBuffered) onBuffered(localPath);
+                    }
+                });
+
+                res.on('error', (err) => {
+                    this.log.warn(`[M-Cinema:Player] Video stream download error: ${err.message}`);
+                });
+            });
+
+            req.on('error', (err) => {
+                this.log.warn(`[M-Cinema:Player] Network request error: ${err.message}`);
+            });
+            req.on('timeout', () => {
+                req.destroy();
+                this.log.warn('[M-Cinema:Player] Network stream timeout');
+            });
+
+            this.activeDownloadReq = req;
+        };
+
+        makeReq(remoteUrl);
+    }
+
+    _spawnPlayer(bin, localFilePath) {
         try {
             // Setup FIFOs
             try { if (!fs.existsSync(this.ctrlPath)) fs.unlinkSync(this.ctrlPath); } catch (e) {}
@@ -160,7 +288,7 @@ class VideoPlayer {
                 '--fps', '30',
                 '--ctrl', this.ctrlPath,
                 '--status', this.statusPath,
-                mediaUrl
+                localFilePath
             ];
 
             this.log.info(`[M-Cinema:Player] Spawning native player: ${bin} ${args.join(' ')}`);

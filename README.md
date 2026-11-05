@@ -37,7 +37,7 @@ This repository is built on the open-source BMW iDrive 7 platform:
 > **QuickCode (BMW BDC coding) is a work in progress** and is not available in the MGU Store. It is not offered until its coding writes are verified against real BMW coding data. Its source is in `wip/quick_code/`.
 
 > [!NOTE]
-> **M-Cinema (YouTube player) has been removed.** Playback was unreliable on the head unit (it didn't play on some firmware, such as MainApp 6.5.5) and its sound was poor. CarPlay and Android Auto already have YouTube workarounds that render and play better, so a native player wasn't worth keeping. It is no longer in the MGU Store; uninstall it from the store if you still have it.
+> **M-Cinema (YouTube player) has been removed.** Playback was unreliable on the head unit (it didn't play on some firmware, such as MainApp 6.5.5) and its sound was poor. CarPlay and Android Auto already have YouTube workarounds that render and play better, so a native player wasn't worth keeping.
 
 ### 1. Spotify (`spotify`)
 **Spotify Connect controller and library browser on the iDrive 7 central display.**

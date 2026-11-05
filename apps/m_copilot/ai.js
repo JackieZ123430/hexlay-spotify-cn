@@ -14,6 +14,8 @@ const https = require('https');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const urlMod = require('url');
+const tlsDates = require('./tls_dates');
 
 const CONFIG_PATH = path.join(__dirname, 'copilot_auth.json');
 
@@ -134,60 +136,57 @@ class AiBridge {
     async checkInternetConnection() {
         if (this.isCheckingInternet) return this.hasInternet;
         this.isCheckingInternet = true;
+        try {
+            let ok = false;
+            // the kit's uplink check (direct-IP probe, then the mgu-uplink lease) when we have it
+            const uplink = this.ctx && this.ctx.uplink;
+            if (uplink && typeof uplink.checkInternet === 'function') {
+                try {
+                    ok = !!(await uplink.checkInternet({ timeout: 3500 }));
+                } catch (e) {}
+            }
+            if (!ok) ok = await this.probe('connectivitycheck.gstatic.com', '/generate_204');
+            if (!ok) ok = await this.probe('dns.google', '/resolve?name=google.com');
+            this.hasInternet = ok;
+            return ok;
+        } finally {
+            this.isCheckingInternet = false;
+        }
+    }
 
+    /* Whether host answers over HTTPS within 4 s; no answer in time counts as offline. */
+    probe(host, pathStr) {
         return new Promise((resolve) => {
             let settled = false;
             const done = (ok) => {
                 if (settled) return;
                 settled = true;
-                this.hasInternet = ok;
-                this.isCheckingInternet = false;
+                clearTimeout(timer);
                 resolve(ok);
             };
-
+            let req = null;
             const timer = setTimeout(() => {
-                done(this.hasInternet);
+                try { if (req) req.destroy(); } catch (e) {}
+                done(false);
             }, 5000);
-
             try {
-                const opt1 = {
-                    hostname: 'connectivitycheck.gstatic.com',
+                req = https.get({
+                    hostname: host,
                     port: 443,
-                    path: '/generate_204',
-                    timeout: 4000
-                };
-                const req = https.get(opt1, (res) => {
-                    clearTimeout(timer);
+                    path: pathStr,
+                    timeout: 4000,
+                    // reachability probe only: no credentials are sent, so any certificate will do
+                    rejectUnauthorized: false
+                }, (res) => {
+                    res.resume();
                     done(res.statusCode >= 200 && res.statusCode < 400);
                 });
-
-                req.on('error', () => {
-                    const opt2 = {
-                        hostname: 'dns.google',
-                        port: 443,
-                        path: '/resolve?name=google.com',
-                        timeout: 4000
-                    };
-                    const fb = https.get(opt2, (res2) => {
-                        clearTimeout(timer);
-                        done(res2.statusCode >= 200 && res2.statusCode < 400);
-                    });
-                    fb.on('error', () => {
-                        clearTimeout(timer);
-                        done(false);
-                    });
-                    fb.on('timeout', () => {
-                        try { fb.destroy(); } catch (e) {}
-                        clearTimeout(timer);
-                        done(false);
-                    });
-                });
-
+                req.on('error', () => done(false));
                 req.on('timeout', () => {
                     try { req.destroy(); } catch (e) {}
+                    done(false);
                 });
             } catch (e) {
-                clearTimeout(timer);
                 done(false);
             }
         });
@@ -432,7 +431,7 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
                         },
                         timeout: 9000
                     };
-                    const req = https.request(opt, (res) => {
+                    const req = tlsDates.request(opt, (res) => {
                         let data = '';
                         res.on('data', (chunk) => { data += chunk; });
                         res.on('end', () => {
@@ -509,7 +508,7 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
                 },
                 timeout: 8000
             };
-            const req = https.request(opt, (res) => {
+            const req = tlsDates.request(opt, (res) => {
                 let data = '';
                 res.on('data', (chunk) => { data += chunk; });
                 res.on('end', () => {
@@ -570,17 +569,25 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
                 temperature: 0.6
             });
 
+            // Node 8: no global URL and no request(url, options, cb) form
             let u;
             try {
-                u = new URL(urlStr);
+                u = urlMod.parse(urlStr);
             } catch (e) {
+                u = null;
+            }
+            if (!u || !u.hostname || (u.protocol !== 'https:' && u.protocol !== 'http:')) {
                 return resolve(`Invalid relay URL: ${urlStr}`);
             }
 
             const isHttps = u.protocol === 'https:';
-            const client = isHttps ? https : http;
+            const send = isHttps ? tlsDates.request : http.request;
 
-            const req = client.request(u, {
+            const req = send({
+                protocol: u.protocol,
+                hostname: u.hostname,
+                port: u.port || (isHttps ? 443 : 80),
+                path: u.path || '/',
                 method: 'POST',
                 headers: Object.assign({
                     'Content-Type': 'application/json',

@@ -1,23 +1,19 @@
 'use strict';
 /**
- * uplink.js - Uplink Network & DNS Resolution Layer for BMW iDrive 7 (MGU).
+ * uplink.js - name resolution and connectivity for apps that get internet through
+ * the MGU Store's mgu-uplink (package.json "mguInternet": true).
  *
- * MGU Architecture Note:
- * On BMW MGU, network traffic for internet-enabled apps is routed via routing
- * table 110 through an isolated veth / cellular / Wi-Fi uplink interface.
- * The vehicle's main /etc/resolv.conf is intentionally untouched and does NOT
- * resolve public internet domain names (queries fail with ENOTFOUND).
+ * The contract (mgu-store native/mgu-uplink/README.md): only the allowed apps' uids are
+ * routed out through the uplink, and the unit's own resolver does NOT reach the internet;
+ * allowed processes resolve names through the lease's `dns` servers. The lease is
+ *   <data dir>/uplink.json            for each allowed app
+ *   /run/mgu-uplink/lease.json        for everyone
+ * { interface, ip, prefix, router, dns[], leaseSeconds, updated }, present only while online.
+ * The store's own updater does the same (mgu-updater js/fetch.js lookupVia()).
  *
- * The uplink service writes the current DHCP lease and valid DNS servers to:
- * - /var/opt/public/oap/oap_<uid>/data/uplink.json (the app's dataDir)
- * - /run/mgu-uplink/lease.json (system-wide 0644)
- *
- * This module:
- * 1. Process-wide intercepts Node's `dns.lookup` so all standard Node http/https
- *    requests, libraries, and child calls seamlessly resolve domain names via
- *    the active uplink DNS servers + resilient public fallbacks (1.1.1.1, 8.8.8.8).
- * 2. Caches resolved DNS records in memory with a 5-minute TTL.
- * 3. Provides direct-IP and uplink lease verification for fast, reliable offline/online detection.
+ * init() replaces dns.lookup process-wide, so every http/https request of the app resolves
+ * through those servers (public resolvers as a fallback, then the unit's resolver).
+ * Node 8: dns.Resolver has no timeout option, so each lookup gets its own timer.
  */
 const dns = require('dns');
 const fs = require('fs');
@@ -25,281 +21,186 @@ const https = require('https');
 const net = require('net');
 const path = require('path');
 
+const PUBLIC_DNS = ['1.1.1.1', '8.8.8.8'];
+const LOOKUP_TIMEOUT_MS = 12000;    // per resolve4/resolve6; c-ares waits 5 s per server, so one failover fits
+const CACHE_MAX = 256;
+const CACHE_MIN_MS = 30 * 1000, CACHE_MAX_MS = 5 * 60 * 1000;
+const SYSTEM_LEASE = '/run/mgu-uplink/lease.json';
+
 let initialized = false;
 let appDataDir = null;
-let origLookup = dns.lookup;
-let customResolver = null;
-let activeDnsServersKey = '';
+const origLookup = dns.lookup;
+let resolver = null, resolverKey = '';
+const cache = new Map();             // hostname|family -> { list: [{address, family}], expires }
+let leaseMemo = null, leaseMemoAt = 0;
 
-// In-memory DNS cache: hostname -> { addresses: string[], expires: number }
-const dnsCache = new Map();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-const PUBLIC_FALLBACK_DNS = ['1.1.1.1', '8.8.8.8', '1.0.0.1', '8.8.4.4'];
-
-/**
- * Reads DNS servers from uplink lease files or defaults to public DNS.
- */
-function getActiveDnsServers() {
-    const candidates = [
-        appDataDir ? path.join(appDataDir, 'uplink.json') : null,
-        '/run/mgu-uplink/lease.json'
-    ].filter(Boolean);
-
-    for (let i = 0; i < candidates.length; i++) {
-        const file = candidates[i];
-        try {
-            if (fs.existsSync(file)) {
-                const raw = fs.readFileSync(file, 'utf8');
-                const lease = JSON.parse(raw);
-                if (lease && Array.isArray(lease.dns) && lease.dns.length > 0) {
-                    const valid = lease.dns.filter(ip => net.isIP(ip) === 4);
-                    if (valid.length > 0) {
-                        // Append public fallbacks after the carrier / mobile hotspot DNS
-                        const combined = valid.slice();
-                        for (let j = 0; j < PUBLIC_FALLBACK_DNS.length; j++) {
-                            if (combined.indexOf(PUBLIC_FALLBACK_DNS[j]) === -1) {
-                                combined.push(PUBLIC_FALLBACK_DNS[j]);
-                            }
-                        }
-                        return combined;
-                    }
-                }
-            }
-        } catch (e) {}
-    }
-
-    return PUBLIC_FALLBACK_DNS;
+function readJson(file) {
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return null; }
 }
 
-/**
- * Returns an active dns.Resolver instance configured with the latest uplink DNS.
- */
-function getResolver() {
-    if (typeof dns.Resolver !== 'function') {
-        return null;
-    }
+/** The app's own lease (only present when mgu-uplink routes this app and is online). */
+function getOwnLease() {
+    return appDataDir ? readJson(path.join(appDataDir, 'uplink.json')) : null;
+}
 
+/** Any lease (own first, then the system-wide one), memoised for 2 s. */
+function getLease() {
+    const now = Date.now();
+    if (now - leaseMemoAt < 2000) return leaseMemo;
+    leaseMemoAt = now;
+    leaseMemo = getOwnLease() || readJson(SYSTEM_LEASE);
+    return leaseMemo;
+}
+
+function getActiveDnsServers() {
+    const lease = getLease();
+    const out = [];
+    if (lease && Array.isArray(lease.dns)) lease.dns.forEach((ip) => { if (net.isIP(ip) && out.indexOf(ip) < 0) out.push(ip); });
+    PUBLIC_DNS.forEach((ip) => { if (out.indexOf(ip) < 0) out.push(ip); });
+    return out;
+}
+
+/** A resolver on the current servers; a server change (new network) also drops the cache. */
+function getResolver() {
+    if (typeof dns.Resolver !== 'function') return null;
     const servers = getActiveDnsServers();
     const key = servers.join(',');
-
-    if (!customResolver || key !== activeDnsServersKey) {
+    if (!resolver || key !== resolverKey) {
         try {
-            const res = new dns.Resolver();
-            res.setServers(servers);
-            customResolver = res;
-            activeDnsServersKey = key;
-        } catch (err) {
-            // If setting custom servers fails, keep existing
-        }
+            const r = new dns.Resolver();
+            r.setServers(servers);
+            resolver = r;
+            if (resolverKey) cache.clear();
+            resolverKey = key;
+        } catch (e) { /* keep the previous one */ }
     }
-    return customResolver;
+    return resolver;
 }
 
-/**
- * Process-wide patched dns.lookup implementation.
- */
-function patchedLookup(hostname, options, callback) {
-    let cb = callback;
-    let opts = options;
-
-    if (typeof options === 'function') {
-        cb = options;
-        opts = {};
-    } else if (typeof options === 'number') {
-        opts = { family: options };
-    } else if (!opts || typeof opts !== 'object') {
-        opts = {};
-    }
-
-    if (!hostname || typeof hostname !== 'string') {
-        return origLookup(hostname, opts, cb);
-    }
-
-    // Direct IP or local address: no DNS lookup needed
-    if (net.isIP(hostname) || hostname === 'localhost') {
-        return origLookup(hostname, opts, cb);
-    }
-
-    // Check memory cache
-    const now = Date.now();
-    const cached = dnsCache.get(hostname);
-    if (cached && cached.expires > now && cached.addresses && cached.addresses.length > 0) {
-        if (opts.all) {
-            return process.nextTick(() => {
-                cb(null, cached.addresses.map(a => ({ address: a, family: 4 })));
-            });
-        }
-        return process.nextTick(() => {
-            cb(null, cached.addresses[0], 4);
-        });
-    }
-
-    const resolver = getResolver();
-    if (!resolver) {
-        return origLookup(hostname, opts, cb);
-    }
-
-    resolver.resolve4(hostname, (err, addrs) => {
-        if (!err && addrs && addrs.length > 0) {
-            dnsCache.set(hostname, {
-                addresses: addrs,
-                expires: now + CACHE_TTL_MS
-            });
-
-            if (opts.all) {
-                return cb(null, addrs.map(a => ({ address: a, family: 4 })));
-            }
-            return cb(null, addrs[0], 4);
-        }
-
-        // If uplink resolver fails, fall back to system origLookup as last resort
-        origLookup(hostname, opts, (sysErr, address, family) => {
-            if (!sysErr && address) {
-                const arr = Array.isArray(address) ? address.map(x => x.address || x) : [address];
-                dnsCache.set(hostname, {
-                    addresses: arr,
-                    expires: now + CACHE_TTL_MS
-                });
-            }
-            cb(sysErr, address, family);
-        });
+/** resolve4/resolve6 with a deadline; cb(err, addresses). */
+function resolveWithTimeout(r, family, hostname, cb) {
+    let done = false;
+    const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        try { r.cancel(); } catch (e) {}
+        const err = new Error('queryA ETIMEOUT ' + hostname);
+        err.code = 'ETIMEOUT';
+        cb(err);
+    }, LOOKUP_TIMEOUT_MS);
+    const fn = family === 6 ? r.resolve6 : r.resolve4;
+    fn.call(r, hostname, { ttl: true }, (err, recs) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (err) return cb(err);
+        cb(null, (recs || []).map((x) => ({ address: typeof x === 'string' ? x : x.address, family, ttl: x && x.ttl })));
     });
 }
 
-/**
- * Initializes the uplink DNS hook and data directory binding.
- */
-function init(dataDir) {
-    if (dataDir) {
-        appDataDir = dataDir;
-    }
-    if (initialized) {
-        return;
-    }
-    initialized = true;
+function cachePut(key, list) {
+    const ttl = list.reduce((m, x) => (typeof x.ttl === 'number' ? Math.min(m, x.ttl * 1000) : m), CACHE_MAX_MS);
+    if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
+    cache.set(key, { list: list.map((x) => ({ address: x.address, family: x.family })), expires: Date.now() + Math.max(CACHE_MIN_MS, Math.min(CACHE_MAX_MS, ttl)) });
+}
 
-    // Monkey-patch dns.lookup
+function answer(list, opts, cb) {
+    if (opts.all) return cb(null, list.map((x) => ({ address: x.address, family: x.family })));
+    cb(null, list[0].address, list[0].family);
+}
+
+function notFound(hostname, cause) {
+    const err = new Error('getaddrinfo ENOTFOUND ' + hostname);
+    err.code = 'ENOTFOUND'; err.errno = 'ENOTFOUND'; err.syscall = 'getaddrinfo'; err.hostname = hostname;
+    if (cause) err.cause = cause;
+    return err;
+}
+
+/** dns.lookup replacement (same signature and callback shapes). */
+function patchedLookup(hostname, options, callback) {
+    let cb = callback, opts = options;
+    if (typeof options === 'function') { cb = options; opts = {}; }
+    else if (typeof options === 'number') opts = { family: options };
+    else if (!opts || typeof opts !== 'object') opts = {};
+    const family = opts.family === 6 ? 6 : opts.family === 4 ? 4 : 0;
+
+    const ipFam = typeof hostname === 'string' ? net.isIP(hostname) : 0;
+    if (ipFam) return process.nextTick(() => answer([{ address: hostname, family: ipFam }], opts, cb));
+    if (!hostname || typeof hostname !== 'string' || hostname === 'localhost' || /\.local$/i.test(hostname)) {
+        return origLookup(hostname, opts, cb);
+    }
+    const r = getResolver();
+    if (!r) return origLookup(hostname, opts, cb);
+
+    const key = hostname.toLowerCase() + '|' + family;
+    const hit = cache.get(key);
+    if (hit && hit.expires > Date.now()) return process.nextTick(() => answer(hit.list, opts, cb));
+
+    const fallback = (cause) => origLookup(hostname, opts, (err, address, fam) => {
+        if (err) return cb(cause && err.code === 'ENOTFOUND' ? notFound(hostname, cause) : err);
+        const list = opts.all ? address.map((x) => ({ address: x.address, family: x.family })) : [{ address, family: fam }];
+        if (list.length) cachePut(key, list);
+        if (opts.all) return cb(null, list);
+        cb(null, address, fam);
+    });
+    const order = family === 6 ? [6] : family === 4 ? [4] : [4, 6];
+    const tryNext = (i, lastErr) => {
+        if (i >= order.length) return fallback(lastErr);
+        resolveWithTimeout(r, order[i], hostname, (err, list) => {
+            if (err || !list.length) return tryNext(i + 1, err);
+            cachePut(key, list);
+            answer(list, opts, cb);
+        });
+    };
+    tryNext(0, null);
+}
+
+function init(dataDir) {
+    if (dataDir) appDataDir = dataDir;
+    if (initialized) return;
+    initialized = true;
     dns.lookup = patchedLookup;
 }
 
-/**
- * Direct IP probe to test active internet routing without depending on DNS.
- * Tests Cloudflare 1.1.1.1 and Google 8.8.8.8 directly over HTTPS (port 443).
- */
-function probeDirectIp(ip, timeoutMs) {
+/** HEAD over HTTPS; resolves true once any HTTP response arrives. No secrets are sent. */
+function probe(host, timeoutMs) {
     return new Promise((resolve) => {
         let settled = false;
-        const req = https.request({
-            hostname: ip,
-            port: 443,
-            path: '/',
-            method: 'HEAD',
-            timeout: timeoutMs || 3000,
-            rejectUnauthorized: false
-        }, (res) => {
-            if (!settled) {
-                settled = true;
-                res.resume();
-                resolve(true);
-            }
-        });
-
-        req.on('error', () => {
-            if (!settled) {
-                settled = true;
-                resolve(false);
-            }
-        });
-
-        req.on('timeout', () => {
-            if (!settled) {
-                settled = true;
-                req.destroy();
-                resolve(false);
-            }
-        });
-
+        const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+        let req;
+        try {
+            req = https.request({ hostname: host, port: 443, path: '/', method: 'HEAD', timeout: timeoutMs, rejectUnauthorized: false }, (res) => { res.resume(); done(true); });
+        } catch (e) { return done(false); }
+        req.on('error', () => done(false));
+        req.on('timeout', () => { req.abort(); done(false); });
         req.end();
     });
 }
 
 /**
- * Checks vehicle internet connectivity.
- * Returns Promise<boolean>.
+ * Internet reachable for this app: an HTTPS answer from a public address (no DNS needed),
+ * or from a named host through the uplink resolver. A DNS answer alone does not count
+ * (captive portals and networks that block 443 still answer DNS).
  */
 async function checkInternet(opts) {
     const timeout = (opts && opts.timeout) || 3500;
-
-    // 1. Direct IP probe (fastest and 100% immune to DNS issues)
-    const ipOk = await probeDirectIp('1.1.1.1', timeout);
-    if (ipOk) return true;
-
-    const ipFallbackOk = await probeDirectIp('8.8.8.8', Math.round(timeout * 0.8));
-    if (ipFallbackOk) return true;
-
-    // 2. Lease presence check: if mgu-uplink has an active lease
-    const lease = getLease();
-    if (lease && lease.ip && lease.router) {
-        // We have an active uplink lease; try resolving a domain
-        const resolver = getResolver();
-        if (resolver) {
-            const dnsResolved = await new Promise((resolve) => {
-                resolver.resolve4('www.google.com', (err, addrs) => {
-                    resolve(!err && Array.isArray(addrs) && addrs.length > 0);
-                });
-            });
-            if (dnsResolved) return true;
-        }
-    }
-
+    if (await probe('1.1.1.1', timeout)) return true;
+    if (await probe('8.8.8.8', timeout)) return true;
+    if (await probe('www.google.com', timeout + LOOKUP_TIMEOUT_MS)) return true;
     return false;
 }
 
-/**
- * Reads lease metadata from disk if present.
- */
-function getLease() {
-    const candidates = [
-        appDataDir ? path.join(appDataDir, 'uplink.json') : null,
-        '/run/mgu-uplink/lease.json'
-    ].filter(Boolean);
-
-    for (let i = 0; i < candidates.length; i++) {
-        try {
-            if (fs.existsSync(candidates[i])) {
-                return JSON.parse(fs.readFileSync(candidates[i], 'utf8'));
-            }
-        } catch (e) {}
-    }
-    return null;
-}
-
-/**
- * Quick synchronous online check based on active lease existence.
- */
+/** Online per this app's own lease file (the system-wide lease says nothing about this app's routing). */
 function isOnlineSync() {
-    const lease = getLease();
+    const lease = getOwnLease();
     return !!(lease && lease.ip);
 }
 
-/**
- * One-line description of the uplink state for the app log.
- */
 function describe() {
-    const lease = getLease();
-    if (!lease || !lease.ip) {
-        return 'no lease (data dir ' + appDataDir + '): uplink offline or app not in apps.d; dns ' + getActiveDnsServers().join(',');
-    }
-    return 'lease ' + lease.ip + ' via ' + (lease.interface || '?') + ' router ' + lease.router + '; dns ' + getActiveDnsServers().join(',');
+    const own = getOwnLease();
+    if (own && own.ip) return 'lease ' + own.ip + ' via ' + (own.interface || '?') + ' router ' + own.router + '; dns ' + getActiveDnsServers().join(',');
+    const sys = readJson(SYSTEM_LEASE);
+    return 'no lease in ' + appDataDir + ' (' + (sys && sys.ip ? 'uplink is online but this app is not routed: is it in apps.d?' : 'uplink offline or not installed') + '); dns ' + getActiveDnsServers().join(',');
 }
 
-module.exports = {
-    init,
-    describe,
-    checkInternet,
-    isOnlineSync,
-    getLease,
-    getActiveDnsServers,
-    dnsCache
-};
+module.exports = { init, checkInternet, isOnlineSync, getLease, getActiveDnsServers, describe, dnsCache: cache, _patchedLookup: patchedLookup };

@@ -25,6 +25,7 @@ try {
 }
 
 const THUMB_BASE_ID = 300;
+const FAIL_BACKOFF_MS = 60000;   // load() runs every frame: a failed thumbnail waits this long
 
 class ThumbnailManager {
     constructor(log, onLoaded) {
@@ -33,6 +34,7 @@ class ThumbnailManager {
         this.cache = new Map(); // ytId -> { width, height, data }
         this.loading = new Set(); // ytIds currently in flight
         this.slotMapping = new Map(); // slotIndex -> ytId
+        this.failed = new Map(); // ytId -> time of the last failure
     }
 
     has(ytId) {
@@ -59,15 +61,18 @@ class ThumbnailManager {
         }
 
         if (this.loading.has(ytId)) return false;
+        const failedAt = this.failed.get(ytId);
+        if (failedAt && Date.now() - failedAt < FAIL_BACKOFF_MS) return false;
         this.loading.add(ytId);
 
         const thumbUrl = url || `https://img.youtube.com/vi/${ytId}/mqdefault.jpg`;
         this._fetchUrl(thumbUrl, (buf) => {
             if (!buf) {
-                this.loading.delete(ytId);
-                // Fallback to hqdefault if mqdefault fails
+                // Fallback to hqdefault if mqdefault fails (still 'loading' until it's done)
                 if (thumbUrl.includes('mqdefault.jpg')) {
                     this._fetchFallback(ytId, imgId, slotIndex);
+                } else {
+                    this._markFailed(ytId);
                 }
                 return;
             }
@@ -89,14 +94,15 @@ class ThumbnailManager {
                     }
 
                     this.loading.delete(ytId);
+                    this.failed.delete(ytId);
                     if (this.onLoaded) {
                         this.onLoaded();
                     }
                 } else {
-                    this.loading.delete(ytId);
+                    this._markFailed(ytId);
                 }
             } catch (e) {
-                this.loading.delete(ytId);
+                this._markFailed(ytId);
                 if (this.log && this.log.warn) {
                     this.log.warn('Decode thumbnail error: ' + e.message);
                 }
@@ -106,7 +112,20 @@ class ThumbnailManager {
         return false;
     }
 
-    _fetchUrl(targetUrl, cb, redirectCount = 0) {
+    _markFailed(ytId) {
+        this.loading.delete(ytId);
+        this.failed.set(ytId, Date.now());
+        if (this.failed.size > 200) this.failed.delete(this.failed.keys().next().value);
+    }
+
+    _fetchUrl(targetUrl, done, redirectCount = 0) {
+        // exactly one callback per fetch (a timeout is followed by an 'error')
+        let called = false;
+        const cb = (buf) => {
+            if (called) return;
+            called = true;
+            done(buf);
+        };
         if (redirectCount > 4) return cb(null);
         try {
             const isHttps = targetUrl.startsWith('https://');
@@ -121,6 +140,7 @@ class ThumbnailManager {
             };
             const req = client.get(options, (res) => {
                 if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    res.resume();
                     const nextUrl = res.headers.location.startsWith('http') ?
                         res.headers.location :
                         url.resolve(targetUrl, res.headers.location);
@@ -128,6 +148,7 @@ class ThumbnailManager {
                 }
 
                 if (res.statusCode !== 200) {
+                    res.resume();   // drain, or the socket stays busy
                     return cb(null);
                 }
 
@@ -136,6 +157,8 @@ class ThumbnailManager {
                 res.on('end', () => {
                     cb(Buffer.concat(chunks));
                 });
+                res.on('error', () => cb(null));
+                res.on('aborted', () => cb(null));
             });
 
             req.on('error', () => cb(null));
@@ -151,19 +174,23 @@ class ThumbnailManager {
     _fetchFallback(ytId, imgId, slotIndex) {
         const fallbackUrl = `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`;
         this._fetchUrl(fallbackUrl, (buf) => {
-            if (!buf) return;
+            if (!buf) return this._markFailed(ytId);
             try {
                 const decoded = decodeJpeg(buf, { formatAsRGBA: true });
-                if (decoded && decoded.width > 0 && decoded.height > 0) {
-                    this._applyRoundedCorners(decoded, Math.round(decoded.width * 0.06), [11, 17, 26]);
-                    this.cache.set(ytId, decoded);
-                    this.slotMapping.set(slotIndex, ytId);
-                    if (setImage) {
-                        setImage(imgId, decoded.width, decoded.height, decoded.data);
-                    }
-                    if (this.onLoaded) this.onLoaded();
+                if (!decoded || !(decoded.width > 0 && decoded.height > 0)) return this._markFailed(ytId);
+                this._applyRoundedCorners(decoded, Math.round(decoded.width * 0.06), [11, 17, 26]);
+                if (this.cache.size >= 30) this.cache.delete(this.cache.keys().next().value);
+                this.cache.set(ytId, decoded);
+                this.loading.delete(ytId);
+                this.failed.delete(ytId);
+                this.slotMapping.set(slotIndex, ytId);
+                if (setImage) {
+                    setImage(imgId, decoded.width, decoded.height, decoded.data);
                 }
-            } catch (e) {}
+                if (this.onLoaded) this.onLoaded();
+            } catch (e) {
+                this._markFailed(ytId);
+            }
         });
     }
 

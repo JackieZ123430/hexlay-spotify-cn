@@ -575,7 +575,8 @@
                 await fetch('https://ntfy.sh/' + channel, {
                     method: 'POST',
                     headers: { 'Title': 'BMW Spotify Unpair' },
-                    body: JSON.stringify({ type: 'phone_unpair', channel: channel, time: Date.now() })
+                    // the car only acts on messages encrypted with its pairing key
+                    body: JSON.stringify(await encryptPayload(JSON.stringify({ type: 'phone_unpair', channel: channel, time: Date.now() }), secretKey))
                 });
             } catch (e) {}
             handleCarDisconnected();
@@ -644,7 +645,8 @@
                 transmissionPayload = await encryptPayload(JSON.stringify(tokenData), secretKey);
             }
             if (!transmissionPayload) {
-                transmissionPayload = Object.assign({ type: 'spotify_pair', channel: targetChannel }, tokenData);
+                showStatus('This pairing link has no valid car key (or the browser lacks WebCrypto). Scan the QR code on the car again.', true);
+                return;
             }
 
             await fetch('https://ntfy.sh/' + targetChannel, {

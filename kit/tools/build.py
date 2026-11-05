@@ -13,7 +13,7 @@ The RHMI layout (application.xml + uiDescription.json) is GENERATED from the
 "screens" + "settings" in app.json, using only widget templates that BMW's own
 apps use on this firmware (see reference/rhmi-widget-cells.md).
 """
-import json, os, re, shutil, sys, tarfile, tempfile, uuid
+import gzip, json, os, re, shutil, sys, tarfile, tempfile, uuid
 from xml.sax.saxutils import escape
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pack_data  # noqa: E402
@@ -413,7 +413,9 @@ def build(app_id, language='en'):
     # app code
     adir = os.path.join(APPS, app_id)
     fetch_assets(adir, spec.get('assets', []))
-    for f in os.listdir(adir):
+    for f in sorted(os.listdir(adir)):
+        if f.startswith('.') or f in ('node_modules', '__pycache__') or f.endswith('_auth.json'):
+            continue   # editor/OS junk, local dependencies and local secrets never go into a package
         if f.endswith('.js'):
             shutil.copy(os.path.join(adir, f), os.path.join(src, 'javascript', 'app.js' if f == 'main.js' else f))
         elif f.endswith(('.wasm', '.wad')) or f in ('LICENSE', 'NOTICE'):
@@ -445,7 +447,9 @@ def build(app_id, language='en'):
                 json.dump(catalog(), file, ensure_ascii=False, separators=(',', ':'))
             pack_data.pack(temporary, os.path.join(src, 'javascript', 'diagnostic_i18n.pack'))
     kr = os.path.join(KIT, 'runtime')
-    for f in os.listdir(kr):
+    for f in sorted(os.listdir(kr)):
+        if f.startswith('.') or f == '__pycache__':
+            continue
         p = os.path.join(kr, f)
         if os.path.isdir(p):
             shutil.copytree(p, os.path.join(src, 'javascript', 'kit', f))
@@ -539,15 +543,31 @@ def build(app_id, language='en'):
     # --- archives ---
     os.makedirs(DIST, exist_ok=True)
     bundle = os.path.join(DIST, f'{app_id}@{ver}.mgu')
-    with tarfile.open(bundle, 'w:gz') as tf:
+    with gz_header_free(bundle) as gz, tarfile.open(fileobj=gz, mode='w') as tf:
         for n in ('meta.json', 'source', 'rhmiData', 'rhmiDataStartWidget', 'oapgen'):
             if os.path.exists(os.path.join(stage, n)):
-                tf.add(os.path.join(stage, n), arcname=n)
+                tf.add(os.path.join(stage, n), arcname=n, filter=tar_clean)
     npm = os.path.join(DIST, f'{app_id}@{ver}.tgz')
-    with tarfile.open(npm, 'w:gz') as tf:
-        tf.add(src, arcname='package')
+    with gz_header_free(npm) as gz, tarfile.open(fileobj=gz, mode='w') as tf:
+        tf.add(src, arcname='package', filter=tar_clean)
     print(f'{app_id} {ver}: {os.path.relpath(bundle, ROOT)} ({os.path.getsize(bundle) // 1024} KiB), '
           f'{len(uidesc["containers"])} screens, states {state_ids}')
+
+
+def gz_header_free(path):
+    """A gzip stream whose header carries no clock time (mtime 0). The header holds 32 bits, so on a
+    head unit whose clock is past 2106 (a car once showed 2179) every build failed (the MGU Store runs
+    this build on the head unit). From idrive7-apps kit/tools/build.py."""
+    return gzip.GzipFile(path, 'wb', mtime=0)
+
+
+def tar_clean(ti):
+    """Archive entries owned by root:root with no builder user name, and no OS junk files."""
+    if os.path.basename(ti.name) in ('.DS_Store', 'Thumbs.db'):
+        return None
+    ti.uid = ti.gid = 0
+    ti.uname = ti.gname = 'root'
+    return ti
 
 
 def main():

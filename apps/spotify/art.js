@@ -6,13 +6,17 @@
  * RGBA byte arrays using pure JS, applies rounded corners, and registers them
  * via setImage() for GPU or software rendering.
  */
-const https = require('https');
 const http = require('http');
+const tlsDates = require('./tls_dates');
 const urlMod = require('url');
 const decodeJpeg = require('./jpeg');
 const { setImage } = require('./kit/record');
 
 const ART_IMG_ID = 101;
+// load() runs every frame: a failed URL waits this long before it is asked for again
+const FAIL_BACKOFF_MS = 60000;
+// the whole download, however slowly the bytes trickle in
+const TOTAL_TIMEOUT_MS = 15000;
 
 class AlbumArtManager {
     constructor(log, onLoaded) {
@@ -22,6 +26,17 @@ class AlbumArtManager {
         this.currentUrl = null;
         this.loadingUrl = null;
         this.hasArt = false;
+        this.failed = new Map(); // url -> time it may be tried again
+    }
+
+    _fail(url, why) {
+        if (this.loadingUrl === url) this.loadingUrl = null;
+        if (this.failed.has(url)) this.failed.delete(url);
+        if (this.failed.size >= 50) this.failed.delete(this.failed.keys().next().value);
+        this.failed.set(url, Date.now() + FAIL_BACKOFF_MS);
+        if (why && this.log && this.log.warn) {
+            this.log.warn('Fetch album art error: ' + why);
+        }
     }
 
     load(url) {
@@ -45,6 +60,8 @@ class AlbumArtManager {
         }
 
         if (this.loadingUrl === url) return;
+        const retryAt = this.failed.get(url);
+        if (retryAt && Date.now() < retryAt) return;
         this.loadingUrl = url;
 
         let parsed;
@@ -60,19 +77,37 @@ class AlbumArtManager {
             port: parsed.port || (parsed.protocol === 'http:' ? 80 : 443),
             path: parsed.path,
             headers: { 'User-Agent': 'BMW-iDrive7' },
-            timeout: 6000,
-            rejectUnauthorized: false
+            timeout: 6000
         };
 
-        const client = parsed.protocol === 'http:' ? http : https;
-        const req = client.get(opt, (res) => {
+        let finished = false;
+        const deadline = setTimeout(() => {
+            if (finished) return;
+            finished = true;
+            try { req.destroy(); } catch (e) {}
+            this._fail(url, 'timed out');
+        }, TOTAL_TIMEOUT_MS);
+        const fail = (why) => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(deadline);
+            this._fail(url, why);
+        };
+
+        const get = parsed.protocol === 'http:' ? http.get : tlsDates.get;
+        const req = get(opt, (res) => {
             if (res.statusCode !== 200) {
-                this.loadingUrl = null;
+                res.resume();
+                fail('HTTP ' + res.statusCode);
                 return;
             }
             const chunks = [];
             res.on('data', (c) => chunks.push(c));
+            res.on('aborted', () => fail('connection closed mid-download'));
             res.on('end', () => {
+                if (finished) return;
+                finished = true;
+                clearTimeout(deadline);
                 this.loadingUrl = null;
                 try {
                     const buf = Buffer.concat(chunks);
@@ -88,28 +123,24 @@ class AlbumArtManager {
                         }
                         this.cache.set(url, decoded);
 
+                        this.failed.delete(url);
                         if (this.currentUrl === url) {
                             this._applyImage(decoded);
                         }
+                    } else {
+                        this._fail(url, 'empty image');
                     }
                 } catch (e) {
-                    if (this.log && this.log.warn) {
-                        this.log.warn('Decode album art error: ' + e.message);
-                    }
+                    this._fail(url, 'decode: ' + e.message);
                 }
             });
         });
 
-        req.on('error', (err) => {
-            this.loadingUrl = null;
-            if (this.log && this.log.warn) {
-                this.log.warn('Fetch album art error: ' + err.message);
-            }
-        });
+        req.on('error', (err) => fail(err.message));
 
         req.on('timeout', () => {
-            req.destroy();
-            this.loadingUrl = null;
+            try { req.destroy(); } catch (e) {}
+            fail('timed out');
         });
     }
 

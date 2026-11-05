@@ -206,7 +206,10 @@ mgu.run({
             });
         }
 
+        let cleanedUp = false;
         const appCleanup = () => {
+            if (cleanedUp) return;
+            cleanedUp = true;
             log.info('[M-Cinema] App terminating -> killing video engine');
             isPlaying = false;
             isFullscreen = false;
@@ -215,9 +218,17 @@ mgu.run({
                 try { process.send({ t: 'video', action: 'stop' }); } catch (e) {}
             }
         };
+        // a SIGTERM/SIGINT listener replaces Node's default exit, so exit after the cleanup
+        let exiting = false;
+        const exitOnSignal = () => {
+            if (exiting) return;
+            exiting = true;
+            try { appCleanup(); } catch (e) {}
+            process.exit(0);
+        };
         process.on('exit', appCleanup);
-        process.on('SIGTERM', appCleanup);
-        process.on('SIGINT', appCleanup);
+        process.on('SIGTERM', exitOnSignal);
+        process.on('SIGINT', exitOnSignal);
 
         function setPage(idx) {
             page = idx;
@@ -248,9 +259,15 @@ mgu.run({
             render().catch(() => {});
         };
 
-        player.onEnded = () => {
+        player.onEnded = (code) => {
             isPlaying = false;
-            notify('Playback finished');
+            notify(code ? 'Playback error' : 'Playback finished');
+            render().catch(() => {});
+        };
+
+        player.onError = (msg) => {
+            isPlaying = false;
+            notify(msg);
             render().catch(() => {});
         };
 
@@ -277,14 +294,56 @@ mgu.run({
         };
         totalDurationSec = activeCastVideo.durationSec;
 
-        // Monitor vehicle speed for safety
+        // Monitor vehicle speed for safety (Vehicle2.statusCarSpeed2, re-read every 2 s)
+        let parked = null;
         try {
-            const Car = require('./kit/car');
-            const car = new Car(ctx, ['speed']);
-            car.onSample((data) => {
-                if (data.speed !== undefined) vehicleSpeed = Math.round(data.speed);
-            });
-        } catch (e) {}
+            parked = require('./kit/parked').watch(ctx, log);
+        } catch (e) {
+            log.warn('[M-Cinema] speed watch unavailable: ' + e.message);
+        }
+
+        /**
+         * Motion interlock (setting "interlock"):
+         *   bypass - never locked
+         *   auto   - locked while the car moves (> 3 km/h); VIM can't be detected, so moving = locked
+         *   strict - also locked while the speed is unknown on a real car (no valid reading yet)
+         */
+        function computeMotionLocked() {
+            const mode = settings.get('interlock') || 'auto';
+            if (mode === 'bypass') return false;
+            const kmh = parked ? parked.speed() : null;
+            vehicleSpeed = kmh === null ? 0 : Math.round(kmh);
+            if (parked && parked.moving()) return true;
+            if (mode === 'strict' && kmh === null) {
+                const onCar = !parked || !signals.hasNative || signals.hasNative();
+                return onCar;
+            }
+            return false;
+        }
+
+        function checkInterlock() {
+            const motionLocked = computeMotionLocked();
+            if (motionLocked === lastMotionLocked) return motionLocked;
+            lastMotionLocked = motionLocked;
+            log.info('[M-Cinema] Motion interlock ' + (motionLocked ? 'engaged (' + vehicleSpeed + ' km/h)' : 'released'));
+            // actually stop the picture: the native engine is held paused while locked
+            player.setLocked(motionLocked);
+            isPlaying = player.isPlaying;
+            if (process.send) {
+                process.send({ t: 'video', action: motionLocked ? 'pause' : (isPlaying ? 'resume' : 'pause') });
+                process.send({ t: 'video', action: motionLocked ? 'hide' : (isPlaying && page === 0 ? 'show' : 'hide') });
+            }
+            render().catch(() => {});
+            return motionLocked;
+        }
+        setInterval(checkInterlock, 500);
+
+        // play/pause from a button, the knob or the touch surface (resume is refused while motion-locked)
+        function togglePlayback() {
+            if (isPlaying) player.pause();
+            else if (!player.resume()) notify('Video locked while in motion');
+            isPlaying = player.isPlaying;
+        }
 
         function notify(msg) {
             statusMsg = msg;
@@ -316,6 +375,7 @@ mgu.run({
                 { x: 0, y: 0, w: 1600, h: 520, r: 0, fullscreen: true } :
                 { x: 52, y: 100, w: 1008, h: 340, r: 8, fullscreen: false };
             player.play(streamUrl, totalDurationSec, Object.assign({}, video, b));
+            isPlaying = player.isPlaying;
 
             notify('Playing: ' + video.title);
             render().catch(() => {});
@@ -328,10 +388,11 @@ mgu.run({
             },
             onControl(cmd) {
                 if (cmd === 'pause') {
-                    isPlaying = false;
+                    player.pause();
                 } else if (cmd === 'play') {
-                    isPlaying = true;
+                    player.resume();
                 }
+                isPlaying = player.isPlaying;
                 render().catch(() => {});
             },
             onVolume(vol) {
@@ -408,16 +469,7 @@ mgu.run({
         /* ---------- Page 0: Now Playing (Full Height Edge-to-Edge) ---------- */
         function drawPlayer(cv, t, now) {
             const video = activeCastVideo || {};
-            const isParked = signals.parked ? signals.parked() : true;
-            const interlock = settings.interlock || 'auto';
-            const motionLocked = !isParked && interlock === 'strict';
-
-            if (motionLocked !== lastMotionLocked) {
-                lastMotionLocked = motionLocked;
-                if (process.send) {
-                    process.send({ t: 'video', action: motionLocked ? 'hide' : (isPlaying && page === 0 ? 'show' : 'hide') });
-                }
-            }
+            const motionLocked = lastMotionLocked;
 
             if (isFullscreen) {
                 drawFullscreenPlayer(cv, t, now, video, motionLocked);
@@ -431,7 +483,7 @@ mgu.run({
 
             const vx = 52, vy = 56, vw = 1008, vh = 384;
 
-            if (settings.ambilight !== 'off' && !motionLocked) {
+            if (settings.get('ambilight') !== 'off' && !motionLocked) {
                 const pulse = (Math.sin(now / 400) + 1) * 0.5;
                 const glowAlpha = isPlaying ? (0.22 + pulse * 0.14) : 0.06;
                 cv.roundRect(vx - 2, vy - 2, vw + 4, vh + 4, 10, withAlpha('#0066b1', glowAlpha));
@@ -500,9 +552,7 @@ mgu.run({
                 if (!isPlaying && !player.isPlaying && activeCastVideo) {
                     playVideo(activeCastVideo);
                 } else {
-                    isPlaying = !isPlaying;
-                    if (isPlaying) player.resume();
-                    else player.pause();
+                    togglePlayback();
                     render().catch(() => {});
                 }
             }, 'btn_play_toggle', 10);
@@ -548,6 +598,7 @@ mgu.run({
             if (video && video.ytId && cv.video) {
                 cv.video(1, 0, 0, W, H, 0);
             }
+            drawBuffering(cv, W / 2, H / 2);
 
             // Floating Normal View Exit Button in top-right corner
             const btnExitW = 160, btnExitH = 42;
@@ -566,9 +617,7 @@ mgu.run({
             cv.strokeRoundRect(btnPlayX, btnPlayY, btnPlayW, btnPlayH, 8, 1.5, isPlaying ? '#00a3e0' : '#2af575');
             cv.text(isPlaying ? 'PAUSE' : 'PLAY', btnPlayX + btnPlayW / 2, btnPlayY + 27, 15, isPlaying ? '#00f0ff' : '#2af575', { align: 'center', font: 'bold', spacing: 1 });
             cv.target(btnPlayX, btnPlayY, btnPlayW, btnPlayH, () => {
-                isPlaying = !isPlaying;
-                if (isPlaying) player.resume();
-                else player.pause();
+                togglePlayback();
                 render().catch(() => {});
             }, 'btn_play_toggle_fs', 15);
 
@@ -616,6 +665,22 @@ mgu.run({
                 notify(`Seek: ${formatTime(currentTimeSec)}`);
                 render().catch(() => {});
             }, 'seekbar_fs', 16);
+        }
+
+        /* ---------- Buffering progress (the stream downloads fully before playback) ---------- */
+        function drawBuffering(cv, cx, cy) {
+            const b = player.buffering;
+            if (!b) return;
+            const bw = 420, bh = 70;
+            cv.roundRect(cx - bw / 2, cy - bh / 2, bw, bh, 10, withAlpha('#05080e', 0.9));
+            cv.strokeRoundRect(cx - bw / 2, cy - bh / 2, bw, bh, 10, 1, '#1e324c');
+            const frac = b.total > 0 ? Math.min(1, b.bytes / b.total) : 0;
+            const label = b.total > 0 ?
+                `Buffering ${Math.floor(frac * 100)}%  (${(b.bytes / 1048576).toFixed(1)} / ${(b.total / 1048576).toFixed(1)} MB)` :
+                (b.bytes > 0 ? `Buffering ${(b.bytes / 1048576).toFixed(1)} MB` : 'Preparing stream...');
+            cv.text(label, cx, cy - 6, 15, '#ffffff', { align: 'center', font: 'bold' });
+            cv.roundRect(cx - bw / 2 + 24, cy + 14, bw - 48, 6, 3, '#1e293b');
+            cv.roundRect(cx - bw / 2 + 24, cy + 14, Math.max(6, Math.floor((bw - 48) * frac)), 6, 3, '#00a3e0');
         }
 
         /* ---------- Video Screen Canvas Renderer (Debloated 60 fps Vector Stage) ---------- */
@@ -668,6 +733,7 @@ mgu.run({
                 if (cv.video) {
                     cv.video(1, x, y + 44, w, h - 44, 8);
                 }
+                drawBuffering(cv, cx, cy + 22);
 
                 if (isPlaying) {
                     const eqX = x + w - 160, eqY = y + h - 14;
@@ -691,9 +757,7 @@ mgu.run({
                 if (!isPlaying && !player.isPlaying && activeCastVideo) {
                     playVideo(activeCastVideo);
                 } else {
-                    isPlaying = !isPlaying;
-                    if (isPlaying) player.resume();
-                    else player.pause();
+                    togglePlayback();
                     render().catch(() => {});
                 }
             }, 'vid_screen', 10);
@@ -1031,9 +1095,7 @@ mgu.run({
                     return true;
                 }
                 if (ev.press) {
-                    isPlaying = !isPlaying;
-                    if (isPlaying) player.resume();
-                    else player.pause();
+                    togglePlayback();
                     render().catch(() => {});
                     return true;
                 }

@@ -157,7 +157,7 @@ mgu.run({
         // Monitor vehicle speed and engine RPM for safety interlock
         try {
             const Car = require('./kit/car');
-            const car = new Car(ctx, ['rpm', 'speed']);
+            const car = new Car(ctx, ['rpm', 'speed', 'condition']);
             car.onSample((sample) => {
                 safety.updateTelemetry(sample);
             });
@@ -166,6 +166,7 @@ mgu.run({
         }
 
         let page = 0;
+        let lastRawRead = null; // { raw2001, raw2002, at } from the last READ BDC
 
         // Feedback & Safety Dialog state
         let statusMsg = null;
@@ -259,23 +260,14 @@ mgu.run({
 
             try {
                 const live = await safety.readEcuConfiguration(AMBIENT_PRESETS);
-                if (live) {
-                    if (typeof live.autoStartStopMem === 'boolean') autoStartStopMem = live.autoStartStopMem;
-                    if (typeof live.instantMirrorFold === 'boolean') instantMirrorFold = live.instantMirrorFold;
-                    if (typeof live.windowInterruptMuted === 'boolean') windowInterruptMuted = live.windowInterruptMuted;
-                    if (typeof live.tailgateCloseFob === 'boolean') tailgateCloseFob = live.tailgateCloseFob;
-                    if (typeof live.comfortTurnSignals5 === 'boolean') comfortTurnSignals5 = live.comfortTurnSignals5;
-                    if (typeof live.reverseMirrorTilt70 === 'boolean') reverseMirrorTilt70 = live.reverseMirrorTilt70;
-                    if (typeof live.acousticLockChirp === 'boolean') acousticLockChirp = live.acousticLockChirp;
-                    if (typeof live.emergencyBrakeBfd === 'boolean') emergencyBrakeBfd = live.emergencyBrakeBfd;
-                    if (live.ambientColorName) {
-                        const found = AMBIENT_PRESETS.find(p => p.name === live.ambientColorName);
-                        if (found) selectedColor = found;
-                    }
-                    persistState();
-                    notify('[OK] Successfully read & verified current coded values from BDC (0x40)');
+                // The DID map is unverified, so decoded values are NOT applied to the toggles:
+                // show and log the raw bytes the BDC returned instead.
+                if (live && (live.raw2001 || live.raw2002)) {
+                    lastRawRead = { raw2001: live.raw2001 || '-', raw2002: live.raw2002 || '-', at: Date.now() };
+                    log.info('QuickCode: raw BDC read 0x2001=[' + lastRawRead.raw2001 + '] 0x2002=[' + lastRawRead.raw2002 + ']');
+                    notify('[OK] Raw BDC read: 0x2001 [' + lastRawRead.raw2001 + ']');
                 } else {
-                    notify('[OK] Using vehicle defaults: ' + (saved && Object.keys(saved).length ? 'Loaded from cache' : 'OEM Factory Stock'));
+                    notify('[!] BDC did not return DID 0x2001/0x2002 (see log)');
                 }
             } catch (e) {
                 notify('[ERR] Read BDC error: ' + e.message);
@@ -418,7 +410,7 @@ mgu.run({
             cv.roundRect(dx + 32, boxY, dw - 64, boxH, 10, '#060a10');
             cv.strokeRoundRect(dx + 32, boxY, dw - 64, boxH, 10, 1, '#1e293b');
 
-            cv.text('HOW TO ENTER BMW DIAGNOSTIC MODE (PAD):', dx + 48, boxY + 28, 15, '#00a3e0', { font: 'bold' });
+            cv.text(alert.status === 'READ_ONLY' ? 'WHY CODING IS OFF:' : 'WHAT TO DO:', dx + 48, boxY + 28, 15, '#00a3e0', { font: 'bold' });
 
             const steps = alert.steps && alert.steps.length ? alert.steps : [
                 '1. Turn OFF engine completely (Press Start/Stop button)',
@@ -443,23 +435,6 @@ mgu.run({
                 activeSafetyAlert = null;
             }, 'btn_dismiss_alert', 15);
 
-            // Simulation / Toggle Button (for bench / demo mode)
-            const b2X = dx + dw - 32 - 340;
-            const isDiag = safety.vehicleState.diagnosticMode;
-            cv.roundRect(b2X, bY, 340, btnH, 8, isDiag ? '#0f291e' : '#2d1518');
-            cv.strokeRoundRect(b2X, bY, 340, btnH, 8, 1, isDiag ? '#2af575' : '#e1001a');
-            const simLabel = isDiag ? 'DIAG MODE: ACTIVE (CLICK TO LOCK)' : 'SIMULATE: ENTER DIAG MODE';
-            cv.text(simLabel, b2X + 170, bY + 29, 14, isDiag ? '#2af575' : '#ffb703', { align: 'center', font: 'bold' });
-            cv.target(b2X, bY, 340, btnH, () => {
-                safety.toggleSimulatedDiagMode();
-                if (safety.vehicleState.diagnosticMode) {
-                    activeSafetyAlert = null;
-                    notify('[OK] Diagnostic Mode simulated (Coding unlocked)');
-                } else {
-                    activeSafetyAlert = safety.checkCodingSafety();
-                    notify('[!] Diagnostic Mode exited (Coding locked)');
-                }
-            }, 'btn_sim_diag', 15);
         }
 
         /* ---------- Tab 0: Ambient Lighting RGB (BDC 0x40) ---------- */
@@ -896,11 +871,11 @@ mgu.run({
             cv.roundRect(infoX, infoY, infoW, shH, 12, '#09121d');
             cv.strokeRoundRect(infoX, infoY, infoW, shH, 12, 1.5, '#0077c8');
 
-            cv.text('SAFE BDC-ONLY ARCHITECTURE', infoX + 28, infoY + 36, 19, '#00a3e0', { font: 'bold', spacing: 1 });
-            cv.text('[OK] All coding writes strictly target BDC_BODY3 (0x40)', infoX + 28, infoY + 68, 15, '#cbd5e1');
-            cv.text('[OK] High-risk HU_MGU (0x63) flashing completely disabled', infoX + 28, infoY + 96, 15, '#cbd5e1');
-            cv.text('[OK] Zero risk of head unit black-screen, crash or bootloops', infoX + 28, infoY + 124, 15, '#2af575', { font: 'bold' });
-            cv.text('[OK] Automated snapshot created before every modification', infoX + 28, infoY + 152, 15, '#cbd5e1');
+            cv.text('READ-ONLY BUILD', infoX + 28, infoY + 36, 19, '#ffb703', { font: 'bold', spacing: 1 });
+            cv.text('No coding is written to the car by this version.', infoX + 28, infoY + 68, 15, '#cbd5e1');
+            cv.text('The BDC coding map is not verified for this car,', infoX + 28, infoY + 96, 15, '#cbd5e1');
+            cv.text('so restore and rollback are disabled too.', infoX + 28, infoY + 124, 15, '#cbd5e1');
+            cv.text('Last raw read 0x2001: ' + (lastRawRead ? lastRawRead.raw2001 : 'none'), infoX + 28, infoY + 152, 14, '#94a3b8', { font: 'num' });
 
             // OEM Factory Reset Card
             const resY = infoY + shH + 16, resH = 124;
@@ -921,7 +896,7 @@ mgu.run({
             }
             cv.text(rLabel, rfBtnX + rfBtnW / 2, rfBtnY + 31, 16, canRestore ? '#ffffff' : safeCheck.badgeColor, { align: 'center', font: 'bold', spacing: 1 });
 
-            cv.text('Instantly resets all 8 parameters back to authentic BMW factory stock.', infoX + 28, resY + 98, 14, '#94a3b8');
+            cv.text('Disabled in the read-only build.', infoX + 28, resY + 98, 14, '#94a3b8');
 
             cv.target(rfBtnX, rfBtnY, rfBtnW, rfBtnH, async () => {
                 if (isCodingInProgress) return;
@@ -948,7 +923,10 @@ mgu.run({
             // State label & detailed advice
             let mainLabel = '';
             let subLabel = '';
-            if (isCodingInProgress) {
+            if (safeStatus.status === 'READ_ONLY') {
+                mainLabel = 'READ-ONLY';
+                subLabel = 'Coding writes are disabled. READ BDC shows the raw bytes the BDC returns.';
+            } else if (isCodingInProgress) {
                 mainLabel = 'CODING TRANSACTION ACTIVE';
                 subLabel = 'Writing UDS parameter and verifying EEPROM read-back...';
             } else if (speed > 0) {
@@ -961,8 +939,8 @@ mgu.run({
                 mainLabel = 'DIAGNOSTIC MODE REQUIRED';
                 subLabel = 'Turn engine OFF -> Press Start/Stop 3 times rapidly (foot off brake) until cluster confirms.';
             } else {
-                mainLabel = 'DIAGNOSTIC MODE ACTIVE';
-                subLabel = 'Terminal 15 engaged (0 RPM). All ECUs unlocked and safe for 1-tap coding.';
+                mainLabel = 'READY';
+                subLabel = 'Engine off, vehicle stationary.';
             }
 
             cv.text(mainLabel, dockX + 42, dockY + 24, 15, stateColor, { font: 'bold', spacing: 1 });
@@ -970,10 +948,9 @@ mgu.run({
             cv.text(' |  ' + subLabel, dockX + 46 + mainW, dockY + 24, 14, t.dim);
 
             // Right-side Action Buttons: [READ BDC] [RESTORE OEM] [TEST DIAG]
-            const b3W = 190, b2W = 125, b1W = 105, bH = 26;
-            const b3X = dockX + dockW - b3W - 6, bY = dockY + 6;
-            const b2X = b3X - b2W - 8;
-            const b1X = b2X - b1W - 8;
+            const b1W = 105, bH = 26;
+            const bY = dockY + 6;
+            const b1X = dockX + dockW - b1W - 6;
 
             // Button 1: READ BDC
             cv.roundRect(b1X, bY, b1W, bH, 6, '#0c1724');
@@ -984,33 +961,6 @@ mgu.run({
                 await readLiveEcuValues();
             }, 'btn_dock_read_ecu', 15);
 
-            // Button 2: RESTORE OEM
-            cv.roundRect(b2X, bY, b2W, bH, 6, '#181b22');
-            cv.strokeRoundRect(b2X, bY, b2W, bH, 6, 1, '#94a3b8');
-            cv.text('RESTORE OEM', b2X + b2W / 2, bY + 18, 12, '#cbd5e1', { align: 'center', font: 'bold', spacing: 0.8 });
-            cv.target(b2X, bY, b2W, bH, async () => {
-                if (isCodingInProgress) return;
-                await restoreOemDefaults();
-            }, 'btn_dock_restore_oem', 15);
-
-            // Button 3: TEST DIAG MODE
-            cv.roundRect(b3X, bY, b3W, bH, 6, isDiag ? '#0e241b' : '#261214');
-            cv.strokeRoundRect(b3X, bY, b3W, bH, 6, 1, stateColor);
-            const btnText = isDiag ? 'TEST: LOCK (ENG ON)' : 'TEST: ENTER DIAG';
-            cv.text(btnText, b3X + b3W / 2, bY + 18, 12, stateColor, { align: 'center', font: 'bold', spacing: 0.8 });
-
-            cv.target(b3X, bY, b3W, bH, () => {
-                if (isCodingInProgress) return;
-                safety.toggleSimulatedDiagMode();
-                if (safety.vehicleState.diagnosticMode) {
-                    activeSafetyAlert = null;
-                    notify('[OK] Diagnostic Mode simulated (Coding unlocked)');
-                } else {
-                    activeSafetyAlert = safety.checkCodingSafety();
-                    notify('[!] Diagnostic Mode exited (Coding locked)');
-                }
-                render().catch(() => {});
-            }, 'btn_dock_toggle_diag', 15);
         }
 
         /* ---------- Master Render Loop ---------- */

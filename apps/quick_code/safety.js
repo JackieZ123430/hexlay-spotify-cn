@@ -32,6 +32,15 @@
  *      - Concurrency lock prevents conflicting or overlapping write operations.
  */
 
+/**
+ * HARD KILL SWITCH. The DID map below (0x2001 comfort block, 0x2002 ambient RGB) is NOT taken
+ * from BMW coding data (CAFD/NCD) for any real BDC; writing it could overwrite unrelated settings
+ * on the car's central gateway. Every write path checks this first. Do not set it to true unless
+ * the DIDs, byte layouts and value encodings have been verified against the car's own coding data.
+ */
+const CODING_WRITES_ENABLED = false;
+const READ_ONLY_REASON = 'Coding writes are disabled: the BDC coding map used by QuickCode is not verified for this car.';
+
 const NRC_DESCRIPTIONS = {
     0x10: 'General reject by ECU',
     0x11: 'Service not supported by BDC',
@@ -53,10 +62,10 @@ class VehicleSafety {
         this.log = log || console;
 
         // Default state
-        this.isGSeries = true;
+        this.isGSeries = false;   // set only by a successful bus scan
         this.detectedChassis = 'BMW G-Series (iDrive 7)';
         this.modules = {
-            bdc: true,    // 0x40: BDC Body Domain Controller (Safe target)
+            bdc: false,    // 0x40: BDC Body Domain Controller (Safe target)
             kombi: true,  // 0x60: Instrument Cluster (Read-only monitor)
             mgu: true,    // 0x63: Head Unit Infotainment (Read-only monitor)
             dsc: true     // 0x29: Dynamic Stability Control (Read-only monitor)
@@ -74,9 +83,9 @@ class VehicleSafety {
         this.vehicleState = {
             rpm: 0,
             speed: 0,
-            diagnosticMode: true, // Default to ready in demo/bench; locked when engine runs
-            simulatedDiagMode: true,
+            diagnosticMode: false, // never inferred: there is no reliable Diagnostic Mode signal
             isDemo: false,
+            hasLiveTelemetry: false, // at least one real (non-demo) rpm/speed sample received
             lastTelemetryTime: 0
         };
     }
@@ -86,60 +95,23 @@ class VehicleSafety {
      */
     updateTelemetry(sample) {
         if (!sample) return;
-        if (sample.demo !== undefined) {
-            this.vehicleState.isDemo = !!sample.demo;
+        // Demo/simulated data must never feed the interlock: it says nothing about the real car.
+        this.vehicleState.isDemo = !!sample.demo;
+        if (this.vehicleState.isDemo) return;
+
+        const hasValidRpm = (typeof sample.rpm === 'number' && Number.isFinite(sample.rpm));
+        const hasValidSpeed = (typeof sample.speed === 'number' && Number.isFinite(sample.speed));
+        if (hasValidRpm) this.vehicleState.rpm = Math.max(0, Math.round(sample.rpm));
+        if (hasValidSpeed) this.vehicleState.speed = Math.max(0, Math.round(sample.speed));
+        if (hasValidRpm || hasValidSpeed) {
+            this.vehicleState.hasLiveTelemetry = true;
+            this.vehicleState.lastTelemetryTime = Date.now();
         }
-
-        const now = Date.now();
-        this.vehicleState.lastTelemetryTime = now;
-
-        const hasValidRpm = (typeof sample.rpm === 'number' && Number.isFinite(sample.rpm) && !isNaN(sample.rpm));
-        const hasValidSpeed = (typeof sample.speed === 'number' && Number.isFinite(sample.speed) && !isNaN(sample.speed));
-
-        const rawRpm = hasValidRpm ? Math.max(0, Math.round(sample.rpm)) : this.vehicleState.rpm;
-        const rawSpeed = hasValidSpeed ? Math.max(0, Math.round(sample.speed)) : this.vehicleState.speed;
-
-        // In demo/emulator mode, if simulatedDiagMode is active, keep engine stopped at 0 RPM
-        // so user can interactively test coding options in the emulator.
-        if (this.vehicleState.isDemo && this.vehicleState.simulatedDiagMode) {
-            this.vehicleState.rpm = 0;
-            this.vehicleState.speed = 0;
-        } else if (hasValidRpm || hasValidSpeed) {
-            this.vehicleState.rpm = rawRpm;
-            this.vehicleState.speed = rawSpeed;
-        }
-
-        // Automatic Diagnostic Mode evaluation:
-        // 1. If engine is running (RPM > 0) or car is rolling (Speed > 0),
-        //    Diagnostic Mode is physically impossible. Lock immediately.
-        if (this.vehicleState.rpm > 0 || this.vehicleState.speed > 0) {
-            this.vehicleState.diagnosticMode = false;
-        } else {
-            // Engine is 0 RPM and stationary:
-            this.vehicleState.diagnosticMode = this.vehicleState.simulatedDiagMode;
-        }
-    }
-
-    setDiagnosticMode(val) {
-        this.vehicleState.diagnosticMode = !!val;
-        this.vehicleState.simulatedDiagMode = !!val;
-    }
-
-    setSimulatedDiagMode(val) {
-        this.vehicleState.simulatedDiagMode = !!val;
-        if (this.vehicleState.simulatedDiagMode) {
-            this.vehicleState.rpm = 0;
-            this.vehicleState.speed = 0;
-            this.vehicleState.diagnosticMode = true;
-        } else {
-            this.vehicleState.rpm = 850;
-            this.vehicleState.diagnosticMode = false;
-        }
-    }
-
-    toggleSimulatedDiagMode() {
-        this.setSimulatedDiagMode(!this.vehicleState.simulatedDiagMode);
-        return this.vehicleState.diagnosticMode;
+        // Diagnostic Mode comes only from BMW's own vehicle state (VehicleCondition 7 =
+        // PRUEFEN_ANALYSE_DIAGNOSE), never from 0 rpm: a parked car with ignition off reads the same.
+        this.vehicleState.condition = (typeof sample.condition === 'number') ? sample.condition : undefined;
+        this.vehicleState.diagnosticMode = this.vehicleState.condition === 7
+            && this.vehicleState.rpm === 0 && this.vehicleState.speed === 0;
     }
 
     /**
@@ -148,11 +120,11 @@ class VehicleSafety {
      */
     async scanModules(maxAttempts = 3) {
         if (!this.diag || !this.diag.available) {
-            this.log.info('QuickCode Safety: Diagnostic transport offline (Demo/Emulator mode: BDC 0x40 verified)');
-            this.modules.bdc = true;
-            this.isGSeries = true;
+            this.log.info('QuickCode Safety: Diagnostic transport offline; BDC 0x40 not verified');
+            this.modules.bdc = false;
+            this.isGSeries = false;
             this.scanned = true;
-            this.scanError = null;
+            this.scanError = 'Diagnostic transport (TASU) not available';
             return this.modules;
         }
 
@@ -163,11 +135,11 @@ class VehicleSafety {
             try {
                 // Diagnostic check to BDC (0x40): Session control query (0x10 0x01)
                 const bdcReply = await this.diag.physical(0x40, 0x10, [0x01], 1500, (uds) => {
-                    return uds && (uds[0] === 0x50 || uds[0] === 0x7F);
+                    return uds && ((uds[0] === 0x50 && uds[1] === 0x01) || (uds[0] === 0x7F && uds[1] === 0x10));
                 }).catch(() => null);
 
                 if (bdcReply && bdcReply.length > 0) {
-                    if (bdcReply[0] === 0x50 || (bdcReply[0] === 0x7F && bdcReply[2] !== 0x11)) {
+                    if ((bdcReply[0] === 0x50 && bdcReply[1] === 0x01) || (bdcReply[0] === 0x7F && bdcReply[1] === 0x10 && bdcReply[2] !== 0x11)) {
                         bdcFound = true;
                         break;
                     }
@@ -210,6 +182,22 @@ class VehicleSafety {
      * Checks: Concurrency lock, Motion, Engine Running, Diagnostic Mode, Architecture, Reachability.
      */
     checkCodingSafety(feature) {
+        if (!CODING_WRITES_ENABLED) {
+            return {
+                allowed: false,
+                status: 'READ_ONLY',
+                badgeText: 'READ-ONLY',
+                badgeColor: '#ffb703',
+                title: 'CODING DISABLED (READ-ONLY)',
+                message: READ_ONLY_REASON,
+                steps: [
+                    '1. QuickCode only reads the BDC; nothing is written to the car',
+                    '2. Writes stay off until the coding map is verified against',
+                    '   this BDC\'s own coding data (CAFD)',
+                    '3. Use E-Sys or BimmerCode for coding until then'
+                ]
+            };
+        }
         if (this.isWriting) {
             return {
                 allowed: false,
@@ -218,6 +206,19 @@ class VehicleSafety {
                 badgeColor: '#00a3e0',
                 title: 'CODING WRITE IN PROGRESS',
                 message: 'An ECU coding transaction is currently in progress. Please wait for confirmation.',
+                steps: []
+            };
+        }
+
+        // 0. Live telemetry required (no data or demo data = unknown = locked)
+        if (!this.vehicleState.hasLiveTelemetry || this.vehicleState.isDemo) {
+            return {
+                allowed: false,
+                status: 'NO_TELEMETRY',
+                badgeText: 'NO VEHICLE DATA',
+                badgeColor: '#ffb703',
+                title: 'VEHICLE STATE UNKNOWN - CODING LOCKED',
+                message: 'No live engine speed / vehicle speed has been received from the car.',
                 steps: []
             };
         }
@@ -287,8 +288,8 @@ class VehicleSafety {
             };
         }
 
-        // 5. Module Reachability Check
-        if (feature && !this.supports(feature)) {
+        // 5. Module Reachability Check (always, not only when a feature is named)
+        if (!this.scanned || !this.supports(feature)) {
             return {
                 allowed: false,
                 status: 'BDC_UNREACHABLE',
@@ -311,6 +312,22 @@ class VehicleSafety {
             title: 'DIAGNOSTIC MODE READY',
             message: 'Vehicle is in Diagnostic Mode with engine stopped. Safe for BDC parameter coding.',
             steps: []
+        };
+    }
+
+    /**
+     * Reply matcher for a request (sid, echo bytes): accepts only the positive reply that echoes
+     * the same sub-function / DID, or a negative reply (0x7F) for this exact SID. Anything else
+     * (a late reply to another request, another app's traffic to the same ECU) is ignored.
+     */
+    static replyFor(sid, echo) {
+        const e = echo || [];
+        return (uds) => {
+            if (!uds || !uds.length) return false;
+            if (uds[0] === 0x7F) return uds.length >= 3 && uds[1] === sid && uds[2] !== 0x78;
+            if (uds[0] !== ((sid + 0x40) & 0xFF)) return false;
+            for (let i = 0; i < e.length; i++) if (uds[1 + i] !== e[i]) return false;
+            return true;
         };
     }
 
@@ -403,10 +420,9 @@ class VehicleSafety {
 
         // 1. Read BDC Comfort Block (DID 0x2001)
         try {
-            const bdcRes = await this.diag.physical(0x40, 0x22, [0x20, 0x01], 2000, (uds) => {
-                return uds && (uds[0] === 0x62 || uds[0] === 0x7F);
-            }).catch(() => null);
+            const bdcRes = await this.diag.physical(0x40, 0x22, [0x20, 0x01], 2000, VehicleSafety.replyFor(0x22, [0x20, 0x01])).catch(() => null);
 
+            if (bdcRes && bdcRes[0] === 0x62) readData.raw2001 = bdcRes.slice(3).map((x) => ('0' + x.toString(16)).slice(-2).toUpperCase()).join(' ');
             if (bdcRes && bdcRes.length >= 11 && bdcRes[0] === 0x62 && bdcRes[1] === 0x20 && bdcRes[2] === 0x01) {
                 const comfortData = VehicleSafety.decodeComfortBlock(bdcRes.slice(3, 11));
                 if (comfortData) {
@@ -424,10 +440,9 @@ class VehicleSafety {
 
         // 2. Read BDC Ambient RGB Block (DID 0x2002)
         try {
-            const ambRes = await this.diag.physical(0x40, 0x22, [0x20, 0x02], 2000, (uds) => {
-                return uds && (uds[0] === 0x62 || uds[0] === 0x7F);
-            }).catch(() => null);
+            const ambRes = await this.diag.physical(0x40, 0x22, [0x20, 0x02], 2000, VehicleSafety.replyFor(0x22, [0x20, 0x02])).catch(() => null);
 
+            if (ambRes && ambRes[0] === 0x62) readData.raw2002 = ambRes.slice(3).map((x) => ('0' + x.toString(16)).slice(-2).toUpperCase()).join(' ');
             if (ambRes && ambRes.length >= 6 && ambRes[0] === 0x62 && ambRes[1] === 0x20 && ambRes[2] === 0x02) {
                 const r = ambRes[3], g = ambRes[4], b = ambRes[5];
                 const readHex = VehicleSafety.rgbToHex(r, g, b);
@@ -474,6 +489,11 @@ class VehicleSafety {
      *   7. Release Concurrency Lock.
      */
     async writeEcuConfiguration(config, options = {}) {
+        // Step 0: hard kill switch (independent of every other check)
+        if (!CODING_WRITES_ENABLED) {
+            this.log.warn('QuickCode Safety: write refused, coding writes are disabled (read-only build)');
+            return { success: false, verified: false, error: READ_ONLY_REASON, safetyStatus: 'READ_ONLY' };
+        }
         // Step 1: Pre-write Safety Check
         const check = this.checkCodingSafety();
         if (!check.allowed) {
@@ -490,25 +510,15 @@ class VehicleSafety {
         this.isWriting = true;
 
         try {
-            // Support Demo / Benchmark / Offline Mode
+            // No transport = nothing was written. Never report a simulated write as success.
             if (!this.diag || !this.diag.available) {
-                this.log.info('QuickCode Safety: Diagnostic transport offline (Demo/Bench mode: write validated & simulated)');
-                await new Promise(r => setTimeout(r, 200)); // Simulate write latency
-                this.lastReadConfig = Object.assign({}, config);
-                return {
-                    success: true,
-                    verified: true,
-                    simulated: true,
-                    message: 'Simulated bench mode write successful'
-                };
+                throw new Error('Diagnostic transport (TASU) not available: nothing was written');
             }
 
             this.log.info('QuickCode Safety: Initiating verified coding write to BDC_BODY3 (0x40)...');
 
             // Step 3: Enter Extended Diagnostic Session (0x10 0x03)
-            const sessionRes = await this.diag.physical(0x40, 0x10, [0x03], 2500, (uds) => {
-                return uds && (uds[0] === 0x50 || uds[0] === 0x7F);
-            }).catch(e => {
+            const sessionRes = await this.diag.physical(0x40, 0x10, [0x03], 2500, VehicleSafety.replyFor(0x10, [0x03])).catch(e => {
                 throw new Error('Diagnostic session transition failed: ' + e.message);
             });
 
@@ -528,7 +538,7 @@ class VehicleSafety {
                 0x2E,
                 [0x20, 0x01].concat(comfortPayload),
                 3000,
-                (uds) => uds && (uds[0] === 0x6E || uds[0] === 0x7F)
+                VehicleSafety.replyFor(0x2E, [0x20, 0x01])
             ).catch(e => {
                 throw new Error('Comfort parameters write failed: ' + e.message);
             });
@@ -548,7 +558,7 @@ class VehicleSafety {
                     0x2E,
                     [0x20, 0x02, r, g, b],
                     3000,
-                    (uds) => uds && (uds[0] === 0x6E || uds[0] === 0x7F)
+                    VehicleSafety.replyFor(0x2E, [0x20, 0x02])
                 ).catch(e => {
                     throw new Error('Ambient RGB write failed: ' + e.message);
                 });
@@ -571,7 +581,7 @@ class VehicleSafety {
                 0x22,
                 [0x20, 0x01],
                 2000,
-                (uds) => uds && (uds[0] === 0x62 || uds[0] === 0x7F)
+                VehicleSafety.replyFor(0x22, [0x20, 0x01])
             ).catch(() => null);
 
             if (!verifyComfort || verifyComfort[0] !== 0x62 || verifyComfort.length < 11) {
@@ -595,7 +605,7 @@ class VehicleSafety {
                     0x22,
                     [0x20, 0x02],
                     2000,
-                    (uds) => uds && (uds[0] === 0x62 || uds[0] === 0x7F)
+                    VehicleSafety.replyFor(0x22, [0x20, 0x02])
                 ).catch(() => null);
 
                 if (!verifyAmb || verifyAmb[0] !== 0x62 || verifyAmb.length < 6) {
@@ -630,7 +640,7 @@ class VehicleSafety {
             // Step 6: Always restore ECU to Default Diagnostic Session (0x10 0x01)
             try {
                 if (this.diag && this.diag.available) {
-                    await this.diag.physical(0x40, 0x10, [0x01], 1500).catch(() => {});
+                    await this.diag.physical(0x40, 0x10, [0x01], 1500, VehicleSafety.replyFor(0x10, [0x01])).catch(() => {});
                 }
             } catch (_) {}
 

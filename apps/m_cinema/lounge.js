@@ -28,7 +28,14 @@ function httpsGet(urlStr) {
         const req = https.get(options, (res) => {
             let data = '';
             res.on('data', c => { data += c; });
-            res.on('end', () => resolve(data.trim()));
+            res.on('end', () => {
+                if (res.statusCode < 200 || res.statusCode > 299) {
+                    const err = new Error('HTTP ' + res.statusCode);
+                    err.status = res.statusCode;
+                    return reject(err);
+                }
+                resolve(data.trim());
+            });
         });
         req.on('error', reject);
         req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
@@ -61,10 +68,67 @@ function httpsPost(urlStr, postData) {
     });
 }
 
+/**
+ * Incremental parser for the Lounge (BrowserChannel) bind stream: a decimal length line, then
+ * that many characters of JSON - an array of [arrayId, [event, ...args]]. Complete chunks are
+ * consumed and dropped from the buffer, so every event is seen exactly once. The length is
+ * tried as UTF-8 bytes and as characters (servers differ).
+ */
+class LoungeStreamParser {
+    constructor() {
+        this.buf = '';
+    }
+
+    /** Feed text; returns the complete events: [{ aid, name, args }] */
+    push(text) {
+        this.buf += text;
+        const out = [];
+        for (;;) {
+            const nl = this.buf.indexOf('\n');
+            if (nl < 0) break;
+            const head = this.buf.slice(0, nl).trim();
+            if (!head) { this.buf = this.buf.slice(nl + 1); continue; }
+            if (!/^\d+$/.test(head)) {
+                // not a length line: resync at the next line
+                this.buf = this.buf.slice(nl + 1);
+                continue;
+            }
+            const len = parseInt(head, 10);
+            const rest = this.buf.slice(nl + 1);
+            let used = -1, arr = null;
+            const bytes = Buffer.from(rest, 'utf8');
+            if (bytes.length >= len) {
+                const cand = bytes.slice(0, len).toString('utf8');
+                arr = LoungeStreamParser.tryJson(cand);
+                if (arr) used = cand.length;
+            }
+            if (!arr && rest.length >= len) {
+                arr = LoungeStreamParser.tryJson(rest.slice(0, len));
+                used = len;           // a malformed chunk is dropped, not retried forever
+            }
+            if (used < 0) break;      // wait for more data
+            this.buf = rest.slice(used);
+            if (!Array.isArray(arr)) continue;
+            for (const item of arr) {
+                if (!Array.isArray(item) || typeof item[0] !== 'number' || !Array.isArray(item[1])) continue;
+                out.push({ aid: item[0], name: item[1][0], args: item[1].slice(1) });
+            }
+        }
+        return out;
+    }
+
+    static tryJson(str) {
+        try { return JSON.parse(str); } catch (e) { return null; }
+    }
+}
+
+const BACKOFF_MIN_MS = 2000;
+const BACKOFF_MAX_MS = 5 * 60 * 1000;
+
 class YouTubeLoungeReceiver {
     constructor(callbacks, log, ctx) {
         this.cb = callbacks || {};
-        this.log = log || console;
+        this.log = log || this.cb.log || console;
         this.ctx = ctx || null;
         this.screenId = null;
         this.loungeToken = null;
@@ -73,12 +137,19 @@ class YouTubeLoungeReceiver {
         this.sid = null;
         this.gsessionid = null;
         this.rid = 10;
-        this.aid = 3;
+        this.aid = -1;               // last processed event (array) id, sent back as AID
+        this.ofs = 0;                // outgoing map count
         this.streamReq = null;
         this.isConnected = false;
         this.isStarted = false;
         this.refreshTimer = null;
+        this.initTimer = null;
+        this.reconnectTimer = null;
+        this.initBackoff = BACKOFF_MIN_MS;
+        this.streamBackoff = BACKOFF_MIN_MS;
+        this.tokenExpiry = 0;
         this.lastCastVid = null;
+        this.lastCastAt = 0;
 
         const baseDir = (this.ctx && this.ctx.dataDir) ? this.ctx.dataDir : __dirname;
         this.authFile = path.join(baseDir, 'lounge_auth.json');
@@ -92,20 +163,59 @@ class YouTubeLoungeReceiver {
         if (this.isStarted) return;
         this.isStarted = true;
 
-        try {
-            await this.initSession();
-        } catch (e) {
-            this.log.warn('YouTube Lounge init error: ' + e.message);
-            // Retry after 8s if network was momentarily down
-            setTimeout(() => {
-                if (!this.pairingCode) this.start().catch(() => {});
-            }, 8000);
-        }
-
         // Periodically refresh pairing code (every 5 minutes)
         this.refreshTimer = setInterval(() => {
-            this.refreshPairingCode().catch(() => {});
+            this.refreshPairingCode().catch((e) => this.log.warn('Lounge pairing refresh: ' + e.message));
         }, 5 * 60 * 1000);
+
+        await this._initWithRetry();
+    }
+
+    /** initSession, retried with backoff (network down at start-up) until it binds. */
+    async _initWithRetry() {
+        this.initTimer = null;
+        if (!this.isStarted) return;
+        try {
+            await this.initSession();
+            this.initBackoff = BACKOFF_MIN_MS;
+            if (!this.sid) throw new Error('bind returned no session');
+        } catch (e) {
+            if (!this.isStarted) return;
+            this.log.warn('YouTube Lounge init error: ' + e.message + ' (retry in ' + Math.round(this.initBackoff / 1000) + ' s)');
+            this.initTimer = setTimeout(() => this._initWithRetry(), this.initBackoff);
+            this.initBackoff = Math.min(BACKOFF_MAX_MS, this.initBackoff * 2);
+        }
+    }
+
+    _saveAuth() {
+        try {
+            fs.writeFileSync(this.authFile, JSON.stringify({
+                screenId: this.screenId,
+                loungeToken: this.loungeToken,
+                tokenExpiry: this.tokenExpiry,
+                savedAt: new Date().toISOString()
+            }, null, 2), 'utf8');
+        } catch (e) {}
+    }
+
+    /** New lounge token for the screen (on start, on expiry, or after a 401/403). */
+    async fetchLoungeToken() {
+        const tokenRes = await httpsPost(
+            'https://www.youtube.com/api/lounge/pairing/get_lounge_token_batch',
+            querystring.stringify({ screen_ids: this.screenId })
+        );
+        if (tokenRes.status < 200 || tokenRes.status > 299) throw new Error('lounge token HTTP ' + tokenRes.status);
+        const tokenObj = JSON.parse(tokenRes.data);
+        const scr = tokenObj && tokenObj.screens && tokenObj.screens[0];
+        if (!scr || !scr.loungeToken) throw new Error('no lounge token');
+        this.loungeToken = scr.loungeToken;
+        this.tokenExpiry = Number(scr.expiration) || 0;
+        this._saveAuth();
+        this.log.info('YouTube Lounge token refreshed');
+    }
+
+    _tokenExpired() {
+        return !this.loungeToken || (this.tokenExpiry > 0 && Date.now() > this.tokenExpiry - 60000);
     }
 
     async initSession() {
@@ -115,6 +225,7 @@ class YouTubeLoungeReceiver {
                 const data = JSON.parse(fs.readFileSync(this.authFile, 'utf8'));
                 if (data && data.screenId) this.screenId = data.screenId;
                 if (data && data.loungeToken) this.loungeToken = data.loungeToken;
+                if (data && data.tokenExpiry) this.tokenExpiry = Number(data.tokenExpiry) || 0;
             }
         } catch (e) {}
 
@@ -124,26 +235,13 @@ class YouTubeLoungeReceiver {
         }
         this.deviceId = 'bmw-idrive7-' + this.screenId;
 
-        // Step 2: Fetch Lounge Token Batch via POST if not already saved
-        if (!this.loungeToken) {
-            const tokenRes = await httpsPost(
-                'https://www.youtube.com/api/lounge/pairing/get_lounge_token_batch',
-                querystring.stringify({ screen_ids: this.screenId })
-            );
-            const tokenObj = JSON.parse(tokenRes.data);
-            if (tokenObj && tokenObj.screens && tokenObj.screens[0]) {
-                this.loungeToken = tokenObj.screens[0].loungeToken;
-            }
+        // Step 2: Fetch Lounge Token Batch via POST if not saved or expired
+        if (this._tokenExpired()) {
+            await this.fetchLoungeToken();
         }
 
         // Persist to car internal disk
-        try {
-            fs.writeFileSync(this.authFile, JSON.stringify({
-                screenId: this.screenId,
-                loungeToken: this.loungeToken,
-                savedAt: new Date().toISOString()
-            }, null, 2), 'utf8');
-        } catch (e) {}
+        this._saveAuth();
 
         // Step 3: Fetch 12-digit TV Pairing Code via POST with full device registration
         await this.refreshPairingCode();
@@ -165,6 +263,10 @@ class YouTubeLoungeReceiver {
         });
 
         const res = await httpsPost('https://www.youtube.com/api/lounge/pairing/get_pairing_code?ctx=pair', pairBody);
+        if (res.status === 401 || res.status === 403) {
+            await this.fetchLoungeToken();
+            return;
+        }
         const rawCode = (res.data || '').trim();
         if (rawCode && /^\d{12}$/.test(rawCode)) {
             // Format as XXX XXX XXX XXX for easy entry on phone
@@ -174,30 +276,61 @@ class YouTubeLoungeReceiver {
         }
     }
 
+    /** New bind session (new SID). Throws when the bind fails. */
     async bindSession() {
-        if (!this.screenId || !this.loungeToken) return;
+        if (!this.screenId) return;
+        if (this._tokenExpired()) await this.fetchLoungeToken();
 
+        this.sid = null;
+        this.gsessionid = null;
+        this.aid = -1;
+        this.ofs = 0;
+        this.rid = 1;
         const postData = querystring.stringify({ count: '0' });
-        const bindUrl = `https://www.youtube.com/api/lounge/bc/bind?device=LOUNGE_SCREEN&name=${encodeURIComponent('BMW iDrive 7')}&app=youtube-desktop&loungeIdToken=${encodeURIComponent(this.loungeToken)}&id=${this.deviceId}&VER=8&RID=1&CVER=1`;
+        const bindUrl = () => `https://www.youtube.com/api/lounge/bc/bind?device=LOUNGE_SCREEN&name=${encodeURIComponent('BMW iDrive 7')}&app=youtube-desktop&loungeIdToken=${encodeURIComponent(this.loungeToken)}&id=${this.deviceId}&VER=8&RID=${this.rid++}&CVER=1`;
 
-        try {
-            const res = await httpsPost(bindUrl, postData);
-            this.parseInitialBind(res.data);
-            if (this.sid && this.gsessionid) {
-                this.startEventStream();
-            }
-        } catch (err) {
-            this.log.warn('Lounge bind error: ' + err.message);
+        let res = await httpsPost(bindUrl(), postData);
+        if (res.status === 401 || res.status === 403) {
+            await this.fetchLoungeToken();
+            res = await httpsPost(bindUrl(), postData);
         }
+        if (res.status < 200 || res.status > 299) throw new Error('Lounge bind HTTP ' + res.status);
+        this.parseInitialBind(res.data);
+        if (!this.sid || !this.gsessionid) throw new Error('Lounge bind: no SID');
+        this.streamBackoff = BACKOFF_MIN_MS;
+        this.startEventStream();
     }
 
     parseInitialBind(text) {
-        // Look for SID and gsessionid
-        const sidMatch = text.match(/\[0,\["c","([^"]+)"/);
-        if (sidMatch) this.sid = sidMatch[1];
+        // c (SID) and S (gsessionid); other events of the bind reply are only acknowledged (AID),
+        // so a phone's earlier session doesn't start a video at start-up
+        const events = new LoungeStreamParser().push(text + '\n');
+        for (const ev of events) {
+            if (ev.aid > this.aid) this.aid = ev.aid;
+            if (ev.name === 'c' && ev.args[0]) this.sid = ev.args[0];
+            if (ev.name === 'S' && ev.args[0]) this.gsessionid = ev.args[0];
+        }
+        if (!this.sid) {
+            const sidMatch = text.match(/\["c","([^"]+)"/);
+            if (sidMatch) this.sid = sidMatch[1];
+        }
+        if (!this.gsessionid) {
+            const gsessionMatch = text.match(/\["S","([^"]+)"/);
+            if (gsessionMatch) this.gsessionid = gsessionMatch[1];
+        }
+    }
 
-        const gsessionMatch = text.match(/\[1,\["S","([^"]+)"/);
-        if (gsessionMatch) this.gsessionid = gsessionMatch[1];
+    _scheduleReconnect(rebind, reason) {
+        if (!this.isStarted || this.reconnectTimer) return;
+        const delay = this.streamBackoff;
+        this.streamBackoff = Math.min(BACKOFF_MAX_MS, this.streamBackoff * 2);
+        this.log.info('Lounge stream ' + reason + ' -> ' + (rebind ? 'rebind' : 'reconnect') + ' in ' + Math.round(delay / 1000) + ' s');
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            if (!this.isStarted) return;
+            if (!rebind && this.sid) return this.startEventStream();
+            this.bindSession().catch((e) => this._scheduleReconnect(true, 'bind failed: ' + e.message));
+        }, delay);
     }
 
     startEventStream() {
@@ -220,7 +353,7 @@ class YouTubeLoungeReceiver {
             RID: 'rpc',
             SID: this.sid,
             CI: '0',
-            AID: '3',
+            AID: String(Math.max(0, this.aid)),
             gsessionid: this.gsessionid,
             TYPE: 'xmlhttp'
         });
@@ -235,44 +368,82 @@ class YouTubeLoungeReceiver {
             timeout: 60000
         };
 
-        this.streamReq = https.get(options, (res) => {
+        if (this.streamReq) {
+            const old = this.streamReq;
+            this.streamReq = null;
+            try { old.abort(); } catch (e) {}
+        }
+        const startedAt = Date.now();
+        let done = false;
+        let req = null;
+        // exactly one reconnect per request, whatever ends it
+        const ended = (rebind, reason) => {
+            if (done) return;
+            done = true;
+            if (this.streamReq === req) this.streamReq = null;
+            this.isConnected = false;
+            // a long poll that ran a while is normal: reconnect at once
+            if (!rebind && Date.now() - startedAt > 20000) this.streamBackoff = 500;
+            this._scheduleReconnect(rebind, reason);
+        };
+
+        req = https.get(options, (res) => {
+            if (res.statusCode === 401 || res.statusCode === 403) {
+                res.resume();
+                this.loungeToken = null;          // refreshed by the rebind
+                return ended(true, 'HTTP ' + res.statusCode + ' (token)');
+            }
+            if (res.statusCode === 400 || res.statusCode === 404 || res.statusCode === 410) {
+                res.resume();
+                this.sid = null;                  // unknown / stale SID: new session
+                return ended(true, 'HTTP ' + res.statusCode + ' (stale SID)');
+            }
+            if (res.statusCode < 200 || res.statusCode > 299) {
+                res.resume();
+                return ended(false, 'HTTP ' + res.statusCode);
+            }
             this.isConnected = true;
-            let buffer = '';
+            const parser = new LoungeStreamParser();
+            res.setEncoding('utf8');
 
             res.on('data', chunk => {
-                buffer += chunk;
-                this.handleStreamChunks(buffer);
+                if (done) return;
+                const events = parser.push(chunk);
+                if (events.length) this.streamBackoff = BACKOFF_MIN_MS / 4;
+                this.handleEvents(events);
             });
-
-            res.on('end', () => {
-                this.isConnected = false;
-                // Auto-reconnect stream
-                setTimeout(() => this.startEventStream(), 2000);
-            });
+            res.on('aborted', () => ended(false, 'aborted'));
+            res.on('error', (e) => ended(false, e.message));
+            res.on('end', () => ended(false, 'ended'));
         });
+        this.streamReq = req;
 
-        this.streamReq.on('error', () => {
-            this.isConnected = false;
-            setTimeout(() => this.startEventStream(), 4000);
-        });
-
-        this.streamReq.on('timeout', () => {
-            if (this.streamReq) this.streamReq.destroy();
+        req.on('error', (e) => ended(false, 'error: ' + e.message));
+        req.on('timeout', () => {
+            try { req.abort(); } catch (e) {}
+            ended(false, 'timeout');
         });
     }
 
-    handleStreamChunks(raw) {
-        // Look for nowPlaying or setPlaylist video events
-        // E.g. ["nowPlaying", {"videoId": "AvCt8Ggtupc"}] or ["setPlaylist", {"videoId": "..."}]
-        const re = /\["(?:nowPlaying|setPlaylist)",\s*\{([^}]+)\}/g;
-        let m;
-        while ((m = re.exec(raw)) !== null) {
-            const body = m[1];
-            const vidMatch = body.match(/"videoId":\s*"([^"]+)"/);
-            if (vidMatch && vidMatch[1]) {
-                const vidId = vidMatch[1];
-                if (vidId !== this.lastCastVid) {
+    /** Events from the stream parser; each array id is processed once. */
+    handleEvents(events) {
+        for (const ev of events) {
+            if (ev.aid <= this.aid) continue;   // already seen (replayed after a reconnect)
+            this.aid = ev.aid;
+            this.handleEvent(ev.name, ev.args);
+        }
+    }
+
+    handleEvent(name, args) {
+        const payload = (args && args[0] && typeof args[0] === 'object') ? args[0] : {};
+        if (name === 'nowPlaying' || name === 'setPlaylist') {
+            const vidId = payload.videoId;
+            if (vidId) {
+                // nowPlaying repeats the current video; a setPlaylist of the same video (a deliberate
+                // re-cast) plays it again, unless it is the echo of our own sendPlayVideo
+                if (vidId !== this.lastCastVid || (name === 'setPlaylist' && Date.now() - this.lastCastAt > 3000)) {
                     this.lastCastVid = vidId;
+                    this.lastCastAt = Date.now();
                     this.log.info('YouTube Lounge: Received Cast Video from phone: ' + vidId);
                     if (this.cb.onCast) {
                         this.cb.onCast({
@@ -291,20 +462,20 @@ class YouTubeLoungeReceiver {
                     }
                 }
             }
-        }
-
-        // Look for playback commands: pause / play / seek
-        if (/\["(?:pause|stop)"/.test(raw)) {
+        } else if (name === 'pause' || name === 'stop') {
             if (this.cb.onControl) this.cb.onControl('pause');
-        } else if (/\["(?:play)"/.test(raw)) {
+        } else if (name === 'play') {
             if (this.cb.onControl) this.cb.onControl('play');
+        } else if (name === 'setVolume') {
+            if (this.cb.onVolume && payload.volume !== undefined) this.cb.onVolume(Number(payload.volume));
         }
     }
 
     async sendPlayVideo(videoId) {
         if (!this.sid || !this.gsessionid || !this.loungeToken) return;
-        this.aid++;
         this.rid++;
+        this.lastCastVid = videoId;
+        this.lastCastAt = Date.now();
 
         const sendParams = querystring.stringify({
             device: 'LOUNGE_SCREEN',
@@ -322,13 +493,13 @@ class YouTubeLoungeReceiver {
             t: '1',
             RID: this.rid,
             SID: this.sid,
-            AID: this.aid,
+            AID: Math.max(0, this.aid),
             gsessionid: this.gsessionid
         });
         const url = `https://www.youtube.com/api/lounge/bc/bind?${sendParams}`;
         const postData = querystring.stringify({
             count: '1',
-            ofs: '0',
+            ofs: String(this.ofs++),
             req0__sc: 'setPlaylist',
             req0_videoId: videoId,
             req0_currentTime: '0'
@@ -343,10 +514,15 @@ class YouTubeLoungeReceiver {
     }
 
     stop() {
+        this.isStarted = false;
         if (this.streamReq) {
-            this.streamReq.destroy();
+            const r = this.streamReq;
             this.streamReq = null;
+            try { r.abort(); } catch (e) {}
         }
+        [this.initTimer, this.reconnectTimer].forEach((t) => t && clearTimeout(t));
+        this.initTimer = null;
+        this.reconnectTimer = null;
         if (this.refreshTimer) {
             clearInterval(this.refreshTimer);
             this.refreshTimer = null;
@@ -356,5 +532,6 @@ class YouTubeLoungeReceiver {
 }
 
 module.exports = {
-    YouTubeLoungeReceiver
+    YouTubeLoungeReceiver,
+    LoungeStreamParser
 };

@@ -12,6 +12,10 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const querystring = require('querystring');
+const tlsDates = require('./tls_dates');
+
+// how long a failed token refresh (network, 5xx, a non-definitive 4xx) waits before the next try
+const REFRESH_RETRY_MS = 30000;
 
 if (!Promise.prototype.finally) {
     Promise.prototype.finally = function(callback) {
@@ -21,6 +25,18 @@ if (!Promise.prototype.finally) {
             reason => P.resolve(callback()).then(() => { throw reason; })
         );
     };
+}
+
+/* Rewrites the JSON file at p with mutate(its contents), atomically (temp file + rename). */
+function updateAuthFile(p, mutate) {
+    let existing = {};
+    try {
+        if (fs.existsSync(p)) existing = JSON.parse(fs.readFileSync(p, 'utf8')) || {};
+    } catch (e) {}
+    const out = mutate(existing) || existing;
+    const tmp = p + '.tmp-' + process.pid;
+    fs.writeFileSync(tmp, JSON.stringify(out, null, 2), { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(tmp, p);
 }
 
 function decodeHtmlEntities(str) {
@@ -164,6 +180,8 @@ class SpotifyClient {
         this.lastPlaylistsFetch = 0;
         this.lastLikedFetch = 0;
         this.refreshing = false;
+        this._refreshPromise = null;
+        this._refreshFailedAt = 0;
 
         this._loadAuth();
         if (this.token || this.refreshToken) {
@@ -200,6 +218,7 @@ class SpotifyClient {
                         path: '/',
                         method: 'HEAD',
                         timeout: 3500,
+                        // reachability probe only: a HEAD with no credentials, so any certificate will do
                         rejectUnauthorized: false
                     }, (res) => {
                         res.resume();
@@ -240,34 +259,36 @@ class SpotifyClient {
         if (data.expiresAt) this.expiresAt = data.expiresAt;
         if (data.clientId) this.clientId = data.clientId;
         this.isOnline = true;
+        this._refreshFailedAt = 0;
+        this._persistAuth();
+        this.initialFetch();
+    }
 
-        const paths = [
+    _authPaths() {
+        return [
             this.ctx && this.ctx.dataDir ? path.join(this.ctx.dataDir, 'spotify_auth.json') : null,
             path.join(__dirname, 'spotify_auth.json')
         ].filter(Boolean);
+    }
 
-        paths.forEach(p => {
+    /* Merges the tokens into each spotify_auth.json, keeping what else it holds
+     * (the cloud pairing channel and secretKey), written atomically. */
+    _persistAuth() {
+        this._authPaths().forEach(p => {
             try {
-                let existing = {};
-                try {
-                    if (fs.existsSync(p)) existing = JSON.parse(fs.readFileSync(p, 'utf8')) || {};
-                } catch (err) {}
-                const out = Object.assign({}, existing, {
+                updateAuthFile(p, (existing) => Object.assign(existing, {
                     token: this.token,
                     refreshToken: this.refreshToken,
                     expiresAt: this.expiresAt,
                     clientId: this.clientId,
                     clientSecret: this.clientSecret,
                     savedAt: new Date().toISOString()
-                });
-                fs.writeFileSync(p, JSON.stringify(out, null, 2), 'utf8');
+                }));
                 this.log.info('SpotifyClient: Saved auth tokens to ' + p);
             } catch (e) {
                 this.log.warn('SpotifyClient: Could not save tokens to ' + p + ': ' + e.message);
             }
         });
-
-        this.initialFetch();
     }
 
     _loadAuth() {
@@ -306,7 +327,7 @@ class SpotifyClient {
 
     reloadAuth() {
         this._loadAuth();
-        if (this.token) {
+        if (this.isAuthenticated()) {
             this.initialFetch();
         }
     }
@@ -319,115 +340,120 @@ class SpotifyClient {
         this.currentPlaylist = this.playlists[0];
         this.currentTrack = this.currentPlaylist.tracks[0];
 
-        const paths = [
-            this.ctx && this.ctx.dataDir ? path.join(this.ctx.dataDir, 'spotify_auth.json') : null,
-            path.join(__dirname, 'spotify_auth.json')
-        ].filter(Boolean);
-
-        paths.forEach(p => {
-            try {
-                if (fs.existsSync(p)) {
-                    let existing = {};
-                    try { existing = JSON.parse(fs.readFileSync(p, 'utf8')) || {}; } catch (e) {}
-                    delete existing.token;
-                    delete existing.refreshToken;
-                    delete existing.expiresAt;
-                    fs.writeFileSync(p, JSON.stringify(existing, null, 2), 'utf8');
-                }
-            } catch (e) {}
-        });
+        this._forgetAuthFiles();
 
         this.log.info('Logged out from Spotify');
     }
 
-    async refreshAccessToken() {
-        if (!this.refreshToken || !this.clientId) return false;
-        try {
-            const params = {
-                grant_type: 'refresh_token',
-                refresh_token: this.refreshToken,
-                client_id: this.clientId
-            };
-            const postData = querystring.stringify(params);
-
-            const headers = {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Content-Length': Buffer.byteLength(postData)
-            };
-
-            // Basic auth is only used if a clientSecret was explicitly provided (standard OAuth).
-            // For PKCE mobile pairing, no secret is used and Spotify expects client_id in the body.
-            if (this.clientSecret) {
-                headers['Authorization'] = 'Basic ' + Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
-            }
-
-            return new Promise((resolve) => {
-                const req = https.request({
-                    hostname: 'accounts.spotify.com',
-                    port: 443,
-                    path: '/api/token',
-                    method: 'POST',
-                    headers: headers,
-                    timeout: 8000,
-                    rejectUnauthorized: false
-                }, (res) => {
-                    let data = '';
-                    res.on('data', c => { data += c; });
-                    res.on('end', () => {
-                        try {
-                            const parsed = JSON.parse(data);
-                            if (parsed.access_token) {
-                                this.token = parsed.access_token;
-                                this.expiresAt = Date.now() + (parsed.expires_in * 1000);
-                                if (parsed.refresh_token) this.refreshToken = parsed.refresh_token;
-                                this.paired = true;
-                                this.isOnline = true;
-
-                                // Persist updated tokens
-                                const paths = [
-                                    this.ctx && this.ctx.dataDir ? path.join(this.ctx.dataDir, 'spotify_auth.json') : null,
-                                    path.join(__dirname, 'spotify_auth.json')
-                                ].filter(Boolean);
-                                const out = {
-                                    token: this.token,
-                                    refreshToken: this.refreshToken,
-                                    expiresAt: this.expiresAt,
-                                    clientId: this.clientId,
-                                    clientSecret: this.clientSecret,
-                                    savedAt: new Date().toISOString()
-                                };
-                                paths.forEach(p => {
-                                    try { fs.writeFileSync(p, JSON.stringify(out, null, 2), 'utf8'); } catch (e) {}
-                                });
-                                this.log.info('Successfully refreshed Spotify access token');
-                                return resolve(true);
-                            } else {
-                                this.log.warn('Spotify token refresh rejected: ' + data);
-                                if (parsed.error === 'invalid_grant' || res.statusCode === 400) {
-                                    this.token = null;
-                                    this.paired = false;
-                                }
-                            }
-                        } catch (e) {
-                            this.log.warn('Spotify token refresh parse error: ' + e.message);
-                        }
-                        resolve(false);
+    _forgetAuthFiles() {
+        this._authPaths().forEach(p => {
+            try {
+                if (fs.existsSync(p)) {
+                    updateAuthFile(p, (existing) => {
+                        delete existing.token;
+                        delete existing.refreshToken;
+                        delete existing.expiresAt;
+                        return existing;
                     });
-                });
-                req.on('error', (err) => {
-                    this.log.warn('Spotify token refresh network error: ' + err.message);
-                    resolve(false);
-                });
-                req.on('timeout', () => {
-                    req.destroy();
-                    resolve(false);
-                });
-                req.write(postData);
-                req.end();
-            });
-        } catch (e) {
+                }
+            } catch (e) {}
+        });
+    }
+
+    /* One refresh at a time: pollPlayer and fetchDevices both hit 401 together, and a
+     * second refresh with the same (possibly rotated) refresh token would be refused. */
+    refreshAccessToken() {
+        if (this._refreshPromise) return this._refreshPromise;
+        if (!this.refreshToken || !this.clientId) return Promise.resolve(false);
+        if (this._refreshFailedAt && Date.now() - this._refreshFailedAt < REFRESH_RETRY_MS) return Promise.resolve(false);
+        const p = this._refreshOnce().then((ok) => {
+            this._refreshPromise = null;
+            this._refreshFailedAt = ok ? 0 : Date.now();
+            return ok;
+        }, () => {
+            this._refreshPromise = null;
+            this._refreshFailedAt = Date.now();
             return false;
+        });
+        this._refreshPromise = p;
+        return p;
+    }
+
+    _refreshOnce() {
+        const usedRefreshToken = this.refreshToken;
+        const params = {
+            grant_type: 'refresh_token',
+            refresh_token: usedRefreshToken,
+            client_id: this.clientId
+        };
+        const postData = querystring.stringify(params);
+
+        const headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Length': Buffer.byteLength(postData)
+        };
+
+        // Basic auth is only used if a clientSecret was explicitly provided (standard OAuth).
+        // For PKCE mobile pairing, no secret is used and Spotify expects client_id in the body.
+        if (this.clientSecret) {
+            headers['Authorization'] = 'Basic ' + Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
         }
+
+        return new Promise((resolve) => {
+            const req = tlsDates.request({
+                hostname: 'accounts.spotify.com',
+                port: 443,
+                path: '/api/token',
+                method: 'POST',
+                headers: headers,
+                timeout: 8000
+            }, (res) => {
+                let data = '';
+                res.on('data', c => { data += c; });
+                res.on('end', () => {
+                    let parsed = null;
+                    try {
+                        parsed = JSON.parse(data);
+                    } catch (e) {
+                        this.log.warn('Spotify token refresh parse error (HTTP ' + res.statusCode + '): ' + e.message);
+                        return resolve(false);
+                    }
+                    if (parsed && parsed.access_token) {
+                        this.token = parsed.access_token;
+                        this.expiresAt = Date.now() + ((parsed.expires_in || 3600) * 1000);
+                        // Spotify may rotate the refresh token; otherwise the old one stays valid
+                        if (parsed.refresh_token) this.refreshToken = parsed.refresh_token;
+                        this.paired = true;
+                        this.isOnline = true;
+                        this._persistAuth();
+                        this.log.info('Successfully refreshed Spotify access token');
+                        return resolve(true);
+                    }
+                    this.log.warn('Spotify token refresh rejected (HTTP ' + res.statusCode + '): ' + data.slice(0, 200));
+                    // Only a definitive invalid_grant for the refresh token still in use ends the session;
+                    // anything else (or a token replaced meanwhile by a new pairing) keeps what we have.
+                    if (parsed && parsed.error === 'invalid_grant' && this.refreshToken === usedRefreshToken) {
+                        this.log.warn('Spotify refresh token revoked; pairing required.');
+                        this.token = null;
+                        this.refreshToken = null;
+                        this.expiresAt = 0;
+                        this.paired = false;
+                        this._forgetAuthFiles();
+                    }
+                    resolve(false);
+                });
+            });
+            req.on('error', (err) => {
+                this.log.warn('Spotify token refresh network error: ' + err.message);
+                resolve(false);
+            });
+            req.on('timeout', () => {
+                req.destroy();
+                resolve(false);
+            });
+            req.write(postData);
+            req.end();
+        });
     }
 
     async initialFetch() {
@@ -447,30 +473,34 @@ class SpotifyClient {
     }
 
     // Call Spotify Web API with Bearer token
-    async _request(method, endpoint, body) {
+    async _request(method, endpoint, body, isRetry) {
         if (!this.token) throw new Error('Not authenticated');
+        const usedToken = this.token;
         return new Promise((resolve, reject) => {
-            const req = https.request({
+            const req = tlsDates.request({
                 hostname: 'api.spotify.com',
                 port: 443,
                 path: endpoint,
                 method: method,
                 headers: {
-                    'Authorization': 'Bearer ' + this.token,
+                    'Authorization': 'Bearer ' + usedToken,
                     'Content-Type': 'application/json',
                     'Accept': 'application/json',
                 },
-                timeout: 6000,
-                rejectUnauthorized: false
+                timeout: 6000
             }, (res) => {
                 let data = '';
                 res.on('data', (c) => { data += c; });
                 res.on('end', () => {
                     if (res.statusCode === 204) return resolve(null);
-                    if (res.statusCode === 401 && this.refreshToken) {
+                    if (res.statusCode === 401 && !isRetry && this.token && this.token !== usedToken) {
+                        // refreshed by another caller while this request was out
+                        return this._request(method, endpoint, body, true).then(resolve).catch(reject);
+                    }
+                    if (res.statusCode === 401 && this.refreshToken && !isRetry) {
                         return this.refreshAccessToken().then((refreshed) => {
-                            if (refreshed) {
-                                return this._request(method, endpoint, body).then(resolve).catch(reject);
+                            if (refreshed && this.token) {
+                                return this._request(method, endpoint, body, true).then(resolve).catch(reject);
                             }
                             if (!this.token) {
                                 reject(new Error('Spotify session expired. Please re-authenticate.'));
@@ -480,7 +510,7 @@ class SpotifyClient {
                         }).catch(reject);
                     }
                     if (res.statusCode === 401 && !this.refreshToken) {
-                        this.token = null;
+                        if (this.token === usedToken) this.token = null;
                         return reject(new Error('Spotify session expired. Please re-authenticate.'));
                     }
                     try {
@@ -713,8 +743,9 @@ class SpotifyClient {
         const dt = now - this.lastTickTime;
         this.lastTickTime = now;
 
-        // Auto-refresh token if expiring within 2 minutes
-        if (this.token && this.refreshToken && this.expiresAt && (now >= this.expiresAt - 120000) && !this.refreshing) {
+        // Auto-refresh token if missing (only a refresh token is left) or expiring within 2 minutes;
+        // refreshAccessToken() is single-flight and backs off after a failure
+        if (this.refreshToken && (!this.token || (this.expiresAt && now >= this.expiresAt - 120000)) && !this.refreshing) {
             this.refreshing = true;
             this.refreshAccessToken().then(() => {
                 this.refreshing = false;
@@ -915,6 +946,7 @@ class SpotifyClient {
 
 module.exports = {
     SpotifyClient,
+    updateAuthFile,
     DEMO_PLAYLISTS,
     DEMO_DEVICES
 };

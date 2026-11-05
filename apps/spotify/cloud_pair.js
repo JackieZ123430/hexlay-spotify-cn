@@ -12,9 +12,13 @@
  *   5. Only this specific car can decrypt and store the driver's Spotify tokens.
  *   6. Multi-car safe: each vehicle has an independent channel, encryption key, and storage.
  */
-const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const tlsDates = require('./tls_dates');
+
+// polling the channel: quickly while waiting to be paired, slowly once paired (for the phone's unpair)
+const PAIRING_POLL_MS = 2500;
+const PAIRED_POLL_MS = 60000;
 
 let crypto;
 try { crypto = require('crypto'); } catch (e) {}
@@ -71,7 +75,10 @@ class CloudPairManager {
 
         this.pollInterval = null;
         this.isPolling = false;
+        this.pollInFlight = false;
+        this.lastPollAt = 0;
         this.lastMsgId = null;
+        this.primed = false;
         this.onPaired = null;
         this.onUnpaired = null;
     }
@@ -84,7 +91,10 @@ class CloudPairManager {
             }
             data.channel = this.channel;
             data.secretKey = this.secretKey;
-            fs.writeFileSync(this.authFilePath, JSON.stringify(data, null, 2), 'utf8');
+            // the same file holds the Spotify tokens: merged, and replaced atomically
+            const tmp = this.authFilePath + '.tmp-' + process.pid;
+            fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600 });
+            fs.renameSync(tmp, this.authFilePath);
         } catch (e) {
             this.log.warn('CloudPair: Could not persist channel config: ' + e.message);
         }
@@ -103,7 +113,7 @@ class CloudPairManager {
     notifyUnpair() {
         if (!this.channel) return;
         try {
-            const req = https.request({
+            const req = tlsDates.request({
                 hostname: 'ntfy.sh',
                 port: 443,
                 path: '/' + this.channel,
@@ -112,10 +122,10 @@ class CloudPairManager {
                     'Title': 'BMW Spotify Unpaired',
                     'Content-Type': 'application/json'
                 },
-                timeout: 5000,
-                rejectUnauthorized: false
-            });
+                timeout: 5000
+            }, (res) => res.resume());
             req.on('error', () => {});
+            req.on('timeout', () => req.destroy());
             req.write(JSON.stringify({ type: 'spotify_unpaired', channel: this.channel, time: Date.now() }));
             req.end();
             this.log.info('CloudPair: Broadcasted unpair to channel', this.channel);
@@ -127,7 +137,7 @@ class CloudPairManager {
     notifyAck() {
         if (!this.channel) return;
         try {
-            const req = https.request({
+            const req = tlsDates.request({
                 hostname: 'ntfy.sh',
                 port: 443,
                 path: '/' + this.channel,
@@ -136,10 +146,10 @@ class CloudPairManager {
                     'Title': 'BMW Spotify Paired',
                     'Content-Type': 'application/json'
                 },
-                timeout: 5000,
-                rejectUnauthorized: false
-            });
+                timeout: 5000
+            }, (res) => res.resume());
             req.on('error', () => {});
+            req.on('timeout', () => req.destroy());
             req.write(JSON.stringify({ type: 'spotify_pair_ack', carId: this.shortCode, time: Date.now() }));
             req.end();
         } catch (e) {}
@@ -150,6 +160,7 @@ class CloudPairManager {
         this.secretKey = generateEntropyHex(32);
         this.shortCode = formatShortCode(this.channel);
         this.lastMsgId = null;
+        this.primed = false;
         this.savePairingState();
         this.log.info('CloudPair: Reset session to fresh channel ' + this.shortCode);
     }
@@ -160,32 +171,43 @@ class CloudPairManager {
 
         const check = () => {
             if (!this.isPolling) return;
-            if (this.spotify && (this.spotify.isAuthenticated ? this.spotify.isAuthenticated() : (this.spotify.isOnline && this.spotify.token))) {
-                this.stopPolling();
-                return;
-            }
+            // one poll at a time (a stalled one is given up after 20 s)
+            if (this.pollInFlight && Date.now() - this.lastPollAt < 20000) return;
+            // Once paired, keep polling slowly so a phone-side (authenticated) unpair still arrives
+            const paired = this.isPaired();
+            if (paired && Date.now() - this.lastPollAt < PAIRED_POLL_MS) return;
+            this.lastPollAt = Date.now();
+            // The first poll of a channel we are already paired on returns the cached history,
+            // the original pairing message included: that is not acted on again.
+            const replay = paired && !this.primed;
+            const channel = this.channel;
 
-            let pathStr = `/${this.channel}/json?poll=1`;
+            let pathStr = `/${channel}/json?poll=1`;
             if (this.lastMsgId) {
                 pathStr += `&since=${encodeURIComponent(this.lastMsgId)}`;
             }
 
             try {
-                const req = https.get({
+                this.pollInFlight = true;
+                const req = tlsDates.get({
                     hostname: 'ntfy.sh',
                     port: 443,
                     path: pathStr,
-                    timeout: 5000,
-                    rejectUnauthorized: false
+                    timeout: 5000
                 }, (res) => {
                     let data = '';
                     res.on('data', (c) => { data += c; });
                     res.on('end', () => {
+                        this.pollInFlight = false;
+                        if (channel !== this.channel || res.statusCode !== 200) return;
+                        this.primed = true;
                         const trimmed = data.trim();
                         if (!trimmed) return;
 
                         const lines = trimmed.split('\n');
                         for (const line of lines) {
+                            // an unpair just moved us to a fresh channel: the rest belongs to the old one
+                            if (channel !== this.channel) break;
                             if (!line.trim()) continue;
                             try {
                                 const item = JSON.parse(line);
@@ -193,28 +215,34 @@ class CloudPairManager {
                                     this.lastMsgId = item.id;
                                 }
                                 if (item.event === 'message' && item.message) {
-                                    this.handleIncomingMessage(item.message);
+                                    this.handleIncomingMessage(item.message, replay);
                                 }
                             } catch (e) {
-                                this.handleIncomingMessage(line);
+                                // not ntfy JSON: nothing authenticated in it
                             }
                         }
                     });
                 });
-                req.on('error', () => {});
-                req.on('timeout', () => { req.destroy(); });
+                req.on('error', () => { this.pollInFlight = false; });
+                req.on('timeout', () => { req.destroy(); this.pollInFlight = false; });
             } catch (e) {
+                this.pollInFlight = false;
                 this.log.warn('CloudPair check error: ' + e.message);
             }
         };
 
-        this.pollInterval = setInterval(check, 2500);
+        this.pollInterval = setInterval(check, PAIRING_POLL_MS);
         check();
     }
 
+    isPaired() {
+        return !!(this.spotify && (this.spotify.isAuthenticated ? this.spotify.isAuthenticated() : (this.spotify.isOnline && this.spotify.token)));
+    }
+
     decryptMessage(parsed) {
-        if (!parsed || parsed.type !== 'spotify_encrypted' || !parsed.data || !parsed.iv || !parsed.tag) {
-            return parsed;
+        if (!parsed || parsed.type !== 'spotify_encrypted' || typeof parsed.data !== 'string' ||
+            typeof parsed.iv !== 'string' || typeof parsed.tag !== 'string') {
+            return null;
         }
         if (!this.secretKey) {
             this.log.warn('Spotify CloudPair: Encrypted payload received but car has no secretKey');
@@ -227,8 +255,14 @@ class CloudPairManager {
             }
             const key = Buffer.from(this.secretKey, 'hex');
             const iv = Buffer.from(parsed.iv, 'hex');
+            const tag = Buffer.from(parsed.tag, 'hex');
+            // Node 8 accepts truncated GCM tags; only a full 128-bit tag authenticates
+            if (key.length !== 32 || iv.length !== 12 || tag.length !== 16) {
+                this.log.warn('Spotify CloudPair: Malformed encrypted payload ignored');
+                return null;
+            }
             const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-            decipher.setAuthTag(Buffer.from(parsed.tag, 'hex'));
+            decipher.setAuthTag(tag);
             let dec = decipher.update(parsed.data, 'hex', 'utf8');
             dec += decipher.final('utf8');
             return JSON.parse(dec);
@@ -238,7 +272,7 @@ class CloudPairManager {
         }
     }
 
-    handleIncomingMessage(rawMsg) {
+    handleIncomingMessage(rawMsg, replay) {
         if (!rawMsg || typeof rawMsg !== 'string') return;
         const trimmed = rawMsg.trim();
         if (trimmed.length < 3) return;
@@ -246,22 +280,21 @@ class CloudPairManager {
         let parsed = null;
         try {
             parsed = JSON.parse(trimmed);
-        } catch (e) {
-            if (trimmed.startsWith('BQC') || trimmed.length > 40) {
-                parsed = { token: trimmed };
-            }
-        }
+        } catch (e) {}
 
-        if (!parsed) return;
-
-        // If payload is end-to-end encrypted with vehicle key, decrypt it
-        if (parsed.type === 'spotify_encrypted') {
-            parsed = this.decryptMessage(parsed);
-            if (!parsed) return;
+        // The ntfy channel is public: only messages that decrypt and authenticate with this
+        // car's pairing key (AES-256-GCM) are acted upon; plaintext pair/unpair is dropped.
+        if (!parsed || parsed.type !== 'spotify_encrypted') {
+            const own = parsed && (parsed.type === 'spotify_pair_ack' || parsed.type === 'spotify_unpaired');
+            if (!own) this.log.warn('Spotify CloudPair: Ignoring unauthenticated plaintext message on pairing channel');
+            return;
         }
+        parsed = this.decryptMessage(parsed);
+        if (!parsed || typeof parsed !== 'object') return;
 
         // Phone unpair request
         if (parsed.type === 'phone_unpair') {
+            if (!this.isPaired()) return;
             this.log.info('Spotify CloudPair: Received phone unpair request');
             if (this.onUnpaired) this.onUnpaired();
             return;
@@ -269,6 +302,7 @@ class CloudPairManager {
 
         // Credentials Pairing Event
         if (parsed.token) {
+            if (replay) return;
             this.log.info('Spotify CloudPair: Received verified Spotify token via secure uplink!');
             this.spotify.saveAuthTokens({
                 token: parsed.token,
@@ -277,7 +311,7 @@ class CloudPairManager {
                 clientId: parsed.clientId
             });
             this.notifyAck();
-            this.stopPolling();
+            this.lastPollAt = Date.now();
             if (this.onPaired) this.onPaired();
         }
     }

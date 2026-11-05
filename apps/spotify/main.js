@@ -15,7 +15,6 @@ const mgu = require('./kit/mgu');
 const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
 const { SpotifyClient } = require('./api');
-const { SpotifyAuthServer } = require('./auth_server');
 const { CloudPairManager } = require('./cloud_pair');
 const { AlbumArtManager, ART_IMG_ID } = require('./art');
 const qrcodegen = require('./qrcodegen');
@@ -186,8 +185,6 @@ mgu.run({
         const { ui, settings, log, dataDir } = ctx;
         const spotify = new SpotifyClient(ctx);
         const artManager = new AlbumArtManager(log, () => render());
-        const authServer = new SpotifyAuthServer(ctx, spotify);
-        authServer.start();
 
         function notify(msg) {
             log.info('Spotify: ' + msg);

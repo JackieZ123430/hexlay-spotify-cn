@@ -584,7 +584,8 @@
                 await fetch('https://ntfy.sh/' + channel, {
                     method: 'POST',
                     headers: { 'Title': 'BMW M-Copilot Unpair' },
-                    body: JSON.stringify({ type: 'phone_unpair', channel: channel, time: Date.now() })
+                    // the car only acts on messages encrypted with its pairing key
+                    body: JSON.stringify(await encryptCredentials(JSON.stringify({ type: 'phone_unpair', channel: channel, time: Date.now() }), secretKey))
                 });
             } catch (e) {}
             handleCarDisconnected();
@@ -671,7 +672,9 @@
                 transmissionPayload = await encryptCredentials(JSON.stringify(creds), secretKey);
             }
             if (!transmissionPayload) {
-                transmissionPayload = Object.assign({ type: 'copilot_pair', channel: channel }, creds);
+                err.innerText = 'This pairing link has no valid car key (or the browser lacks WebCrypto). Scan the QR code on the car again.';
+                err.style.display = 'block';
+                return;
             }
 
             try {

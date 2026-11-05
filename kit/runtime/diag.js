@@ -32,7 +32,7 @@ const hex = (n, w) => n.toString(16).toUpperCase().padStart(w || 2, '0');
 const NRC = {
     0x10: 'general reject', 0x11: 'service not supported', 0x12: 'sub-function not supported', 0x13: 'bad length',
     0x21: 'busy', 0x22: 'conditions not correct', 0x31: 'out of range', 0x33: 'security access denied',
-    0x72: 'programming failure', 0x78: 'pending', 0x7E: 'not supported in session', 0x7F: 'not supported in session',
+    0x72: 'programming failure', 0x78: 'pending', 0x7E: 'sub-function not supported in session', 0x7F: 'service not supported in session',
 };
 
 class Diag extends EventEmitter {
@@ -41,6 +41,9 @@ class Diag extends EventEmitter {
         this.signals = signals; this.log = log;
         this.p = null; this.available = false; this.error = null;
         this.quiet = false;           // true: don't log every request (apps that poll)
+        this.busyMs = 1000;           // pause before a retry when the transport is busy (x 1, 2, 3, 4)
+        this.busyLog = true;          // log each busy verdict (false: only count them in .busy)
+        this.busy = 0;
     }
 
     async init() {
@@ -69,24 +72,27 @@ class Diag extends EventEmitter {
      * Send one request; resolves with the transport's verdict ('NO_ERROR', 'REQUEST_PENDING', ...).
      * The transport turns requests away while it is still busy with an earlier one (e.g. a second
      * functional request a few seconds after the first: APP_REQUEST_TEMPORARILY_NOT_ACCEPTED), so
-     * such a verdict is retried a few times with a growing pause (1, 2, 3, 4 s).
+     * such a verdict is retried a few times with a growing pause (busyMs x 1, 2, 3, 4: 1, 2, 3, 4 s).
      */
     async send(target, sid, data, opts) {
         if (!this.p) throw new Error(this.error || 'no diagnostic link');
         const d = data || [];
         const maxRetries = opts && opts.maxRetries != null ? opts.maxRetries : 4;
         const callTimeoutMs = opts && opts.callTimeoutMs || 8000;
-        const retryBaseMs = opts && opts.retryBaseMs || 1000;
+        const retryBaseMs = opts && opts.retryBaseMs || this.busyMs;
         if (!this.quiet) this.log.info('UDS -> ' + hex(target) + ': ' + hex(sid) + ' ' + d.map((x) => hex(x)).join(' '));
         for (let attempt = 0; ; attempt++) {
             const r = await this.signals.call(this.p, 'sendTasuRequest', {
                 sourceAddress: TESTER, targetAddress: target, serviceID: sid, subroutineID: 0,
                 udsDataLength: d.length, udsData: Buffer.from(d), deadlockTime: 0,
             }, callTimeoutMs);
-            const v = r && typeof r === 'object' ? (r.TasuErrorEnum || Object.keys(r).map((k) => r[k]).find((x) => typeof x === 'string')) : r;
-            const verdict = v === undefined ? 'NO_ERROR' : String(v);
+            let v = r && typeof r === 'object' ? (r.TasuErrorEnum !== undefined ? r.TasuErrorEnum : Object.keys(r).map((k) => r[k]).find((x) => typeof x === 'string' || typeof x === 'number')) : r;
+            // a numeric enum: 0 = NO_ERROR; any other number is a refusal we can't name (fail closed)
+            if (typeof v === 'number') v = v === 0 ? 'NO_ERROR' : 'TASU_ERROR_' + v;
+            const verdict = v === undefined || v === null ? 'NO_ERROR' : String(v);
             if (!/TEMPORARILY_NOT_ACCEPTED|BUSY/i.test(verdict) || attempt >= maxRetries) return verdict;
-            this.log.info('transport busy (' + verdict + '), retrying');
+            this.busy++;
+            if (this.busyLog) this.log.info('transport busy (' + verdict + '), retrying');
             await new Promise((res) => setTimeout(res, retryBaseMs * (attempt + 1)));
         }
     }
@@ -107,6 +113,9 @@ class Diag extends EventEmitter {
             finish = () => { clearTimeout(idle); clearTimeout(hard); this.removeListener('frame', onFrame); this.removeListener('tasError', onErr); resolve(replies); };
             kick = (ms) => { clearTimeout(idle); idle = setTimeout(finish, ms); };
             onFrame = (f) => {
+                // every app gets every frame: only this service's answer (or refusal) is a reply
+                if (f.uds[0] !== sid + 0x40 && !(f.uds[0] === 0x7F && f.uds[1] === sid)) return;
+                if (sid === 0x19 && f.uds[0] === 0x59 && f.uds[1] !== (data || [])[0]) return;   // 0x19 echoes its sub-function
                 const pending = f.uds[0] === 0x7F && f.uds[2] === 0x78;
                 if (!pending || !replies.has(f.ecu)) replies.set(f.ecu, f.uds);
                 if (opts && opts.onReply && !pending) opts.onReply(f.ecu, replies.size);
@@ -127,7 +136,17 @@ class Diag extends EventEmitter {
      * accept(uds) (optional) skips replies that aren't ours - another app may be
      * talking to the same ECU at the same time.
      */
-    async physical(target, sid, data, timeoutMs, accept, opts) {
+    physical(target, sid, data, timeoutMs, accept, opts) {
+        // one request at a time per ECU: overlapping requests to the same ECU could take each
+        // other's replies (and a late reply must not answer the next request)
+        this._chains = this._chains || {};
+        const prev = this._chains[target] || Promise.resolve();
+        const run = prev.catch(() => {}).then(() => this._physical(target, sid, data, timeoutMs, accept || replyTo(sid, data), opts));
+        this._chains[target] = run.catch(() => {});
+        return run;
+    }
+
+    async _physical(target, sid, data, timeoutMs, accept, opts) {
         let t, hardTimer, onFrame, finish, done = false;
         const got = new Promise((resolve) => {
             finish = (v) => {
@@ -138,7 +157,8 @@ class Diag extends EventEmitter {
             };
             onFrame = (f) => {
                 if (f.ecu !== target) return;
-                if (f.uds[0] === 0x7F && f.uds[2] === 0x78) {
+                if (f.uds[0] === 0x7F && f.uds[2] === 0x78) {      // response pending: never the reply itself
+                    if (f.uds[1] !== sid) return;                       // another request's (another app's) 78
                     clearTimeout(t);
                     t = setTimeout(() => finish(null), opts && opts.pendingTimeoutMs || 10000);
                     return;
@@ -147,12 +167,22 @@ class Diag extends EventEmitter {
                 finish(f.uds);
             };
             this.on('frame', onFrame);
-            if (opts && opts.hardTimeoutMs) hardTimer = setTimeout(() => finish(null), opts.hardTimeoutMs);
+            hardTimer = setTimeout(() => finish(null), (opts && opts.hardTimeoutMs) || 60000);
         });
         try { this._check(await this.send(target, sid, data, opts)); } catch (e) { finish(null); throw e; }
         if (!done && !t) t = setTimeout(() => finish(null), timeoutMs || 4000); // from when the transport took it
         return got;
     }
+}
+
+// Request bytes a positive reply echoes after sid + 0x40: sub-function (10 / 11 / 27), DID (22 / 2E), DID + control
+// parameter (2F: 6F 60FD 03 .. is OPEN's answer, not OEM's 6F 60FD 00), sub-function + RID (31).
+const ECHO = { 0x10: 1, 0x11: 1, 0x27: 1, 0x22: 2, 0x2E: 2, 0x2F: 3, 0x31: 3 };
+/** accept(uds) for physical(): every app gets every frame from the ECU (car_vitals polls the DME), so
+ * only this request's positive reply with its echo, or a refusal of this service, is the answer. */
+function replyTo(sid, data) {
+    const echo = (data || []).slice(0, ECHO[sid] || 0);
+    return (u) => (u[0] === sid + 0x40 && echo.every((b, i) => u[i + 1] === b)) || (u[0] === 0x7F && u[1] === sid);
 }
 
 /**
@@ -180,4 +210,4 @@ function statusInfo(b) {
     return { label: 'HISTORY', sev: 'dim' };
 }
 
-module.exports = { Diag, parseDtcReply, statusInfo, toBytes, hex, NRC, ALL };
+module.exports = { Diag, parseDtcReply, statusInfo, toBytes, hex, NRC, ALL, replyTo };

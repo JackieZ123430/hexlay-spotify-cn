@@ -1,8 +1,8 @@
 {
   "id": "quick_code",
   "title": "QuickCode",
-  "description": "Safe one-tap cockpit coding with automated backups for BMW G-Series (BDC 0x40): Ambient RGB, Comfort Access, Auto Start/Stop, 5-Flash Signals & Mirror Fold",
-  "version": "1.0.0",
+  "description": "BMW G-Series BDC (0x40) coding viewer. Read-only: coding writes are disabled until the coding map is verified",
+  "version": "1.0.1",
   "vendor": "custom",
   "loggingId": "OAQC",
   "iconGlyph": "code",
@@ -13,6 +13,9 @@
     },
     "de.bmw.infotainment.vehicle.Vehicle2": {
       "statusCarSpeed2": "rs"
+    },
+    "de.bmw.infrastructure.VehicleCondition": {
+      "VehicleCondition": "s"
     }
   },
   "screens": [

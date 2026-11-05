@@ -284,6 +284,7 @@ class YouTubeLoungeReceiver {
         this.sid = null;
         this.gsessionid = null;
         this.aid = -1;
+        this.boundAt = Date.now();
         this.ofs = 0;
         this.rid = 1;
         const postData = querystring.stringify({ count: '0' });
@@ -297,6 +298,7 @@ class YouTubeLoungeReceiver {
         if (res.status < 200 || res.status > 299) throw new Error('Lounge bind HTTP ' + res.status);
         this.parseInitialBind(res.data);
         if (!this.sid || !this.gsessionid) throw new Error('Lounge bind: no SID');
+        this.boundAt = Date.now();          // bound: the first events now replay the session's old state
         this.streamBackoff = BACKOFF_MIN_MS;
         this.startEventStream();
     }
@@ -436,8 +438,19 @@ class YouTubeLoungeReceiver {
 
     handleEvent(name, args) {
         const payload = (args && args[0] && typeof args[0] === 'object') ? args[0] : {};
-        if (name === 'nowPlaying' || name === 'setPlaylist') {
+        if (name === 'nowPlaying') {
+            // YouTube reporting what it thinks plays (after a bind: the session's last video).
+            // It is state, not a request: it never starts a video here.
+            return;
+        }
+        if (name === 'setPlaylist' || name === 'setVideo') {
             const vidId = payload.videoId;
+            // the first events after a new bind replay the session as the phone left it
+            if (vidId && Date.now() - (this.boundAt || 0) < 3000) {
+                this.log.info('YouTube Lounge: ' + name + ' ' + vidId + ' right after connecting ignored (old session state)');
+                this.lastCastVid = vidId;
+                return;
+            }
             if (vidId) {
                 // nowPlaying repeats the current video; a setPlaylist of the same video (a deliberate
                 // re-cast) plays it again, unless it is the echo of our own sendPlayVideo

@@ -103,7 +103,7 @@ mgu.run({
                 x: isFullscreen ? 0 : 52,
                 y: isFullscreen ? 0 : 100,
                 w: isFullscreen ? 1600 : 1008,
-                h: isFullscreen ? 520 : 340,
+                h: isFullscreen ? 520 : 376,
                 r: isFullscreen ? 0 : 8
             };
             process.send(Object.assign({ action: 'fullscreen' }, payload));
@@ -191,6 +191,7 @@ mgu.run({
                 if (stateName === 'MAIN') mainVisible = !!isVisible;
                 if (stateName === 'MAIN' && !isVisible) {
                     log.info('[M-Cinema] App left foreground -> stopping video immediately');
+                    forgetVideo();
                     try { thumbManager.cache.clear(); } catch (e) {}      // thumbnails are fetched again on return
                     isPlaying = false;
                     isFullscreen = false;
@@ -294,21 +295,18 @@ mgu.run({
         let searchResults = searchEngine.getFeatured();
         const thumbManager = new ThumbnailManager(log, () => render().catch(() => {}));
 
-        // Active YouTube video (preload featured BMW M3 video)
-        const initialFeatured = (searchResults && searchResults[0]) || {};
-        let activeCastVideo = {
-            title: initialFeatured.title || 'New BMW M3 CS Manual! The Perfect M3? | 4K',
-            channel: initialFeatured.channel || 'Top Gear',
-            duration: initialFeatured.duration || '14:29',
-            durationSec: initialFeatured.durationSec || parseDurationSec(initialFeatured.duration || '14:29'),
-            quality: '720p HD',
-            glow: '#0066b1',
-            views: initialFeatured.views || '699K views',
-            desc: initialFeatured.channel ? `${initialFeatured.channel}  |  ${initialFeatured.duration}  |  ${initialFeatured.views}` : (initialFeatured.url || ''),
-            ytId: initialFeatured.id || 'AvCt8Ggtupc',
-            url: initialFeatured.url || 'https://www.youtube.com/watch?v=AvCt8Ggtupc'
-        };
-        totalDurationSec = activeCastVideo.durationSec;
+        // The video picked in this visit: none at start, none kept from an earlier run or visit.
+        // Every video plays from 0:00 (a cast's own start time is not used).
+        let activeCastVideo = null;
+        totalDurationSec = 0;
+
+        /** Forget the current video (leaving the screen): the next visit starts empty. */
+        function forgetVideo() {
+            activeCastVideo = null;
+            currentTimeSec = 0;
+            totalDurationSec = 0;
+            playProgress = 0;
+        }
 
         // Parked only (motion_guard.js): speed, gear selector, and fail closed on an unknown speed.
         // There is no setting to turn it off. If the guard can't start, video stays locked.
@@ -427,7 +425,7 @@ mgu.run({
             const streamUrl = video.streamUrl || video.url || ('https://youtube.com/watch?v=' + (video.ytId || ''));
             const b = isFullscreen ?
                 { x: 0, y: 0, w: 1600, h: 520, r: 0, fullscreen: true } :
-                { x: 52, y: 100, w: 1008, h: 340, r: 8, fullscreen: false };
+                { x: 52, y: 100, w: 1008, h: 376, r: 8, fullscreen: false };
             player.play(streamUrl, totalDurationSec, Object.assign({}, video, b));
             isPlaying = player.isPlaying;
 
@@ -536,7 +534,9 @@ mgu.run({
             const panelH = 466;
             G.panel(cv, t, 32, panelY, 1048, panelH);
 
-            const vx = 52, vy = 56, vw = 1008, vh = 384;
+            // the video reaches down to one control row (time, seek bar, 720p, fullscreen) at the bottom
+            const ex = cv.extra || 0;          // room below the page (full layout): the video grows into it
+            const vx = 52, vy = 56, vw = 1008, vh = 420 + ex;
 
             if (settings.get('ambilight') !== 'off' && !motionLocked) {
                 cv.roundRect(vx - 2, vy - 2, vw + 4, vh + 4, 10, withAlpha('#0066b1', isPlaying ? 0.28 : 0.06));
@@ -544,19 +544,22 @@ mgu.run({
 
             drawVideoScreen(cv, vx, vy, vw, vh, video, now, motionLocked, false);
 
-            // Scrubber Bar
-            const sy = 452, sw = 1008;
-            cv.roundRect(vx, sy, sw, 6, 3, t.track);
-            const thumbX = vx + Math.floor(sw * playProgress);
-            cv.roundRect(vx, sy, Math.max(6, thumbX - vx), 6, 3, '#0066b1');
+            // Control row: time | seek bar | 720p HD | FULLSCREEN
+            const rowY = 480 + ex, rowH = 26, rowMid = rowY + rowH / 2;
+            const btnFsW = 148, btnFsH = rowH + 2;
+            const btnFsX = vx + vw - btnFsW, btnFsY = rowY - 1;
+            const scX = vx + 128, sw = btnFsX - 96 - scX, sy = rowMid - 3;
+            cv.roundRect(scX, sy, sw, 6, 3, t.track);
+            const thumbX = scX + Math.floor(sw * playProgress);
+            cv.roundRect(scX, sy, Math.max(6, thumbX - scX), 6, 3, '#0066b1');
             cv.circle(thumbX, sy + 3, 7, '#ffffff');
             cv.arc(thumbX, sy + 3, 7, 9, 0, 360, '#00a3e0');
 
-            // High-precision touch scrubber target across the 1008px scrubber bar
-            cv.target(vx, sy - 16, sw, 38, (touchX) => {
+            // touch target across the seek bar
+            cv.target(scX, rowY - 6, sw, rowH + 12, (touchX) => {
                 let rel = 0.5;
-                if (typeof touchX === 'number' && !isNaN(touchX) && touchX >= vx && touchX <= vx + sw) {
-                    rel = Math.max(0, Math.min(1, (touchX - vx) / sw));
+                if (typeof touchX === 'number' && !isNaN(touchX) && touchX >= scX && touchX <= scX + sw) {
+                    rel = Math.max(0, Math.min(1, (touchX - scX) / sw));
                 }
                 playProgress = rel;
                 if (totalDurationSec > 0) {
@@ -569,15 +572,12 @@ mgu.run({
 
             const durDisplay = totalDurationSec > 0 ? formatTime(totalDurationSec) : (video.duration || '0:00');
             const timeStr = `${formatTime(currentTimeSec)} / ${durDisplay}`;
-            cv.text(timeStr, vx, 486, 16, t.dim, { font: 'num' });
-            cv.text('720p HD', vx + 160, 486, 13, '#00a3e0', { font: 'bold' });
+            cv.text(timeStr, vx, rowMid + 6, 15, t.dim, { font: 'num' });
+            cv.text('720p HD', btnFsX - 16, rowMid + 5, 13, '#00a3e0', { font: 'bold', align: 'right' });
 
-            // Fullscreen Button below video
-            const btnFsW = 148, btnFsH = 34;
-            const btnFsX = vx + sw - btnFsW, btnFsY = 468;
             cv.roundRect(btnFsX, btnFsY, btnFsW, btnFsH, 6, '#0f1724');
             cv.strokeRoundRect(btnFsX, btnFsY, btnFsW, btnFsH, 6, 1, '#1e324c');
-            cv.text('FULLSCREEN', btnFsX + btnFsW / 2, btnFsY + 22, 13, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
+            cv.text('FULLSCREEN', btnFsX + btnFsW / 2, btnFsY + 19, 13, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
             cv.target(btnFsX, btnFsY, btnFsW, btnFsH, () => {
                 toggleFullscreen();
             }, 'btn_fullscreen_std', 10);
@@ -590,19 +590,22 @@ mgu.run({
             cv.strokeRoundRect(rx, 100, 96, 24, 4, 1, '#1e324c');
             cv.text('YOUTUBE', rx + 48, 117, 11, '#00a3e0', { align: 'center', font: 'bold', spacing: 1 });
 
-            const titleText = trunc(video.title || 'Ready to Play', 30);
+            const titleText = trunc(video.title || 'No video selected', 30);
             cv.text(titleText, rx, 154, 21, '#ffffff', { font: 'bold' });
-            cv.text(video.channel || 'YouTube on TV', rx, 186, 16, '#00a3e0', { font: 'bold' });
-            cv.text(video.views || 'Ready to Play', rx, 212, 14, t.dim);
+            cv.text(video.channel || 'Search, or cast from the YouTube app', rx, 186, 16, '#00a3e0', { font: 'bold' });
+            cv.text(video.views || '', rx, 212, 14, t.dim);
 
             // Clean Play / Pause Button
             const btnW = 420, btnH = 52;
             const btnPlayY = 248;
             cv.roundRect(rx, btnPlayY, btnW, btnH, 8, isPlaying ? '#162233' : '#0066b1');
             cv.strokeRoundRect(rx, btnPlayY, btnW, btnH, 8, 1, isPlaying ? '#23364f' : '#00a3e0');
-            cv.text(isPlaying ? 'PAUSE' : 'PLAY', rx + btnW / 2, btnPlayY + 32, 16, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+            cv.text(isPlaying ? 'PAUSE' : (activeCastVideo ? 'PLAY' : 'CHOOSE A VIDEO'), rx + btnW / 2, btnPlayY + 32, 16, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
             cv.target(rx, btnPlayY, btnW, btnH, () => {
-                if (!isPlaying && !player.isPlaying && activeCastVideo) {
+                if (!activeCastVideo) {
+                    setPage(1);
+                    render().catch(() => {});
+                } else if (!isPlaying && !player.isPlaying) {
                     playVideo(activeCastVideo);
                 } else {
                     togglePlayback();
@@ -625,22 +628,23 @@ mgu.run({
 
         /* ---------- Fullscreen Cinema Theater (Real Ultrawide Edge-to-Edge) ---------- */
         function drawFullscreenPlayer(cv, t, now, video, motionLocked) {
+            const FH = H + (cv.extra || 0);    // fullscreen: down to the screen's bottom
             cv.clear('#000000');
 
             if (motionLocked) {
-                cv.roundRect(W / 2 - 400, H / 2 - 80, 800, 160, 14, '#0c121c');
-                cv.strokeRoundRect(W / 2 - 400, H / 2 - 80, 800, 160, 14, 2, '#e1001a');
-                cv.text('[!] VIDEO PAUSED: CAR NOT PARKED', W / 2, H / 2 - 20, 24, '#e1001a', { align: 'center', font: 'bold' });
-                cv.text('Stop and select P to watch (' + (motionReason || 'not parked') + ', ' + vehicleSpeed + ' km/h).', W / 2, H / 2 + 22, 16, '#cbd5e1', { align: 'center' });
+                cv.roundRect(W / 2 - 400, FH / 2 - 80, 800, 160, 14, '#0c121c');
+                cv.strokeRoundRect(W / 2 - 400, FH / 2 - 80, 800, 160, 14, 2, '#e1001a');
+                cv.text('[!] VIDEO PAUSED: CAR NOT PARKED', W / 2, FH / 2 - 20, 24, '#e1001a', { align: 'center', font: 'bold' });
+                cv.text('Stop and select P to watch (' + (motionReason || 'not parked') + ', ' + vehicleSpeed + ' km/h).', W / 2, FH / 2 + 22, 16, '#cbd5e1', { align: 'center' });
                 return;
             }
 
             // Hardware live video surface edge-to-edge (Protocol 4 OP_VIDEO 19)
             if (video && video.ytId && cv.video) {
-                cv.video(1, 0, 0, W, H, 0);
+                cv.video(1, 0, 0, W, FH, 0);
             }
-            drawBuffering(cv, W / 2, H / 2);
-            drawNoRenderer(cv, W / 2, H / 2);
+            drawBuffering(cv, W / 2, FH / 2);
+            drawNoRenderer(cv, W / 2, FH / 2);
 
             // Floating Normal View Exit Button in top-right corner
             const btnExitW = 160, btnExitH = 42;
@@ -665,7 +669,7 @@ mgu.run({
 
             // Fullscreen Cinema Bottom Scrubber Bar & Time HUD
             const fsX = 48, fsW = W - 96;
-            const fsY = H - 54;
+            const fsY = FH - 54;
             const durDisplay = totalDurationSec > 0 ? formatTime(totalDurationSec) : (video.duration || '0:00');
             const timeStr = `${formatTime(currentTimeSec)} / ${durDisplay}`;
 
@@ -735,7 +739,7 @@ mgu.run({
             cv.roundRect(x, y, w, h, 8, '#060a12');
             cv.strokeRoundRect(x, y, w, h, 8, 1, '#1a273b');
 
-            if (motionLocked) {
+            if (motionLocked && video.ytId) {      // nothing chosen yet: the hint below, not the lock
                 cv.roundRect(x + 40, y + 40, w - 80, h - 80, 12, '#0c121c');
                 cv.strokeRoundRect(x + 40, y + 40, w - 80, h - 80, 12, 1.5, '#e1001a');
                 cv.text('[!] VIDEO PAUSED: CAR NOT PARKED', x + w / 2, y + h / 2 - 16, 22, '#e1001a', { align: 'center', font: 'bold' });
@@ -756,7 +760,7 @@ mgu.run({
 
             // Video Title
             const maxTitleLen = isFs ? 68 : 46;
-            const titleText = trunc(video.title || 'Ready to Play', maxTitleLen);
+            const titleText = trunc(video.title || 'No video selected', maxTitleLen);
             cv.text(titleText, x + 112, y + 28, 15, '#ffffff', { font: 'bold' });
 
             if (isFs) {
@@ -781,12 +785,15 @@ mgu.run({
                 cv.arc(cx, cy - 14, 38, 40, 0, 360, '#1e2d42');
                 drawPlayGlyph(cv, cx + 4, cy - 14, 22, '#00a3e0');
 
-                cv.text('Waiting for YouTube Stream', cx, cy + 46, 17, '#ffffff', { align: 'center', font: 'bold' });
+                cv.text('Choose a video', cx, cy + 46, 17, '#ffffff', { align: 'center', font: 'bold' });
                 cv.text('Select a video in Search tab or cast from YouTube mobile app', cx, cy + 70, 13, '#94a3b8', { align: 'center' });
             }
 
             cv.target(x, y, w, h, () => {
-                if (!isPlaying && !player.isPlaying && activeCastVideo) {
+                if (!activeCastVideo) {
+                    setPage(1);
+                    render().catch(() => {});
+                } else if (!isPlaying && !player.isPlaying) {
                     playVideo(activeCastVideo);
                 } else {
                     togglePlayback();
@@ -809,7 +816,8 @@ mgu.run({
             cv.text(displayText, sx + 18, sy + 31, 16, searchQuery ? '#ffffff' : '#64748b', { font: searchQuery ? 'bold' : 'normal' });
 
             // Category Chips (1-Touch Instant Search)
-            const categories = ['BMW M3', 'Nürburgring', 'Car Reviews', 'Drag Race', 'Top Gear', 'Lofi Drive'];
+            // ASCII only: the car's font has no umlauts (it drew "N?rburgring")
+            const categories = ['BMW M3', 'Nurburgring', 'Car Reviews', 'Drag Race', 'Top Gear', 'Lofi Drive'];
             let chipX = sx;
             const chipY = sy + 60;
             const chipH = 34;
@@ -829,25 +837,29 @@ mgu.run({
                 chipX += chipW + 12;
             });
 
-            // BMW Speller Keyboard
+            // QWERTY keyboard: 11 columns; [key, width in columns]
             const kbY = chipY + 50;
             const keyRows = [
-                ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', '1', '2', '3'],
-                ['K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', '4', '5', '6'],
-                ['U', 'V', 'W', 'X', 'Y', 'Z', '-', '.', ' ', 'DEL', 'CLR', 'GO']
+                [['1'], ['2'], ['3'], ['4'], ['5'], ['6'], ['7'], ['8'], ['9'], ['0'], ['DEL']],
+                [['Q'], ['W'], ['E'], ['R'], ['T'], ['Y'], ['U'], ['I'], ['O'], ['P'], ['CLR']],
+                [['A'], ['S'], ['D'], ['F'], ['G'], ['H'], ['J'], ['K'], ['L'], ['-'], ['.']],
+                [['Z'], ['X'], ['C'], ['V'], ['B'], ['N'], ['M'], [' ', 2], ['GO', 2]]
             ];
 
-            const keyH = 46;
-            const keyMargin = 6;
-            const totalRowW = sw;
+            const keyH = 58 + Math.floor((cv.extra || 0) / 4);   // four rows share the room below
+            const keyMargin = 8;
+            const COLS = 11;
+            const unit = (sw - (COLS - 1) * keyMargin) / COLS;
 
             keyRows.forEach((row, rIdx) => {
                 const y = kbY + rIdx * (keyH + keyMargin);
-                const count = row.length;
-                const keyW = Math.floor((totalRowW - (count - 1) * keyMargin) / count);
+                let col = 0;
 
-                row.forEach((k, cIdx) => {
-                    const x = sx + cIdx * (keyW + keyMargin);
+                row.forEach((entry, cIdx) => {
+                    const k = entry[0], span = entry[1] || 1;
+                    const x = Math.round(sx + col * (unit + keyMargin));
+                    const keyW = Math.round(span * unit + (span - 1) * keyMargin);
+                    col += span;
                     let bg = '#0f1724';
                     let border = '#1a293d';
                     let textCol = '#ffffff';
@@ -865,7 +877,7 @@ mgu.run({
 
                     cv.roundRect(x, y, keyW, keyH, 6, bg);
                     cv.strokeRoundRect(x, y, keyW, keyH, 6, 1, border);
-                    cv.text(k === ' ' ? 'SPACE' : k, x + keyW / 2, y + 28, 14, textCol, { align: 'center', font: 'bold' });
+                    cv.text(k === ' ' ? 'SPACE' : k, x + keyW / 2, y + keyH / 2 + 6, 17, textCol, { align: 'center', font: 'bold' });
 
                     cv.target(x, y, keyW, keyH, () => {
                         if (k === 'GO') {
@@ -903,7 +915,7 @@ mgu.run({
             const listX = 1124;
             const itemW = 420;
             const itemH = 72;
-            const visibleCount = 4;
+            const visibleCount = 4 + Math.floor((cv.extra || 0) / (itemH + 10));
 
             const visibleResults = searchResults.slice(searchScroll, searchScroll + visibleCount);
 
@@ -1061,7 +1073,7 @@ mgu.run({
 
             if (page === 0) {
                 if (isFullscreen) {
-                    drawFullscreenPlayer(cv, t, now, activeCastVideo, lastMotionLocked);
+                    drawFullscreenPlayer(cv, t, now, activeCastVideo || {}, lastMotionLocked);
                     await ui.image('MAIN_GFX', cv);
                     return;
                 }

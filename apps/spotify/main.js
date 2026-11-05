@@ -222,6 +222,34 @@ mgu.run({
         let playlistScroll = 0;
         let trackScroll = 0;
         let likedScroll = 0;
+        let queueScroll = 0;
+
+        // "Playing" marks follow what Spotify plays (its context and track), not what is selected here
+        const playingFrom = (pl) => !!(pl && pl.uri && spotify.contextUri && spotify.contextUri === pl.uri);
+        const isPlayingTrack = (trk) => !!(trk && spotify.currentTrack && spotify.currentTrack.id === trk.id);
+
+        // Lists scroll with a finger (the list under it) or the controller (the page's main list).
+        // listGeo is filled while a page draws: rows per list, how many show, the list's x range.
+        const listGeo = {};
+        const scrollGet = { pl: () => playlistScroll, trk: () => trackScroll, liked: () => likedScroll, q: () => queueScroll };
+        const scrollSet = { pl: (v) => { playlistScroll = v; }, trk: (v) => { trackScroll = v; }, liked: (v) => { likedScroll = v; }, q: (v) => { queueScroll = v; } };
+        let scrollAcc = 0, scrollList = null;
+        ctx.onScroll((dy, at) => {
+            const names = page === 0 ? ['pl', 'trk'] : page === 1 ? ['liked'] : page === 2 ? ['q'] : [];
+            const name = names.find((n) => at && listGeo[n] && at.x >= listGeo[n].x0 && at.x < listGeo[n].x1) || names[names.length - 1];
+            const g = name && listGeo[name];
+            if (!g) return false;
+            if (name !== scrollList) { scrollList = name; scrollAcc = 0; }
+            const max = Math.max(0, g.count - g.visible), cur = scrollGet[name]();
+            scrollAcc += dy;
+            const rows = scrollAcc > 0 ? Math.floor(scrollAcc / g.rowH) : Math.ceil(scrollAcc / g.rowH);
+            if (!rows) return (dy > 0 && cur < max) || (dy < 0 && cur > 0);
+            scrollAcc -= rows * g.rowH;
+            const next = Math.max(0, Math.min(max, cur + rows));
+            scrollSet[name](next);
+            render().catch(() => {});
+            return next !== cur;
+        });
         let spectrumSeed = 0;
 
         /* ---------- Real Cloud Pairing QR Code Generation ---------- */
@@ -304,7 +332,7 @@ mgu.run({
         function drawBottomPlayerDock(cv, t) {
             const curTrk = spotify.currentTrack;
             const isPlaying = spotify.isPlaying;
-            const dockX = 24, dockY = 446, dockW = 1552, dockH = 66;
+            const dockX = 24, dockY = 446 + (cv.extra || 0), dockW = 1552, dockH = 66;
 
             // Dock backdrop & border
             cv.roundRect(dockX, dockY, dockW, dockH, 12, withAlpha(t.panelEdge, 0.9));
@@ -396,12 +424,13 @@ mgu.run({
         /* ---------- Page 0: Playlists & Tracks ---------- */
         function drawPlaylists(cv, t) {
             const playlists = spotify.getPlaylists();
+            const ex = cv.extra || 0;          // room below the page: panels and lists go down to the dock
 
             if (!playlists || playlists.length === 0) {
                 if (isOnlineMode && !spotify.isAuthenticated()) {
                     drawRequireConnect(cv, t);
                 } else {
-                    G.panel(cv, t, 24, 44, 1552, 396, 'Your Playlists (0)');
+                    G.panelExact(cv, t, 24, 44, 1552, 396 + ex, 'Your Playlists (0)');
 
                     cv.roundRect(48, 100, 1504, 200, 12, t.track);
                     cv.strokeRoundRect(48, 100, 1504, 200, 12, 1, t.panelEdge);
@@ -426,18 +455,18 @@ mgu.run({
             // Keep selected index valid
             if (selectedPlaylistIdx >= playlists.length) selectedPlaylistIdx = 0;
 
-            // Visible window for playlists (max 5)
-            const VISIBLE_PL = 5;
-            if (selectedPlaylistIdx < playlistScroll) playlistScroll = selectedPlaylistIdx;
-            if (selectedPlaylistIdx >= playlistScroll + VISIBLE_PL) playlistScroll = selectedPlaylistIdx - VISIBLE_PL + 1;
+            // Visible window for playlists (scrolled freely: not pulled back to the selection)
+            const VISIBLE_PL = 5 + Math.floor(ex / 66);
             playlistScroll = Math.max(0, Math.min(playlistScroll, Math.max(0, playlists.length - VISIBLE_PL)));
+            listGeo.pl = { x0: 24, x1: 532, rowH: 66, count: playlists.length, visible: VISIBLE_PL };
+            cv.scroll = true;
 
             // Left Pane: Playlists (w: 500, h: 396)
             const plTitle = 'Your Playlists (' + (selectedPlaylistIdx + 1) + '/' + playlists.length + ')';
-            G.panel(cv, t, 24, 44, 500, 396, plTitle);
+            G.panelExact(cv, t, 24, 44, 500, 396 + ex, plTitle);
 
             // Left Pane Scrollbar
-            drawScrollbar(cv, t, 508, 98, 330, playlists.length, VISIBLE_PL, playlistScroll, () => {
+            drawScrollbar(cv, t, 508, 98, 330 + ex, playlists.length, VISIBLE_PL, playlistScroll, () => {
                 playlistScroll = Math.max(0, playlistScroll - 1);
                 selectedPlaylistIdx = Math.max(0, selectedPlaylistIdx - 1);
                 spotify.selectPlaylist(playlists[selectedPlaylistIdx]);
@@ -452,7 +481,7 @@ mgu.run({
                 const realIdx = playlistScroll + vIdx;
                 const py = 98 + vIdx * 66;
                 const isSel = realIdx === selectedPlaylistIdx;
-                const isPlPlaying = spotify.isPlaying && spotify.currentPlaylist && spotify.currentPlaylist.id === pl.id;
+                const isPlPlaying = playingFrom(pl);       // the playlist Spotify plays from, selected or not
 
                 cv.roundRect(38, py, 460, 58, 10, isSel ? withAlpha(t.accent, 0.22) : t.track);
                 if (isSel) cv.strokeRoundRect(38, py, 460, 58, 10, 2, t.accent);
@@ -463,7 +492,7 @@ mgu.run({
                 cv.text((pl.trackCount || 0) + ' songs  -  ' + trunc(pl.description || 'Playlist', 26), 62, py + 48, 15, t.dim);
 
                 if (isPlPlaying) {
-                    drawMiniEqualizer(cv, 470, py + 29, t.accent, true, spectrumSeed);
+                    drawMiniEqualizer(cv, 470, py + 29, t.accent, spotify.isPlaying, spectrumSeed);
                 }
 
                 cv.target(38, py, 460, 58, () => {
@@ -475,20 +504,23 @@ mgu.run({
 
             // Right Pane: Tracks of selected playlist (x: 540, w: 1036, h: 396)
             const curPl = playlists[selectedPlaylistIdx] || playlists[0];
-            const isThisPlPlaying = spotify.currentPlaylist && spotify.currentPlaylist.id === curPl.id;
+            // the track that plays, in this playlist (another playlist's context marks nothing here)
+            const ctxHere = !spotify.contextUri || !/:playlist:/.test(spotify.contextUri) || playingFrom(curPl);
             const trackTotal = curPl.trackCount || (curPl.tracks ? curPl.tracks.length : 0);
 
-            G.panel(cv, t, 540, 44, 1036, 396, trunc(curPl.name, 36) + ' (' + trackTotal + ' tracks)');
+            G.panelExact(cv, t, 540, 44, 1036, 396 + ex, trunc(curPl.name, 36) + ' (' + trackTotal + ' tracks)');
 
             if (!curPl.tracks || curPl.tracks.length === 0) {
                 cv.roundRect(556, 120, 1004, 180, 12, t.track);
                 cv.text('LOADING SONGS...', 1058, 195, 22, t.dim, { align: 'center', font: 'bold', spacing: 1 });
                 cv.text('Fetching track list from Spotify cloud...', 1058, 230, 16, t.dim, { align: 'center' });
             } else {
-                const VISIBLE_TRK = 7;
+                const VISIBLE_TRK = 7 + Math.floor(ex / 47);
+                trackScroll = Math.max(0, Math.min(trackScroll, Math.max(0, curPl.tracks.length - VISIBLE_TRK)));
+                listGeo.trk = { x0: 540, x1: 1576, rowH: 47, count: curPl.tracks.length, visible: VISIBLE_TRK };
 
                 // Right Pane Tracks Scrollbar
-                drawScrollbar(cv, t, 1554, 98, 330, curPl.tracks.length, VISIBLE_TRK, trackScroll, () => {
+                drawScrollbar(cv, t, 1554, 98, 330 + ex, curPl.tracks.length, VISIBLE_TRK, trackScroll, () => {
                     trackScroll = Math.max(0, trackScroll - VISIBLE_TRK);
                 }, () => {
                     trackScroll = Math.min(Math.max(0, curPl.tracks.length - VISIBLE_TRK), trackScroll + VISIBLE_TRK);
@@ -499,7 +531,7 @@ mgu.run({
                 visibleTracks.forEach((trk, vIdx) => {
                     const realIdx = trackScroll + vIdx;
                     const ty = 98 + vIdx * 47;
-                    const isPlayingThis = isThisPlPlaying && spotify.currentTrack && spotify.currentTrack.id === trk.id;
+                    const isPlayingThis = ctxHere && isPlayingTrack(trk);
 
                     if (isPlayingThis) {
                         cv.roundRect(556, ty, 980, 42, 8, withAlpha(t.accent, 0.22));
@@ -543,15 +575,19 @@ mgu.run({
                 : (spotify.isDemoMode ? require('./api').DEMO_PLAYLISTS[3].tracks : []);
 
             const total = spotify.likedTotal || liked.length;
-            const VISIBLE_LIKED = 7;
+            const ex = cv.extra || 0;
+            const VISIBLE_LIKED = 7 + Math.floor(ex / 47);
+            likedScroll = Math.max(0, Math.min(likedScroll, Math.max(0, liked.length - VISIBLE_LIKED)));
+            listGeo.liked = { x0: 24, x1: 1576, rowH: 47, count: liked.length, visible: VISIBLE_LIKED };
+            cv.scroll = true;
             const startIdx = total > 0 ? likedScroll + 1 : 0;
             const endIdx = Math.min(likedScroll + VISIBLE_LIKED, total);
             const title = 'Liked Songs (' + (total > 0 ? (startIdx + '-' + endIdx + ' of ' + total) : '0') + ' tracks)';
 
-            G.panel(cv, t, 24, 44, 1552, 396, title);
+            G.panelExact(cv, t, 24, 44, 1552, 396 + ex, title);
 
             // Liked Songs Scrollbar
-            drawScrollbar(cv, t, 1554, 98, 330, liked.length, VISIBLE_LIKED, likedScroll, () => {
+            drawScrollbar(cv, t, 1554, 98, 330 + ex, liked.length, VISIBLE_LIKED, likedScroll, () => {
                 likedScroll = Math.max(0, likedScroll - VISIBLE_LIKED);
             }, () => {
                 likedScroll = Math.min(Math.max(0, liked.length - VISIBLE_LIKED), likedScroll + VISIBLE_LIKED);
@@ -571,7 +607,7 @@ mgu.run({
             visible.forEach((trk, vIdx) => {
                 const realIdx = likedScroll + vIdx;
                 const ty = 98 + vIdx * 47;
-                const isPlayingThis = spotify.isPlaying && spotify.currentTrack && spotify.currentTrack.id === trk.id;
+                const isPlayingThis = isPlayingTrack(trk);
 
                 if (isPlayingThis) {
                     cv.roundRect(40, ty, 1500, 42, 8, withAlpha(t.accent, 0.22));
@@ -613,6 +649,7 @@ mgu.run({
 
             const curTrk = spotify.currentTrack;
             const isPlaying = spotify.isPlaying;
+            const npEx = cv.extra || 0;        // the panels reach the screen's bottom: controls move with it
 
             // Left Pane: Now Playing Cockpit (w: 880, h: 468)
             G.panel(cv, t, 24, 44, 880, 468, 'Now Playing');
@@ -666,7 +703,7 @@ mgu.run({
                 cv.text('LOSSLESS STREAM  -  SPOTIFY CONNECT', metaX, 305, 12, t.dim, { font: 'bold', spacing: 0.5 });
 
                 // Progress Bar
-                const progX = 54, progY = 360, progW = 820, progH = 6;
+                const progX = 54, progY = 360 + npEx, progW = 820, progH = 6;
                 const dur = (curTrk && curTrk.durationMs) ? curTrk.durationMs : 1;
                 const pFrac = Math.min(1, Math.max(0, spotify.progressMs / dur));
                 cv.roundRect(progX, progY, progW, progH, 3, t.tick);
@@ -678,11 +715,11 @@ mgu.run({
                 cv.text(fmtTime(curTrk.durationMs), progX + progW, progY + 24, 15, t.dim, { align: 'right', font: 'num' });
 
                 // Transport Controls
-                const cy = 444;
+                const cy = 444 + npEx;
 
                 // 1. Shuffle
                 const isShuf = !!spotify.shuffle;
-                const bShufX = 140, bShufY = 416, bShufW = 60, bShufH = 50;
+                const bShufX = 140, bShufY = 416 + npEx, bShufW = 60, bShufH = 50;
                 cv.roundRect(bShufX, bShufY, bShufW, bShufH, 10, isShuf ? withAlpha(t.accent, 0.25) : withAlpha(t.panelEdge, 0.7));
                 if (isShuf) cv.strokeRoundRect(bShufX, bShufY, bShufW, bShufH, 10, 1.5, t.accent);
                 drawShuffleIcon(cv, bShufX + bShufW / 2, cy, 20, isShuf ? t.accent : t.dim);
@@ -692,7 +729,7 @@ mgu.run({
                 }, 'np_shuffle', 10);
 
                 // 2. Prev
-                const bPrevX = 222, bPrevY = 416, bPrevW = 76, bPrevH = 50;
+                const bPrevX = 222, bPrevY = 416 + npEx, bPrevW = 76, bPrevH = 50;
                 cv.roundRect(bPrevX, bPrevY, bPrevW, bPrevH, 10, withAlpha(t.panelEdge, 0.7));
                 drawPrevIcon(cv, bPrevX + bPrevW / 2, cy, 22, t.text);
                 cv.target(bPrevX, bPrevY, bPrevW, bPrevH, () => {
@@ -701,7 +738,7 @@ mgu.run({
                 }, 'np_prev', 12);
 
                 // 3. Play / Pause (Big Accent Button)
-                const bPlayX = 320, bPlayY = 410, bPlayW = 120, bPlayH = 62;
+                const bPlayX = 320, bPlayY = 410 + npEx, bPlayW = 120, bPlayH = 62;
                 cv.roundRect(bPlayX, bPlayY, bPlayW, bPlayH, 31, t.accent);
                 if (isPlaying) {
                     drawPauseIcon(cv, bPlayX + bPlayW / 2, cy, 26, '#000000');
@@ -714,7 +751,7 @@ mgu.run({
                 }, 'np_play', 15);
 
                 // 4. Next
-                const bNextX = 462, bNextY = 416, bNextW = 76, bNextH = 50;
+                const bNextX = 462, bNextY = 416 + npEx, bNextW = 76, bNextH = 50;
                 cv.roundRect(bNextX, bNextY, bNextW, bNextH, 10, withAlpha(t.panelEdge, 0.7));
                 drawNextIcon(cv, bNextX + bNextW / 2, cy, 22, t.text);
                 cv.target(bNextX, bNextY, bNextW, bNextH, () => {
@@ -725,7 +762,7 @@ mgu.run({
                 // 5. Repeat
                 const repMode = spotify.repeat;
                 const isRep = repMode && repMode !== 'off';
-                const bRepX = 560, bRepY = 416, bRepW = 60, bRepH = 50;
+                const bRepX = 560, bRepY = 416 + npEx, bRepW = 60, bRepH = 50;
                 cv.roundRect(bRepX, bRepY, bRepW, bRepH, 10, isRep ? withAlpha(t.accent, 0.25) : withAlpha(t.panelEdge, 0.7));
                 if (isRep) cv.strokeRoundRect(bRepX, bRepY, bRepW, bRepH, 10, 1.5, t.accent);
                 drawRepeatIcon(cv, bRepX + bRepW / 2, cy, 20, isRep ? t.accent : t.dim, repMode);
@@ -736,7 +773,7 @@ mgu.run({
 
                 // 6. Like (Heart)
                 const isLiked = !!spotify.isCurrentLiked;
-                const bLikeX = 642, bLikeY = 416, bLikeW = 60, bLikeH = 50;
+                const bLikeX = 642, bLikeY = 416 + npEx, bLikeW = 60, bLikeH = 50;
                 cv.roundRect(bLikeX, bLikeY, bLikeW, bLikeH, 10, isLiked ? withAlpha(t.accent, 0.25) : withAlpha(t.panelEdge, 0.7));
                 if (isLiked) cv.strokeRoundRect(bLikeX, bLikeY, bLikeW, bLikeH, 10, 1.5, t.accent);
                 drawHeartIcon(cv, bLikeX + bLikeW / 2, cy - 2, 16, isLiked ? t.accent : t.dim, isLiked);
@@ -770,12 +807,15 @@ mgu.run({
                 return;
             }
 
-            const VISIBLE_Q = 7;
-            const visibleQ = upcoming.slice(0, VISIBLE_Q);
+            const VISIBLE_Q = 7 + Math.floor(npEx / 51);
+            queueScroll = Math.max(0, Math.min(queueScroll, Math.max(0, upcoming.length - VISIBLE_Q)));
+            listGeo.q = { x0: 920, x1: 1576, rowH: 51, count: upcoming.length, visible: VISIBLE_Q };
+            cv.scroll = true;
+            const visibleQ = upcoming.slice(queueScroll, queueScroll + VISIBLE_Q);
             visibleQ.forEach((trk, idx) => {
                 const qy = 100 + idx * 51;
                 cv.roundRect(938, qy, 620, 44, 8, t.track);
-                cv.text(String(idx + 1), 958, qy + 27, 15, t.dim, { align: 'center', font: 'num' });
+                cv.text(String(queueScroll + idx + 1), 958, qy + 27, 15, t.dim, { align: 'center', font: 'num' });
                 cv.text(trunc(trk.title, 24), 982, qy + 27, 17, t.text, { font: 'bold' });
                 cv.text(trunc(trk.artist, 20), 1260, qy + 27, 15, t.dim);
                 cv.text(fmtTime(trk.durationMs), 1530, qy + 27, 14, t.dim, { align: 'right', font: 'num' });
@@ -785,14 +825,15 @@ mgu.run({
                         const pIdx = spotify.currentPlaylist.tracks.findIndex((x) => x.id === trk.id);
                         if (pIdx >= 0) spotify.playTrack(spotify.currentPlaylist, pIdx);
                     }
-                }, 'q_trk_' + idx, 8);
+                }, 'q_trk_' + (queueScroll + idx), 8);
             });
         }
 
         /* ---------- Page 3: Connect & Real Cloud Pairing ---------- */
         function drawConnect(cv, t) {
             // Left: Real Cloud Pairing QR Code or Connected Status
-            G.panel(cv, t, 24, 44, 580, 396, spotify.isAuthenticated() ? 'Spotify Account Status' : 'Scan to Connect Phone');
+            const cEx = cv.extra || 0;
+            G.panelExact(cv, t, 24, 44, 580, 396 + cEx, spotify.isAuthenticated() ? 'Spotify Account Status' : 'Scan to Connect Phone');
 
             if (spotify.isAuthenticated()) {
                 // Connected Card
@@ -849,7 +890,7 @@ mgu.run({
             }
 
             // Right: Spotify Connect Target Devices
-            G.panel(cv, t, 620, 44, 956, 396, 'Spotify Connect Devices');
+            G.panelExact(cv, t, 620, 44, 956, 396 + cEx, 'Spotify Connect Devices');
             const devices = spotify.getDevices();
 
             if (!devices || devices.length === 0) {

@@ -102,6 +102,19 @@ mgu.run({
         let thinkTimer = null;
         let lastRenderTime = 0;
         let dialogueScroll = 0;
+        let dialogueRows = { count: 0, visible: 11 };
+        let dialogueAcc = 0;
+        ctx.onScroll((dy) => {
+            const max = Math.max(0, dialogueRows.count - dialogueRows.visible);
+            dialogueAcc += dy;
+            const rows = dialogueAcc > 0 ? Math.floor(dialogueAcc / 26) : Math.ceil(dialogueAcc / 26);
+            if (!rows) return (dy > 0 && dialogueScroll < max) || (dy < 0 && dialogueScroll > 0);
+            dialogueAcc -= rows * 26;
+            const next = Math.max(0, Math.min(max, dialogueScroll + rows)), moved = next !== dialogueScroll;
+            dialogueScroll = next;
+            render(true).catch(() => {});
+            return moved;
+        });
 
         let activeCategory = 0;
         let selectedTopicIdx = 0;
@@ -327,10 +340,10 @@ mgu.run({
 
         /* ---------- Offline Screen: No Internet Connection ---------- */
         function drawNoInternet(cv, t) {
-            G.panel(cv, t, 40, 52, 1520, 410, 'Network Status: Offline');
+            G.panelExact(cv, t, 40, 52, 1520, 458 + (cv.extra || 0), 'Network Status: Offline');
 
-            cv.roundRect(80, 110, 1440, 310, 16, '#0f141f');
-            cv.strokeRoundRect(80, 110, 1440, 310, 16, 2, '#e1001a');
+            cv.roundRect(80, 110, 1440, 358 + (cv.extra || 0), 16, '#0f141f');
+            cv.strokeRoundRect(80, 110, 1440, 358 + (cv.extra || 0), 16, 2, '#e1001a');
 
             cv.circle(180, 240, 44, withAlpha('#e1001a', 0.2));
             cv.text('!', 180, 255, 46, '#e1001a', { align: 'center', font: 'bold' });
@@ -353,10 +366,10 @@ mgu.run({
 
         /* ---------- Setup Screen: Copilot Setup / Cloud Pairing ---------- */
         function drawSetupRequired(cv, t) {
-            G.panel(cv, t, 40, 52, 1520, 410, 'M-Copilot Cloud Pairing & Setup');
+            G.panelExact(cv, t, 40, 52, 1520, 458 + (cv.extra || 0), 'M-Copilot Cloud Pairing & Setup');
 
-            cv.roundRect(80, 110, 1440, 310, 16, '#090e15');
-            cv.strokeRoundRect(80, 110, 1440, 310, 16, 2, '#00a3e0');
+            cv.roundRect(80, 110, 1440, 358 + (cv.extra || 0), 16, '#090e15');
+            cv.strokeRoundRect(80, 110, 1440, 358 + (cv.extra || 0), 16, 2, '#00a3e0');
 
             // Left QR Card
             const qr = getPairingQr();
@@ -407,7 +420,7 @@ mgu.run({
 
         /* ---------- On-Screen Touch Keyboard (Panel 2) ---------- */
         function drawKeyboard(cv, t, now) {
-            G.panel(cv, t, 510, 52, 1050, 410, 'Ask Custom Question');
+            G.panelExact(cv, t, 510, 52, 1050, 458 + (cv.extra || 0), 'Ask Custom Question');
 
             // Live Engine Vitals in header
             cv.text(`${telemetry.oilTemp}°C OIL  ·  ${telemetry.coolantTemp}°C COOLANT  ·  ${telemetry.batteryVoltage}V`, 1530, 80, 13, t.dim, { align: 'right', font: 'num' });
@@ -542,7 +555,7 @@ mgu.run({
             const topics = curCat.topics;
 
             // Panel 1 (Left): Quick Topics & Custom Query Action (No header text)
-            G.panel(cv, t, 40, 52, 440, 410, '');
+            G.panelExact(cv, t, 40, 52, 440, 458 + (cv.extra || 0), '');
 
             // Category Selector Tabs Bar (Moved up to y=66)
             const tabY = 66, tabH = 28;
@@ -633,13 +646,14 @@ mgu.run({
                 return;
             }
 
-            G.panel(cv, t, 510, 52, 1050, 410, 'Dialogue: ' + currentPrompt);
+            const dEx = 48 + (cv.extra || 0);   // the dialogue grows down to the page's bottom
+            G.panelExact(cv, t, 510, 52, 1050, 410 + dEx, 'Dialogue: ' + currentPrompt);
 
             // Live Engine Vitals in header
             cv.text(`${telemetry.oilTemp}°C OIL  ·  ${telemetry.coolantTemp}°C COOLANT  ·  ${telemetry.batteryVoltage}V`, 1530, 80, 13, t.dim, { align: 'right', font: 'num' });
 
             // Response Box Card
-            const rx = 530, ry = 104, rw = 1010, rh = 340;
+            const rx = 530, ry = 104, rw = 1010, rh = 340 + dEx;
             cv.roundRect(rx, ry, rw, rh, 12, '#090e15');
             cv.strokeRoundRect(rx, ry, rw, rh, 12, 1, t.panelEdge);
 
@@ -648,7 +662,9 @@ mgu.run({
 
             // Render Response text with wrap and scroll
             const lines = wrapLines(currentResponse, 88);
-            const maxVisibleLines = 11;
+            const maxVisibleLines = 11 + Math.floor(dEx / 26);
+            dialogueRows = { count: lines.length, visible: maxVisibleLines };
+            cv.scroll = true;
             const maxScroll = Math.max(0, lines.length - maxVisibleLines);
             if (dialogueScroll > maxScroll) dialogueScroll = maxScroll;
 
@@ -724,8 +740,9 @@ mgu.run({
 
             // Global Notification banner
             if (statusMsg && (now - statusTime < 3500)) {
-                cv.roundRect(W / 2 - 320, H - 56, 640, 42, 10, '#00a3e0');
-                cv.text(statusMsg, W / 2, H - 29, 18, '#ffffff', { align: 'center', font: 'bold' });
+                const sy = H + (cv.extra || 0);
+                cv.roundRect(W / 2 - 320, sy - 56, 640, 42, 10, '#00a3e0');
+                cv.text(statusMsg, W / 2, sy - 29, 18, '#ffffff', { align: 'center', font: 'bold' });
             }
 
             await ui.image('MAIN_GFX', cv);

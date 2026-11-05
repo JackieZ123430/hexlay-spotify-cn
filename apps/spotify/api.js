@@ -373,6 +373,7 @@ class SpotifyClient {
         const had = !!(this.currentTrack || this.isPlaying || this.activeDevice);
         this.isPlaying = false;
         this.currentTrack = null;
+        this.contextUri = null;
         this.progressMs = 0;
         this.activeDevice = null;
         this.remoteQueue = [];
@@ -621,6 +622,8 @@ class SpotifyClient {
         this.shuffle = data.shuffle_state;
         this.repeat = data.repeat_state;
         this.activeDevice = decodeHtmlEntities(data.device.name) + ' (' + data.device.type + ')';
+        // what plays: the playlist / album / liked songs (its URI), for the "playing" marks
+        this.contextUri = (data.context && data.context.uri) || null;
         if (typeof data.device.volume_percent === 'number') this.volume = data.device.volume_percent;
         const it = data.item;
         if (!it) return;         // an ad or a private session: keep the last track shown

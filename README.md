@@ -30,7 +30,7 @@ This repository is built on the open-source BMW iDrive 7 platform:
 | App | Version | Needs internet | Touches vehicle ECUs |
 | :--- | :---: | :---: | :--- |
 | [Spotify](#1-spotify-spotify) | 1.0.7 | Yes | No |
-| [M-Cinema](#2-m-cinema-m_cinema) | 1.0.9 | Yes | No (reads vehicle speed) |
+| [M-Cinema](#2-m-cinema-m_cinema) | 1.0.10 | Yes | No (reads speed and gear selector) |
 | [M-Copilot](#3-m-copilot-m_copilot) | 1.0.2 | Yes | No (reads driving signals) |
 
 > [!NOTE]
@@ -61,8 +61,11 @@ This repository is built on the open-source BMW iDrive 7 platform:
 
 * **Search in the car**: on-screen keyboard (touch or the iDrive controller), quick category chips and thumbnail results.
 * **Cast from the YouTube app**: in the YouTube app, **Settings > Watch on TV > Link with TV code**, then enter the 12-digit code on the Connect tab. Videos tapped on the phone then play on the central display. The receiver recovers by itself after connection loss.
-* **Motion lockout** (Settings > Motion safety lockout): *Auto* pauses the video while the car moves faster than 3 km/h; *Strict* also locks while the speed is unknown; *Always Allow* turns the lock off.
-* **Reliable playback**: the video downloads to a RAM cache (up to 300 MB, limited by free space) and plays once it is complete, with a buffering progress screen; stalled downloads resume where they stopped. Streams are capped at 720p to keep the Intel Atom cool.
+* **Parked only**, always on: the picture pauses while the car moves (over 3 km/h), while the selector is in D or R (also when stopped at a light), and while the speed is unknown on a real car. There is no setting to turn it off.
+* **Foreground only**: leaving M-Cinema stops the video and frees its memory; a cast or a "play" from the phone never starts playback while M-Cinema is not on screen (a cast received in the background waits for you).
+* **Head-unit protection**: the video engine runs at a lower CPU priority than BMW's HMI and is capped at 720p. Playback pauses when the head unit reaches 85 °C or has less than 150 MB of free memory, and the engine is stopped at 92 °C or under 80 MB. An engine that stops responding is stopped after 20 s.
+* **Browser-style buffering**: the video is fetched in 1 MB pieces just ahead of the playback position and kept in a small RAM window (4–16 MB ahead, never more than about 22 MB in total, whatever the video's length); nothing is written to disk. Playback starts within a couple of seconds, a seek fetches the piece it needs first, and a slow network shows a buffering indicator and continues by itself. An expired YouTube link is renewed automatically.
+* **No sound yet**: M-Cinema shows the picture only. Playing audio through the car is still being worked on.
 
 ---
 

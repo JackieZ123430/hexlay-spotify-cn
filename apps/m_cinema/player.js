@@ -6,7 +6,13 @@
  *   - Video frames decoded directly into /dev/shm/mgu-video-cinema (Protocol 4)
  *   - Control FIFO: sends pause, resume, seek, and stop commands
  *   - Status FIFO: receives live timecode and playback state JSON updates
- *   - Local tmpfs streaming cache: buffers HTTPS video into /tmp/mgu-cinema-stream.mp4
+ *   - Streaming, best first (by the engine's --caps):
+ *       'sock': browser-style range buffering (range_cache.js): 1 MB HTTP ranges in a small RAM
+ *               window around the playback position, instant seeks, no file in /tmp
+ *       'grow': download to /tmp, play while the file grows (servers that ignore Range)
+ *       older engine: download completely to /tmp, then play
+ *   - Engine runs at a lower CPU priority (--nice); a watchdog stops an engine that hangs
+ *   - Locks (motion, heat, ...): while any is set the picture is held paused
  *   - Simulator / PC fallback: simulates playback timing if native binary is unavailable
  */
 const fs = require('fs');
@@ -16,6 +22,7 @@ const https = require('https');
 const urlMod = require('url');
 const { spawn, execFileSync } = require('child_process');
 const { resolveYouTubeStream } = require('./stream_resolver.js');
+const { RangeCache } = require('./range_cache.js');
 
 function extractYouTubeId(urlOrId) {
     if (!urlOrId) return null;
@@ -35,9 +42,15 @@ const BIN_CANDIDATES = [
     '/tmp/mgu-vidplay'
 ];
 
-// tmpfs cache: the native engine stops at EOF of a growing file, so a stream is downloaded
-// completely before vidplay starts. Capped to keep /tmp (RAM) from filling up.
+// tmpfs cache, capped to keep /tmp (RAM) from filling up. The engine starts once START_BYTES
+// are in (the MP4 header and the first seconds); the rest plays while it downloads.
 const MAX_CACHE_BYTES = 300 * 1024 * 1024;
+const START_BYTES = 1024 * 1024;
+const ENGINE_NICE = 10;               // the HMI always gets the CPU first
+const AHEAD_SECONDS = 90;             // range mode: prefetch this much video ahead ...
+const AHEAD_MIN = 4 * 1024 * 1024;    // ... at least this much
+const AHEAD_MAX = 16 * 1024 * 1024;   // ... at most this much (RAM)
+const WATCHDOG_MS = 20000;            // a playing engine silent this long is stopped
 const CACHE_HEADROOM = 16 * 1024 * 1024;
 const MAX_RESUMES = 4;
 const IDLE_TIMEOUT_MS = 15000;
@@ -54,6 +67,7 @@ class VideoPlayer {
         this.ctrlPath = this.opts.ctrlPath || '/tmp/mgu-cinema-ctrl.fifo';
         this.statusPath = this.opts.statusPath || '/tmp/mgu-cinema-status.fifo';
         this.streamLocalFile = this.opts.streamLocalFile || '/tmp/mgu-cinema-stream.mp4';
+        this.sockPath = this.opts.sockPath || '/tmp/mgu-cinema-src.sock';
         this.maxCacheBytes = this.opts.maxCacheBytes || MAX_CACHE_BYTES;
         this.spawnImpl = this.opts.spawn || spawn;
         this.proc = null;
@@ -67,8 +81,15 @@ class VideoPlayer {
         this.activeUrl = null;
         this.isPlaying = false;
         this.userPaused = false;
-        this.locked = false;          // motion interlock: picture held paused
-        this.buffering = null;        // { bytes, total } while the stream downloads
+        this.locks = new Set();       // 'motion', 'heat', ...: picture held paused while any is set
+        this.cache = null;            // RangeCache in range mode
+        this.lastStatusAt = 0;
+        this.watchdog = null;
+        this.buffering = null;        // { bytes, total } while waiting for the stream (start or stall)
+        this.stalled = false;         // engine is playing but waiting for more downloaded data
+        this.dlBytes = 0;
+        this.dlTotal = 0;
+        this.engine = undefined;      // { bin, grow, sock, nice } once probed
         this.currentTimeSec = 0;
         this.totalDurationSec = 0;
         this.simTimer = null;
@@ -81,19 +102,61 @@ class VideoPlayer {
         process.on('exit', () => this._resetInternal());
     }
 
-    _findBinary() {
-        if (this.opts.bin !== undefined) return this.opts.bin;
+    get locked() { return this.locks.size > 0; }
+
+    /** Features of the engine at bin ('grow', 'sock', 'nice'); none for older engines. */
+    _probeCaps(bin) {
+        try {
+            const out = execFileSync(bin, ['--caps'], { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
+            return out.split(/\s+/).filter(Boolean);
+        } catch (e) {
+            return [];               // older engines don't know --caps (usage, exit 1)
+        }
+    }
+
+    _engineFor(bin, caps) {
+        return { bin: bin, grow: caps.indexOf('grow') >= 0, sock: caps.indexOf('sock') >= 0, nice: caps.indexOf('nice') >= 0 };
+    }
+
+    /**
+     * The engine to use: { bin, grow, sock, nice }, or null. Prefers the most capable candidate
+     * (an older copy may sit in /var/opt/mgu-renderd from a manual install).
+     */
+    _findEngine() {
+        if (this.engine !== undefined) return this.engine;
+        if (this.opts.bin !== undefined) {
+            const bin = this.opts.bin;
+            this.engine = bin ? this._engineFor(bin, this.opts.caps || this._probeCaps(bin)) : null;
+            return this.engine;
+        }
+        let best = null;
+        const score = (e) => (e.sock ? 2 : 0) + (e.grow ? 1 : 0);
         for (const p of BIN_CANDIDATES) {
             try {
-                if (fs.existsSync(p)) {
-                    try { fs.chmodSync(p, 0o755); } catch (e) {}
-                    if (fs.statSync(p).isFile()) {
-                        return p;
-                    }
-                }
+                if (!fs.existsSync(p)) continue;
+                try { fs.chmodSync(p, 0o755); } catch (e) {}
+                if (!fs.statSync(p).isFile()) continue;
+                const e = this._engineFor(p, this._probeCaps(p));
+                if (!best || score(e) > score(best)) best = e;
+                if (e.sock) break;
             } catch (e) {}
         }
-        return null;
+        this.engine = best;
+        if (best) this.log.info(`[M-Cinema:Player] Video engine: ${best.bin} (${best.sock ? 'range buffering' : best.grow ? 'plays while downloading' : 'older engine: full download first'})`);
+        return this.engine;
+    }
+
+    /** Stop the engine process now; its late 'close' is ignored. */
+    _killProc() {
+        this._clearCtrlQueue();
+        if (!this.proc) return;
+        this._writeCtrl('quit');
+        const p = this.proc;
+        this.proc = null;
+        try {
+            if (p && !p.killed) p.kill('SIGKILL');
+        } catch (e) {}
+        this._closeStatus();
     }
 
     _abortDownload() {
@@ -105,30 +168,25 @@ class VideoPlayer {
     _resetInternal() {
         this.gen++;
         this._abortDownload();
+        this._stopWatchdog();
+        if (this.cache) { this.cache.destroy(); this.cache = null; }
         this.buffering = null;
+        this.stalled = false;
+        this.dlBytes = 0;
+        this.dlTotal = 0;
 
         if (this.simTimer) {
             clearInterval(this.simTimer);
             this.simTimer = null;
         }
-        this._clearCtrlQueue();
-        if (this.proc) {
-            this._writeCtrl('quit');
-            const p = this.proc;
-            this.proc = null;    // its late 'close' is ignored (see _spawnPlayer)
-            try {
-                if (p && !p.killed) {
-                    p.kill('SIGKILL');
-                }
-            } catch (e) {}
-        }
+        this._killProc();
         this._closeStatus();
 
-        try {
-            if (fs.existsSync(this.streamLocalFile)) {
-                fs.unlinkSync(this.streamLocalFile);
-            }
-        } catch (e) {}
+        for (const f of [this.streamLocalFile, this.streamLocalFile + '.done']) {
+            try {
+                if (fs.existsSync(f)) fs.unlinkSync(f);
+            } catch (e) {}
+        }
     }
 
     _fail(msg) {
@@ -149,6 +207,7 @@ class VideoPlayer {
         this.userPaused = false;
 
         const ytId = (videoMeta && (videoMeta.ytId || videoMeta.id)) || extractYouTubeId(streamUrl) || null;
+        this.activeYtId = ytId;
         const bX = (videoMeta && typeof videoMeta.x === 'number') ? videoMeta.x : 52;
         const bY = (videoMeta && typeof videoMeta.y === 'number') ? videoMeta.y : 102;
         const bW = (videoMeta && typeof videoMeta.w === 'number') ? videoMeta.w : 1008;
@@ -175,8 +234,8 @@ class VideoPlayer {
             });
         }
 
-        const bin = this._findBinary();
-        if (!bin) {
+        const engine = this._findEngine();
+        if (!engine) {
             this.log.warn('[M-Cinema:Player] Native mgu-vidplay binary not found on host, using simulation clock');
             this._startSimulation();
             return false;
@@ -194,22 +253,22 @@ class VideoPlayer {
                     if (resolved.durationSec > 0 && !this.totalDurationSec) {
                         this.totalDurationSec = resolved.durationSec;
                     }
-                    this._streamAndSpawn(bin, resolved.url, gen);
+                    this._streamAndSpawn(engine, resolved.url, gen);
                 } else {
-                    this._streamAndSpawn(bin, streamUrl, gen);
+                    this._streamAndSpawn(engine, streamUrl, gen);
                 }
             }).catch((err) => {
                 if (gen !== this.gen) return;
                 this.log.warn(`[M-Cinema:Player] Direct stream resolution fallback: ${err.message}`);
-                this._streamAndSpawn(bin, streamUrl, gen);
+                this._streamAndSpawn(engine, streamUrl, gen);
             });
             return true;
         }
 
-        return this._streamAndSpawn(bin, streamUrl, gen);
+        return this._streamAndSpawn(engine, streamUrl, gen);
     }
 
-    _streamAndSpawn(bin, mediaUrl, gen) {
+    _streamAndSpawn(engine, mediaUrl, gen) {
         if (gen !== this.gen) return false;
         if (!mediaUrl) {
             this._fail('No playable stream');
@@ -219,10 +278,115 @@ class VideoPlayer {
         // If it's already a local file path, spawn directly
         if (!mediaUrl.startsWith('http://') && !mediaUrl.startsWith('https://')) {
             this.buffering = null;
-            return this._spawnPlayer(bin, mediaUrl, gen);
+            return this._spawnPlayer(engine.bin, mediaUrl, gen);
         }
+        if (engine.sock) return this._playFromRanges(engine, mediaUrl, gen);
+        return this._playFromFile(engine, mediaUrl, gen);
+    }
 
-        // vidplay stops at the EOF of a growing file: download completely, then spawn
+    _playFromFile(engine, mediaUrl, gen) {
+        return engine.grow ? this._playWhileDownloading(engine.bin, mediaUrl, gen)
+                           : this._playAfterDownload(engine.bin, mediaUrl, gen);
+    }
+
+    /** A fresh stream URL for the current video (the old one expired), or null. */
+    _refreshUrl(gen) {
+        const ytId = this.activeYtId;
+        if (!ytId) return Promise.resolve(null);
+        const resolve = this.opts.resolve || resolveYouTubeStream;
+        return resolve(ytId, this.log).then((r) => (gen === this.gen && r && r.url) ? r.url : null, () => null);
+    }
+
+    /** Browser-style: the engine reads byte ranges that range_cache.js fetches on demand. */
+    _playFromRanges(engine, mediaUrl, gen) {
+        this.log.info('[M-Cinema:Player] Range buffering: opening stream');
+        this.buffering = { bytes: 0, total: START_BYTES };
+        RangeCache.open(mediaUrl, { log: this.log, refreshUrl: () => this._refreshUrl(gen), chunkSize: this.opts.chunkSize })
+            .then((cache) => {
+                if (gen !== this.gen) { cache.destroy(); return; }
+                this.cache = cache;
+                const dur = this.totalDurationSec || 0;
+                const ahead = dur > 0 ? cache.size / dur * AHEAD_SECONDS : AHEAD_MAX;
+                cache.ahead = Math.max(AHEAD_MIN, Math.min(AHEAD_MAX, Math.round(ahead)));
+                cache.maxBytes = cache.ahead + cache.behind + 4 * cache.chunk;
+                cache.onError = (err) => {
+                    if (gen !== this.gen || this.cache !== cache) return;
+                    this._killProc();
+                    this._fail('Video stream failed: ' + err.message);
+                };
+                this.log.info(`[M-Cinema:Player] Stream ${mb(cache.size)} MB, buffer window ${mb(cache.ahead)} MB ahead (max ${mb(cache.maxBytes)} MB RAM)`);
+                return cache.serve(this.sockPath).then(() => {
+                    if (gen !== this.gen) return;
+                    this.stalled = true;               // until the first picture
+                    this.buffering = { bytes: cache.bufferedAhead(), total: START_BYTES };
+                    this._spawnPlayer(engine.bin, null, gen, ['--sock', this.sockPath, '--size', String(cache.size)], engine);
+                });
+            })
+            .catch((err) => {
+                if (gen !== this.gen) return;
+                if (this.cache) { this.cache.destroy(); this.cache = null; }
+                if (err.code === 'NORANGE') {
+                    this.log.warn(`[M-Cinema:Player] ${err.message}: falling back to downloading the file`);
+                    this._playFromFile(engine, mediaUrl, gen);
+                    return;
+                }
+                this._fail('Video stream unavailable: ' + err.message);
+            });
+        return true;
+    }
+
+    /**
+     * Download to tmpfs and start the engine after START_BYTES: it reads the file as it grows and
+     * waits (reporting "buffering") when playback catches up with the download. The .done marker
+     * tells it where the real end of the file is.
+     */
+    _playWhileDownloading(bin, mediaUrl, gen) {
+        const localPath = this.streamLocalFile;
+        const doneMarker = localPath + '.done';
+        try { fs.unlinkSync(doneMarker); } catch (e) {}
+        this.log.info(`[M-Cinema:Player] Streaming to ${localPath}, playback starts after ${mb(START_BYTES)} MB`);
+        this.buffering = { bytes: 0, total: 0 };
+        let started = false;
+        const start = (total) => {
+            if (started || gen !== this.gen) return;
+            started = true;
+            this.buffering = null;
+            this.log.info(`[M-Cinema:Player] Starting playback at ${mb(this.dlBytes)} MB of ${total > 0 ? mb(total) + ' MB' : 'unknown size'}`);
+            this._spawnPlayer(bin, localPath, gen, ['--grow', doneMarker].concat(total > 0 ? ['--size', String(total)] : []));
+        };
+        const dl = this._streamVideoToFile(mediaUrl, localPath, (err, p, bytes) => {
+            if (this.activeDownload === dl) this.activeDownload = null;
+            if (gen !== this.gen) return;
+            if (err) {
+                this._killProc();
+                this._fail(err.message);
+                return;
+            }
+            try {
+                fs.writeFileSync(doneMarker, '');
+            } catch (e) {
+                this.log.warn(`[M-Cinema:Player] Could not write ${doneMarker}: ${e.message}`);
+            }
+            this.log.info(`[M-Cinema:Player] Video stream download completed (${bytes} bytes)`);
+            if (this.stalled) { this.stalled = false; this.buffering = null; }
+            start(bytes);                    // a video shorter than START_BYTES starts now
+        }, (written, total) => {
+            if (gen !== this.gen) return;
+            this.dlBytes = written;
+            this.dlTotal = total;
+            if (!started) {
+                this.buffering = { bytes: written, total: total };
+                if (written >= START_BYTES) start(total);
+            } else if (this.stalled) {
+                this.buffering = { bytes: written, total: total };
+            }
+        });
+        this.activeDownload = dl;
+        return true;
+    }
+
+    /** Older engine (stops at the end of a growing file): download completely, then spawn. */
+    _playAfterDownload(bin, mediaUrl, gen) {
         this.log.info(`[M-Cinema:Player] Buffering HTTPS stream to ${this.streamLocalFile}...`);
         this.buffering = { bytes: 0, total: 0 };
         const dl = this._streamVideoToFile(mediaUrl, this.streamLocalFile, (err, localPath, bytes) => {
@@ -235,9 +399,10 @@ class VideoPlayer {
             }
             this.log.info(`[M-Cinema:Player] Video stream download completed (${bytes} bytes), launching player`);
             this._spawnPlayer(bin, localPath, gen);
+        }, (written, total) => {
+            if (gen === this.gen) this.buffering = { bytes: written, total: total };
         });
         this.activeDownload = dl;
-
         return true;
     }
 
@@ -256,10 +421,11 @@ class VideoPlayer {
 
     /**
      * Downloads remoteUrl to localPath. onDone(err, localPath, bytes) is called once (never after
-     * abort()). Follows redirects, needs a 2xx video body, caps the size, resumes an idle or
-     * broken transfer with an HTTP Range request when the server accepts ranges.
+     * abort()); onData(written, total) after each chunk. Follows redirects, needs a 2xx video body,
+     * caps the size, resumes an idle or broken transfer with an HTTP Range request when the server
+     * accepts ranges.
      */
-    _streamVideoToFile(remoteUrl, localPath, onDone) {
+    _streamVideoToFile(remoteUrl, localPath, onDone, onData) {
         try { if (fs.existsSync(localPath)) fs.unlinkSync(localPath); } catch (e) {}
 
         const limit = this._cacheLimit(localPath);
@@ -371,10 +537,10 @@ class VideoPlayer {
                             res.pause();
                             fileOut.once('drain', () => res.resume());
                         }
+                        if (onData) onData(written, total);
                         const now = Date.now();
                         if (now - lastReport > 250) {
                             lastReport = now;
-                            this.buffering = { bytes: written, total: total };
                             if (this.onBuffering) this.onBuffering(written, total);
                         }
                     });
@@ -419,7 +585,7 @@ class VideoPlayer {
         return false;
     }
 
-    _spawnPlayer(bin, localFilePath, gen) {
+    _spawnPlayer(bin, localFilePath, gen, extraArgs, engine) {
         if (gen !== undefined && gen !== this.gen) return false;
         try {
             // FIFOs exist and the status reader is open BEFORE spawn: vidplay opens the status
@@ -435,9 +601,9 @@ class VideoPlayer {
                 '--height', '720',
                 '--fps', '30',
                 '--ctrl', this.ctrlPath,
-                '--status', this.statusPath,
-                localFilePath
-            ];
+                '--status', this.statusPath
+            ].concat((engine || this.engine || {}).nice ? ['--nice', String(ENGINE_NICE)] : [],
+                     extraArgs || [], localFilePath ? [localFilePath] : []);
 
             this.log.info(`[M-Cinema:Player] Spawning native player: ${bin} ${args.join(' ')}`);
             const proc = this.spawnImpl(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -466,6 +632,9 @@ class VideoPlayer {
                 }
                 this.log.info(`[M-Cinema:Player] Native player process exited with code ${code}`);
                 this.proc = null;
+                this._stopWatchdog();
+                this.buffering = null;
+                this.stalled = false;
                 this._closeStatus();
                 this._clearCtrlQueue();
                 this.isPlaying = false;
@@ -478,6 +647,7 @@ class VideoPlayer {
             } else {
                 this.isPlaying = true;
             }
+            this._startWatchdog(gen);
             return true;
         } catch (err) {
             this.log.error(`[M-Cinema:Player] Failed to start native player: ${err.message}`);
@@ -517,11 +687,41 @@ class VideoPlayer {
         }, 200);
     }
 
+    /** Stop an engine that went silent while it should be playing (it sends status every 250-500 ms). */
+    _startWatchdog(gen) {
+        this._stopWatchdog();
+        this.lastStatusAt = Date.now();
+        this.watchdog = setInterval(() => {
+            if (gen !== this.gen || !this.proc) return this._stopWatchdog();
+            if (this.userPaused || this.locked) { this.lastStatusAt = Date.now(); return; }   // a paused engine is quiet
+            if (Date.now() - this.lastStatusAt > WATCHDOG_MS) {
+                this.log.warn(`[M-Cinema:Player] Engine silent for ${WATCHDOG_MS / 1000} s, stopping it`);
+                this._killProc();
+                this._stopWatchdog();
+                this._fail('Video engine stopped responding');
+            }
+        }, 2000);
+    }
+
+    _stopWatchdog() {
+        if (this.watchdog) { clearInterval(this.watchdog); this.watchdog = null; }
+    }
+
     _onStatusLine(line) {
         if (!line.trim()) return;
         try {
             const data = JSON.parse(line.trim());
             if (typeof data.pts === 'number') {
+                this.lastStatusAt = Date.now();
+                // the engine caught up with the download: show the buffering overlay until it resumes
+                if (data.buffering) {
+                    this.stalled = true;
+                    this.buffering = this.cache ? { bytes: this.cache.bufferedAhead(), total: START_BYTES }
+                                                : { bytes: this.dlBytes, total: this.dlTotal };
+                } else if (this.stalled) {
+                    this.stalled = false;
+                    this.buffering = null;
+                }
                 this.currentTimeSec = data.pts;
                 if (data.dur > 0) this.totalDurationSec = data.dur;
                 this.isPlaying = !!data.playing && !this.userPaused && !this.locked;
@@ -587,19 +787,29 @@ class VideoPlayer {
         }
     }
 
-    /** Motion interlock: hold the picture paused while locked; resume on unlock unless the user paused. */
-    setLocked(locked) {
-        locked = !!locked;
-        if (locked === this.locked) return;
-        this.locked = locked;
-        if (locked) {
+    /**
+     * Hold the picture paused while lock `name` is set ('motion', 'heat', ...). When the last lock
+     * clears, playback resumes unless the user paused.
+     */
+    setLock(name, on) {
+        const was = this.locked;
+        if (on) this.locks.add(name); else this.locks.delete(name);
+        if (this.locked === was) return;
+        if (this.locked) {
             this.isPlaying = false;
             if (this.proc) this._sendCtrl('pause');
-        } else if (!this.userPaused && (this.proc || this.simTimer || this.activeDownload || this.buffering)) {
+        } else if (!this.userPaused && (this.proc || this.simTimer || this.activeDownload || this.buffering || this.cache)) {
             this.isPlaying = true;
+            this.lastStatusAt = Date.now();
             if (this.proc) this._sendCtrl('resume');
         }
     }
+
+    /** Motion interlock (kept for callers): the 'motion' lock. */
+    setLocked(locked) { this.setLock('motion', !!locked); }
+
+    /** True while there is a video loaded (playing, paused, or buffering). */
+    hasMedia() { return !!(this.proc || this.cache || this.activeDownload || this.simTimer || this.buffering); }
 
     pause() {
         this.isPlaying = false;
@@ -616,6 +826,7 @@ class VideoPlayer {
         if (this.locked) return false;
         this.isPlaying = true;
         this.userPaused = false;
+        this.lastStatusAt = Date.now();
         if (this.proc) {
             this._sendCtrl('resume');
         }

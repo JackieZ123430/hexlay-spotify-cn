@@ -17,14 +17,17 @@
  *   4. Active Cockpit Playback & Live Spectrum Equalizer:
  *      Dynamic live timecode, smooth seeking scrubber, animated ambilight aura, and
  *      clean multi-colored audio spectrum visualizer.
- *   5. Intel Atom A3960 Hardware Thermal Safe Cap:
- *      Clamps streams strictly to 720p 60 HD to protect head unit CPU/GPU.
- *   6. Offline Safeguard:
+ *   5. Head unit protection (system_guard.js, player.js):
+ *      720p cap; the engine runs at a lower CPU priority; video pauses when the head unit gets
+ *      hot or low on memory and stops when it gets critical; a hung engine is stopped.
+ *   6. Parked only (motion_guard.js): paused while moving, in D / R, or with the speed unknown.
+ *   7. Foreground only: leaving the screen stops the video; a cast or a phone "play" never starts
+ *      playback while M-Cinema is not on screen.
+ *   8. Offline Safeguard:
  *      Verifies active internet connectivity to YouTube; if offline, notifies the user
  *      with high-contrast BMW-styled alert and disables streaming.
  *
- * Audio Routing:
- *   Audio streams through the vehicle stereo via Bluetooth Audio or Apple CarPlay / Android Auto.
+ * Audio: not supported yet - the engine shows the picture only.
  *
  * Pages:
  *   0: Now Playing - 21:9 Widescreen player with live ambient accent & spectrum visualizer
@@ -39,6 +42,7 @@ const { YouTubeLoungeReceiver } = require('./lounge');
 const { VideoPlayer } = require('./player');
 const { ThumbnailManager, THUMB_BASE_ID } = require('./thumbnail_manager');
 const { checkInternetConnection } = require('./stream_resolver');
+const { SystemGuard } = require('./system_guard');
 const qrcodegen = require('./qrcodegen');
 
 const W = 1600, H = 520;
@@ -176,9 +180,14 @@ mgu.run({
         }, 12000);
 
         // Foreground-Only Lifecycle: Video must NEVER play in background.
+        // mainVisible: null until the HMI reports it; casts and phone commands need it true.
+        let mainVisible = null;
+        let mainFocus = true;
+        const onScreen = () => mainVisible === true && mainFocus;
         if (ui.onVisible) {
             ui.onVisible((stateName, isVisible) => {
                 log.info(`[M-Cinema] Screen '${stateName}' visible: ${isVisible}`);
+                if (stateName === 'MAIN') mainVisible = !!isVisible;
                 if (stateName === 'MAIN' && !isVisible) {
                     log.info('[M-Cinema] App left foreground -> stopping video immediately');
                     isPlaying = false;
@@ -195,6 +204,7 @@ mgu.run({
         if (ui.onFocus) {
             ui.onFocus((stateName, hasFocus) => {
                 log.info(`[M-Cinema] Screen '${stateName}' focus: ${hasFocus}`);
+                if (stateName === 'MAIN') mainFocus = !!hasFocus;
                 if (stateName === 'MAIN' && !hasFocus) {
                     if (isPlaying) {
                         log.info('[M-Cinema] App lost focus -> pausing video');
@@ -294,38 +304,30 @@ mgu.run({
         };
         totalDurationSec = activeCastVideo.durationSec;
 
-        // Monitor vehicle speed for safety (Vehicle2.statusCarSpeed2, re-read every 2 s)
-        let parked = null;
+        // Parked only (motion_guard.js): speed, gear selector, and fail closed on an unknown speed.
+        // There is no setting to turn it off. If the guard can't start, video stays locked.
+        let motion = null;
         try {
-            parked = require('./kit/parked').watch(ctx, log);
+            motion = require('./motion_guard').watch(ctx, log);
         } catch (e) {
-            log.warn('[M-Cinema] speed watch unavailable: ' + e.message);
+            log.warn('[M-Cinema] motion guard unavailable, video stays locked: ' + e.message);
         }
+        let motionReason = '';
 
-        /**
-         * Motion interlock (setting "interlock"):
-         *   bypass - never locked
-         *   auto   - locked while the car moves (> 3 km/h); VIM can't be detected, so moving = locked
-         *   strict - also locked while the speed is unknown on a real car (no valid reading yet)
-         */
         function computeMotionLocked() {
-            const mode = settings.get('interlock') || 'auto';
-            if (mode === 'bypass') return false;
-            const kmh = parked ? parked.speed() : null;
+            if (!motion) { motionReason = 'no vehicle data'; return true; }
+            const kmh = motion.speed();
             vehicleSpeed = kmh === null ? 0 : Math.round(kmh);
-            if (parked && parked.moving()) return true;
-            if (mode === 'strict' && kmh === null) {
-                const onCar = !parked || !signals.hasNative || signals.hasNative();
-                return onCar;
-            }
-            return false;
+            const st = motion.state();
+            motionReason = st.reason;
+            return st.locked;
         }
 
         function checkInterlock() {
             const motionLocked = computeMotionLocked();
             if (motionLocked === lastMotionLocked) return motionLocked;
             lastMotionLocked = motionLocked;
-            log.info('[M-Cinema] Motion interlock ' + (motionLocked ? 'engaged (' + vehicleSpeed + ' km/h)' : 'released'));
+            log.info('[M-Cinema] Motion interlock ' + (motionLocked ? 'engaged (' + motionReason + ', ' + vehicleSpeed + ' km/h)' : 'released'));
             // actually stop the picture: the native engine is held paused while locked
             player.setLocked(motionLocked);
             isPlaying = player.isPlaying;
@@ -336,12 +338,46 @@ mgu.run({
             render().catch(() => {});
             return motionLocked;
         }
+        lastMotionLocked = computeMotionLocked();      // locked from the start until the car is known parked
+        player.setLocked(lastMotionLocked);
         setInterval(checkInterlock, 500);
 
-        // play/pause from a button, the knob or the touch surface (resume is refused while motion-locked)
+        // Head unit protection: pause when hot / low on memory, stop the engine when critical
+        const guard = new SystemGuard(log);
+        guard.onChange((level, reason) => {
+            if (level === 'critical') {
+                if (player.hasMedia()) {
+                    player.stop();
+                    isPlaying = false;
+                    notify('Video stopped to protect the head unit: ' + reason);
+                }
+                player.setLock('heat', true);
+            } else if (level === 'hot') {
+                if (player.hasMedia()) {
+                    player.pause();
+                    isPlaying = false;
+                    notify('Video paused to protect the head unit: ' + reason);
+                }
+                player.setLock('heat', true);
+            } else {
+                player.setLock('heat', false);
+                if (player.hasMedia()) notify('Head unit back to normal - press play to continue');
+            }
+            render().catch(() => {});
+        });
+        guard.start();
+
+        /** Why playback can't start / resume now, or '' when it can. */
+        function blockedReason() {
+            if (lastMotionLocked) return 'Park the car to watch (' + (motionReason || 'not parked') + ')';
+            if (!guard.canPlay()) return 'Paused to protect the head unit: ' + guard.reason;
+            return '';
+        }
+
+        // play/pause from a button, the knob or the touch surface (resume is refused while locked)
         function togglePlayback() {
             if (isPlaying) player.pause();
-            else if (!player.resume()) notify('Video locked while in motion');
+            else if (!player.resume()) notify(blockedReason() || 'Video locked');
             isPlaying = player.isPlaying;
         }
 
@@ -350,9 +386,20 @@ mgu.run({
             statusTime = Date.now();
         }
 
-        function playVideo(video) {
+        function playVideo(video, fromPhone) {
             if (!hasInternet) {
                 notify('No internet connection');
+                render().catch(() => {});
+                return;
+            }
+            // never start in the background: a cast received off screen waits for the driver
+            if (fromPhone && !onScreen()) {
+                activeCastVideo = Object.assign({}, video, { ytId: video.ytId || video.id || extractYouTubeId(video.url) || null });
+                log.info('[M-Cinema] Cast received while not on screen: queued, not played');
+                return;
+            }
+            if (!guard.canPlay()) {
+                notify('Paused to protect the head unit: ' + guard.reason);
                 render().catch(() => {});
                 return;
             }
@@ -384,13 +431,14 @@ mgu.run({
         // Initialize Official YouTube on TV Lounge Receiver
         const loungeReceiver = new YouTubeLoungeReceiver({
             onCast(video) {
-                playVideo(video);
+                playVideo(video, true);
             },
             onControl(cmd) {
                 if (cmd === 'pause') {
                     player.pause();
                 } else if (cmd === 'play') {
-                    player.resume();
+                    if (onScreen()) player.resume();          // refused while locked (motion, heat)
+                    else log.info('[M-Cinema] Phone "play" ignored: M-Cinema not on screen');
                 }
                 isPlaying = player.isPlaying;
                 render().catch(() => {});
@@ -589,8 +637,8 @@ mgu.run({
             if (motionLocked) {
                 cv.roundRect(W / 2 - 400, H / 2 - 80, 800, 160, 14, '#0c121c');
                 cv.strokeRoundRect(W / 2 - 400, H / 2 - 80, 800, 160, 14, 2, '#e1001a');
-                cv.text('[!] VIDEO LOCKED WHILE IN MOTION', W / 2, H / 2 - 20, 24, '#e1001a', { align: 'center', font: 'bold' });
-                cv.text('Audio continues through car speakers. Park vehicle to resume (' + vehicleSpeed + ' km/h).', W / 2, H / 2 + 22, 16, '#cbd5e1', { align: 'center' });
+                cv.text('[!] VIDEO PAUSED: CAR NOT PARKED', W / 2, H / 2 - 20, 24, '#e1001a', { align: 'center', font: 'bold' });
+                cv.text('Stop and select P to watch (' + (motionReason || 'not parked') + ', ' + vehicleSpeed + ' km/h).', W / 2, H / 2 + 22, 16, '#cbd5e1', { align: 'center' });
                 return;
             }
 
@@ -667,7 +715,7 @@ mgu.run({
             }, 'seekbar_fs', 16);
         }
 
-        /* ---------- Buffering progress (the stream downloads fully before playback) ---------- */
+        /* ---------- Buffering progress (before playback starts, and while playback waits for the download) ---------- */
         function drawBuffering(cv, cx, cy) {
             const b = player.buffering;
             if (!b) return;
@@ -691,8 +739,8 @@ mgu.run({
             if (motionLocked) {
                 cv.roundRect(x + 40, y + 40, w - 80, h - 80, 12, '#0c121c');
                 cv.strokeRoundRect(x + 40, y + 40, w - 80, h - 80, 12, 1.5, '#e1001a');
-                cv.text('[!] VIDEO LOCKED WHILE IN MOTION', x + w / 2, y + h / 2 - 16, 22, '#e1001a', { align: 'center', font: 'bold' });
-                cv.text('Audio continues through car speakers. Park vehicle to resume (' + vehicleSpeed + ' km/h).', x + w / 2, y + h / 2 + 18, 15, '#cbd5e1', { align: 'center' });
+                cv.text('[!] VIDEO PAUSED: CAR NOT PARKED', x + w / 2, y + h / 2 - 16, 22, '#e1001a', { align: 'center', font: 'bold' });
+                cv.text('Stop and select P to watch (' + (motionReason || 'not parked') + ', ' + vehicleSpeed + ' km/h).', x + w / 2, y + h / 2 + 18, 15, '#cbd5e1', { align: 'center' });
                 return;
             }
 
@@ -970,7 +1018,7 @@ mgu.run({
             cv.text('2. Tap Settings (gear icon) > Watch on TV', lx + 24, ly + 210, 15, '#cbd5e1');
             cv.text('3. Tap "Link with TV code" and type the 12-digit code above', lx + 24, ly + 240, 15, '#00a3e0', { font: 'bold' });
             cv.text('4. Tap Cast icon in YouTube app — vehicle appears as "BMW iDrive 7"!', lx + 24, ly + 270, 15, '#cbd5e1');
-            cv.text('5. Connect smartphone to car Bluetooth / CarPlay for stereo audio.', lx + 24, ly + 300, 15, '#2af575', { font: 'bold' });
+            cv.text('5. Sound is not supported yet: M-Cinema shows the picture only.', lx + 24, ly + 300, 15, '#ffb703', { font: 'bold' });
             cv.text('6. Any video you tap on phone streams directly to your cockpit screen.', lx + 24, ly + 330, 14, '#94a3b8');
 
             // Official YouTube Link QR Code (youtube.com/pair)
@@ -1009,9 +1057,9 @@ mgu.run({
             // Stereo Audio Routing Notice
             cv.roundRect(rx, 230, 480, 110, 8, '#090e15');
             cv.strokeRoundRect(rx, 230, 480, 110, 8, 1, '#1e2d42');
-            cv.text('STEREO AUDIO: BLUETOOTH / CARPLAY', rx + 20, 262, 15, '#2af575', { font: 'bold' });
-            cv.text('Phone streams audio via BMW RAM stereo DSP.', rx + 20, 290, 13, '#94a3b8');
-            cv.text('Select Bluetooth or CarPlay source in iDrive Media.', rx + 20, 314, 13, '#cbd5e1');
+            cv.text('SOUND: NOT SUPPORTED YET', rx + 20, 262, 15, '#ffb703', { font: 'bold' });
+            cv.text('Video plays without sound for now.', rx + 20, 290, 13, '#94a3b8');
+            cv.text('Car audio output is being worked on.', rx + 20, 314, 13, '#cbd5e1');
         }
 
         /* ---------- Main Application Render Pipeline ---------- */

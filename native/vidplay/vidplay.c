@@ -10,6 +10,14 @@
  *   - Real-time PTS audio/video synchronization pacing.
  *   - IPC Control FIFO: pause, resume, seek, stop.
  *   - IPC Status FIFO: live timecode / duration / state JSON stream for iDrive UI.
+ *   - Growing-file input (--grow <done-marker>): plays a local file while it is still being
+ *     downloaded. Reads that reach the end of the written data wait (and report "buffering")
+ *     until more data arrives or the done marker appears; --size tells the demuxer the final size.
+ *   - Range input (--sock <unix socket> --size <bytes>): bytes come from the app over a Unix
+ *     socket, one request at a time ("R <offset> <len>\n" -> 4-byte little-endian length + data;
+ *     length 0 = end of file, 0xFFFFFFFF = error). The app fetches and caches the ranges, so the
+ *     engine needs no network and no file, and seeking jumps straight to the needed bytes.
+ *   - --nice <n>: lower CPU priority, so the HMI always comes first.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,6 +33,9 @@
 #include <signal.h>
 #include <errno.h>
 #include <poll.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/resource.h>
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -50,6 +61,17 @@ struct mgu_video_head {
 static volatile sig_atomic_t g_running = 1;
 static volatile sig_atomic_t g_paused = 0;
 static volatile int64_t g_seek_target_sec = -1;
+static volatile sig_atomic_t g_resync = 0;   /* re-anchor the pacing clock (after a stall) */
+
+static int g_ctrl_fd = -1;
+static int g_status_fd = -1;
+static double g_last_pts_sec = 0;
+static double g_total_sec = 0;
+
+#define GROW_POLL_US      40000      /* wait between checks for new data */
+#define GROW_STATUS_US    500000     /* buffering status interval while stalled */
+#define GROW_TIMEOUT_US   120000000  /* no new data for this long = give up */
+#define SOCK_STALL_US     300000     /* a range answer slower than this counts as buffering */
 
 static void sig_handler(int sig) {
     (void)sig;
@@ -94,16 +116,197 @@ static void process_ctrl_fifo(int ctrl_fd, AVFormatContext *fmt_ctx, int video_i
 }
 
 /* Send JSON status update to status FIFO (non-blocking) */
-static void send_status(int status_fd, double current_sec, double total_sec, bool playing) {
+static void send_status(int status_fd, double current_sec, double total_sec, bool playing, bool buffering) {
     if (status_fd < 0) return;
-    char line[128];
+    char line[160];
     int len = snprintf(line, sizeof(line),
-                      "{\"pts\":%.2f,\"dur\":%.2f,\"playing\":%s}\n",
-                      current_sec, total_sec, playing ? "true" : "false");
+                      "{\"pts\":%.2f,\"dur\":%.2f,\"playing\":%s%s}\n",
+                      current_sec, total_sec, playing ? "true" : "false",
+                      buffering ? ",\"buffering\":true" : "");
     if (len > 0) {
         ssize_t ret = write(status_fd, line, len);
         (void)ret;
     }
+}
+
+/* ---------- Growing-file input ---------- */
+struct grow_src {
+    int fd;
+    int64_t pos;
+    int64_t size_hint;      /* final size if known (--size), else 0 */
+    const char *done_path;  /* exists once the writer has finished */
+    int64_t last_len;
+    int64_t last_growth_us;
+    int stalled;
+};
+
+static int grow_is_done(struct grow_src *g) {
+    return g->done_path && access(g->done_path, F_OK) == 0;
+}
+
+static int64_t grow_len(struct grow_src *g) {
+    struct stat st;
+    return fstat(g->fd, &st) == 0 ? (int64_t)st.st_size : -1;
+}
+
+static int grow_read(void *opaque, uint8_t *buf, int buf_size) {
+    struct grow_src *g = (struct grow_src *)opaque;
+    int64_t last_status_us = 0;
+    for (;;) {
+        ssize_t n = pread(g->fd, buf, (size_t)buf_size, (off_t)g->pos);
+        if (n > 0) {
+            g->pos += n;
+            if (g->stalled) {
+                g->stalled = 0;
+                g_resync = 1;
+                fprintf(stderr, "[vidplay] Buffer refilled, resuming\n");
+            }
+            return (int)n;
+        }
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return AVERROR(errno);
+        }
+        /* n == 0: at the end of the written data */
+        if (g->size_hint > 0 && g->pos >= g->size_hint) return AVERROR_EOF;
+        if (grow_is_done(g)) {
+            n = pread(g->fd, buf, (size_t)buf_size, (off_t)g->pos);   /* data written just before the marker */
+            if (n > 0) { g->pos += n; return (int)n; }
+            return AVERROR_EOF;
+        }
+        if (!g_running) return AVERROR_EXIT;
+
+        int64_t now = get_time_us();
+        int64_t len = grow_len(g);
+        if (len != g->last_len) { g->last_len = len; g->last_growth_us = now; }
+        if (now - g->last_growth_us > GROW_TIMEOUT_US) {
+            fprintf(stderr, "[vidplay] No new data for %d s, giving up\n", GROW_TIMEOUT_US / 1000000);
+            return AVERROR(ETIMEDOUT);
+        }
+        if (!g->stalled) {
+            g->stalled = 1;
+            fprintf(stderr, "[vidplay] Waiting for data at %lld bytes\n", (long long)g->pos);
+        }
+        if (now - last_status_us >= GROW_STATUS_US) {
+            send_status(g_status_fd, g_last_pts_sec, g_total_sec, false, true);
+            last_status_us = now;
+        }
+        process_ctrl_fifo(g_ctrl_fd, NULL, -1);   /* quit / pause / seek while waiting */
+        usleep(GROW_POLL_US);
+    }
+}
+
+static int64_t grow_seek(void *opaque, int64_t offset, int whence) {
+    struct grow_src *g = (struct grow_src *)opaque;
+    int64_t size = g->size_hint > 0 ? g->size_hint : (grow_is_done(g) ? grow_len(g) : -1);
+    if (whence & AVSEEK_SIZE) return size;
+    whence &= ~AVSEEK_FORCE;
+    int64_t np;
+    switch (whence) {
+        case SEEK_SET: np = offset; break;
+        case SEEK_CUR: np = g->pos + offset; break;
+        case SEEK_END: if (size < 0) return AVERROR(ENOSYS); np = size + offset; break;
+        default: return AVERROR(EINVAL);
+    }
+    if (np < 0) return AVERROR(EINVAL);
+    g->pos = np;   /* past the written data is fine: the next read waits for it */
+    return np;
+}
+
+/* ---------- Range input over a Unix socket ---------- */
+struct sock_src {
+    int fd;
+    int64_t pos;
+    int64_t size;
+    int stalled;
+};
+
+static int write_all(int fd, const char *b, size_t n) {
+    while (n > 0) {
+        ssize_t k = send(fd, b, n, MSG_NOSIGNAL);
+        if (k < 0) { if (errno == EINTR) continue; return -1; }
+        b += k; n -= (size_t)k;
+    }
+    return 0;
+}
+
+/* Receive exactly n bytes; while waiting, report buffering and keep reading the control FIFO. */
+static int sock_recv(struct sock_src *s, uint8_t *dst, size_t n) {
+    size_t got = 0;
+    int64_t start = get_time_us(), last_status = 0;
+    while (got < n) {
+        struct pollfd p = { .fd = s->fd, .events = POLLIN };
+        int pr = poll(&p, 1, 40);
+        if (pr > 0) {
+            ssize_t k = recv(s->fd, dst + got, n - got, 0);
+            if (k == 0) return AVERROR(EIO);                 /* the app closed the socket */
+            if (k < 0) {
+                if (errno == EINTR || errno == EAGAIN) continue;
+                return AVERROR(EIO);
+            }
+            got += (size_t)k;
+            continue;
+        }
+        if (pr < 0 && errno != EINTR) return AVERROR(EIO);
+        int64_t now = get_time_us();
+        if (!s->stalled && now - start > SOCK_STALL_US) {
+            s->stalled = 1;
+            fprintf(stderr, "[vidplay] Waiting for data at %lld bytes\n", (long long)s->pos);
+        }
+        if (s->stalled && now - last_status >= GROW_STATUS_US) {
+            send_status(g_status_fd, g_last_pts_sec, g_total_sec, false, true);
+            last_status = now;
+        }
+        process_ctrl_fifo(g_ctrl_fd, NULL, -1);
+        if (!g_running) return AVERROR_EXIT;
+        if (now - start > GROW_TIMEOUT_US) {
+            fprintf(stderr, "[vidplay] No data for %d s, giving up\n", GROW_TIMEOUT_US / 1000000);
+            return AVERROR(ETIMEDOUT);
+        }
+    }
+    return 0;
+}
+
+static int sock_read(void *opaque, uint8_t *buf, int buf_size) {
+    struct sock_src *s = (struct sock_src *)opaque;
+    if (s->size > 0 && s->pos >= s->size) return AVERROR_EOF;
+    char req[64];
+    int rl = snprintf(req, sizeof(req), "R %lld %d\n", (long long)s->pos, buf_size);
+    if (write_all(s->fd, req, (size_t)rl) < 0) return AVERROR(EIO);
+    uint8_t hdr[4];
+    int r = sock_recv(s, hdr, 4);
+    if (r) return r;
+    uint32_t len = (uint32_t)hdr[0] | ((uint32_t)hdr[1] << 8) | ((uint32_t)hdr[2] << 16) | ((uint32_t)hdr[3] << 24);
+    if (len == 0) return AVERROR_EOF;
+    if (len == 0xFFFFFFFFu || len > (uint32_t)buf_size) {
+        fprintf(stderr, "[vidplay] Error: range source failed at %lld bytes\n", (long long)s->pos);
+        return AVERROR(EIO);
+    }
+    r = sock_recv(s, buf, len);
+    if (r) return r;
+    s->pos += len;
+    if (s->stalled) {
+        s->stalled = 0;
+        g_resync = 1;
+        fprintf(stderr, "[vidplay] Buffer refilled, resuming\n");
+    }
+    return (int)len;
+}
+
+static int64_t sock_seek(void *opaque, int64_t offset, int whence) {
+    struct sock_src *s = (struct sock_src *)opaque;
+    if (whence & AVSEEK_SIZE) return s->size > 0 ? s->size : -1;
+    whence &= ~AVSEEK_FORCE;
+    int64_t np;
+    switch (whence) {
+        case SEEK_SET: np = offset; break;
+        case SEEK_CUR: np = s->pos + offset; break;
+        case SEEK_END: if (s->size <= 0) return AVERROR(ENOSYS); np = s->size + offset; break;
+        default: return AVERROR(EINVAL);
+    }
+    if (np < 0) return AVERROR(EINVAL);
+    s->pos = np;     /* no I/O: the next read asks the app for these bytes */
+    return np;
 }
 
 int main(int argc, char *argv[]) {
@@ -115,6 +318,10 @@ int main(int argc, char *argv[]) {
     int target_h = 720;
     int target_fps = 30;
     int loop_playback = 0;
+    const char *grow_done = NULL;
+    const char *sock_path = NULL;
+    int64_t grow_size = 0;
+    int nice_level = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--shm") == 0 && i + 1 < argc) {
@@ -131,11 +338,23 @@ int main(int argc, char *argv[]) {
             status_path = argv[++i];
         } else if (strcmp(argv[i], "--loop") == 0) {
             loop_playback = 1;
+        } else if (strcmp(argv[i], "--grow") == 0 && i + 1 < argc) {
+            grow_done = argv[++i];
+        } else if (strcmp(argv[i], "--sock") == 0 && i + 1 < argc) {
+            sock_path = argv[++i];
+        } else if (strcmp(argv[i], "--nice") == 0 && i + 1 < argc) {
+            nice_level = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--size") == 0 && i + 1 < argc) {
+            grow_size = strtoll(argv[++i], NULL, 10);
+        } else if (strcmp(argv[i], "--caps") == 0) {
+            printf("grow\nsock\nnice\n");   /* features the player checks before using them */
+            return 0;
         } else if (argv[i][0] != '-') {
             input_url = argv[i];
         }
     }
 
+    if (!input_url && sock_path) input_url = "stream.mp4";
     if (!input_url) {
         fprintf(stderr, "Usage: %s [OPTIONS] <input_url_or_file>\n", argv[0]);
         fprintf(stderr, "Options:\n");
@@ -146,6 +365,11 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "  --ctrl <fifo>      Path to control FIFO\n");
         fprintf(stderr, "  --status <fifo>    Path to status FIFO\n");
         fprintf(stderr, "  --loop             Loop local playback\n");
+        fprintf(stderr, "  --grow <marker>    Input file is still being written; EOF once <marker> exists\n");
+        fprintf(stderr, "  --sock <path>      Read the input as byte ranges from the app over a Unix socket\n");
+        fprintf(stderr, "  --size <bytes>     Final size of a --grow / --sock input, if known\n");
+        fprintf(stderr, "  --nice <n>         Lower CPU priority (0..19)\n");
+        fprintf(stderr, "  --caps             Print supported features and exit\n");
         return 1;
     }
 
@@ -163,6 +387,26 @@ int main(int argc, char *argv[]) {
     signal(SIGTERM, sig_handler);
     signal(SIGPIPE, SIG_IGN);
 
+    // Lower priority before any decoder thread exists (Linux nice is per thread, inherited)
+    if (nice_level > 0) {
+        if (nice_level > 19) nice_level = 19;
+        if (setpriority(PRIO_PROCESS, 0, nice_level) != 0) perror("[vidplay] setpriority");
+    }
+
+    // Setup FIFOs first: opening a --grow input can wait for data and must still see 'quit'
+    int ctrl_fd = -1;
+    if (ctrl_path) {
+        mkfifo(ctrl_path, 0666);
+        ctrl_fd = open(ctrl_path, O_RDONLY | O_NONBLOCK);
+    }
+    int status_fd = -1;
+    if (status_path) {
+        mkfifo(status_path, 0666);
+        status_fd = open(status_path, O_WRONLY | O_NONBLOCK);
+    }
+    g_ctrl_fd = ctrl_fd;
+    g_status_fd = status_fd;
+
     // Initialize Network & FFmpeg
     avformat_network_init();
 
@@ -175,7 +419,55 @@ int main(int argc, char *argv[]) {
     av_dict_set(&opts, "timeout", "8000000", 0); // 8s socket timeout
 
     AVFormatContext *fmt_ctx = NULL;
-    fprintf(stderr, "[vidplay] Opening stream: %s\n", input_url);
+    AVIOContext *grow_io = NULL;
+    struct grow_src grow = { .fd = -1 };
+    struct sock_src ssrc = { .fd = -1 };
+    fprintf(stderr, "[vidplay] Opening stream: %s%s\n", sock_path ? sock_path : input_url,
+            sock_path ? " (range socket)" : grow_done ? " (growing file)" : "");
+    if (sock_path) {
+        struct sockaddr_un sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sun_family = AF_UNIX;
+        if (strlen(sock_path) >= sizeof(sa.sun_path)) { fprintf(stderr, "[vidplay] Error: socket path too long\n"); return 1; }
+        strcpy(sa.sun_path, sock_path);
+        ssrc.fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (ssrc.fd < 0 || connect(ssrc.fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+            fprintf(stderr, "[vidplay] Error: Cannot connect to '%s': %s\n", sock_path, strerror(errno));
+            av_dict_free(&opts);
+            return 1;
+        }
+        ssrc.size = grow_size;
+        unsigned char *iobuf = av_malloc(131072);
+        grow_io = iobuf ? avio_alloc_context(iobuf, 131072, 0, &ssrc, sock_read, NULL, sock_seek) : NULL;
+        fmt_ctx = avformat_alloc_context();
+        if (!grow_io || !fmt_ctx) {
+            fprintf(stderr, "[vidplay] Error: out of memory\n");
+            return 1;
+        }
+        fmt_ctx->pb = grow_io;
+        fmt_ctx->flags |= AVFMT_FLAG_CUSTOM_IO;
+        fmt_ctx->probesize = 1 << 20;            /* start after ~1 MB, not the 5 MB default */
+    } else if (grow_done) {
+        grow.fd = open(input_url, O_RDONLY);
+        if (grow.fd < 0) {
+            fprintf(stderr, "[vidplay] Error: Cannot open input '%s': %s\n", input_url, strerror(errno));
+            av_dict_free(&opts);
+            return 1;
+        }
+        grow.size_hint = grow_size;
+        grow.done_path = grow_done;
+        grow.last_len = grow_len(&grow);
+        grow.last_growth_us = get_time_us();
+        unsigned char *iobuf = av_malloc(65536);
+        grow_io = iobuf ? avio_alloc_context(iobuf, 65536, 0, &grow, grow_read, NULL, grow_seek) : NULL;
+        fmt_ctx = avformat_alloc_context();
+        if (!grow_io || !fmt_ctx) {
+            fprintf(stderr, "[vidplay] Error: out of memory\n");
+            return 1;
+        }
+        fmt_ctx->pb = grow_io;
+        fmt_ctx->flags |= AVFMT_FLAG_CUSTOM_IO;
+    }
     if (avformat_open_input(&fmt_ctx, input_url, NULL, &opts) < 0) {
         fprintf(stderr, "[vidplay] Error: Cannot open input '%s'\n", input_url);
         av_dict_free(&opts);
@@ -232,6 +524,7 @@ int main(int argc, char *argv[]) {
     }
 
     double total_duration_sec = (fmt_ctx->duration > 0) ? ((double)fmt_ctx->duration / AV_TIME_BASE) : 0;
+    g_total_sec = total_duration_sec;
     fprintf(stderr, "[vidplay] Stream detected: %dx%d @ %.1f fps (Duration: %.1f sec)\n",
             codecpar->width, codecpar->height, av_q2d(video_stream->r_frame_rate), total_duration_sec);
 
@@ -297,18 +590,6 @@ int main(int argc, char *argv[]) {
     av_image_fill_arrays(i420_frame->data, i420_frame->linesize, i420_buf,
                          AV_PIX_FMT_YUV420P, target_w, target_h, 1);
 
-    // Setup FIFOs if specified
-    int ctrl_fd = -1;
-    if (ctrl_path) {
-        mkfifo(ctrl_path, 0666);
-        ctrl_fd = open(ctrl_path, O_RDONLY | O_NONBLOCK);
-    }
-    int status_fd = -1;
-    if (status_path) {
-        mkfifo(status_path, 0666);
-        status_fd = open(status_path, O_WRONLY | O_NONBLOCK);
-    }
-
     fprintf(stderr, "[vidplay] Video Engine Ready: %dx%d into %s\n", target_w, target_h, shm_path);
 
     uint32_t written_seq = 0;
@@ -337,7 +618,16 @@ int main(int argc, char *argv[]) {
         }
 
         int ret = av_read_frame(fmt_ctx, packet);
+        if (g_resync) {               // waited for data: restart the clock at the next frame
+            g_resync = 0;
+            stream_start_pts = AV_NOPTS_VALUE;
+        }
         if (ret < 0) {
+            if (ret == AVERROR_EXIT || !g_running) break;
+            if (ret == AVERROR(ETIMEDOUT)) {
+                fprintf(stderr, "[vidplay] Error: input stalled\n");
+                break;
+            }
             if (ret == AVERROR_EOF) {
                 if (loop_playback) {
                     fprintf(stderr, "[vidplay] EOF reached, looping...\n");
@@ -418,7 +708,8 @@ int main(int argc, char *argv[]) {
                         if (frame->pts != AV_NOPTS_VALUE) {
                             cur_sec = (double)frame->pts * av_q2d(video_stream->time_base);
                         }
-                        send_status(status_fd, cur_sec, total_duration_sec, true);
+                        g_last_pts_sec = cur_sec;
+                        send_status(status_fd, cur_sec, total_duration_sec, true, false);
                         last_status_us = now_us;
                     }
                 }
@@ -428,7 +719,7 @@ int main(int argc, char *argv[]) {
     }
 
     fprintf(stderr, "[vidplay] Shutting down, total frames rendered: %u\n", written_seq);
-    send_status(status_fd, total_duration_sec, total_duration_sec, false);
+    send_status(status_fd, total_duration_sec, total_duration_sec, false, false);
 
     if (ctrl_fd >= 0) close(ctrl_fd);
     if (status_fd >= 0) close(status_fd);
@@ -440,6 +731,12 @@ int main(int argc, char *argv[]) {
     sws_freeContext(sws_ctx);
     avcodec_free_context(&codec_ctx);
     avformat_close_input(&fmt_ctx);
+    if (grow_io) {
+        av_freep(&grow_io->buffer);
+        avio_context_free(&grow_io);
+    }
+    if (grow.fd >= 0) close(grow.fd);
+    if (ssrc.fd >= 0) close(ssrc.fd);
     avformat_network_deinit();
 
     munmap(shm_map, total_shm_size);

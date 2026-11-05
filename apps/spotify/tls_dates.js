@@ -15,6 +15,9 @@
  *       'timeout' events; options.timeout covers the handshake as well
  *   get(options, onResponse) -> req       like https.get
  *   connect(options, cb)                  cb(err, verifiedTlsSocket)
+ *   agent(opts) -> https.Agent            keep-alive agent: each new connection goes through
+ *       connect() (the same check, before the request is written); idle connections are reused,
+ *       so a request skips the TCP + TLS handshake. request(Object.assign(o, { agent })) uses it.
  */
 const EventEmitter = require('events');
 const crypto = require('crypto');
@@ -102,7 +105,34 @@ function connect(options, cb) {
     return sock;
 }
 
+const IDLE_MS = 20000;   // an idle kept-alive connection is closed after this
+
+class VerifiedAgent extends https.Agent {
+    // async: the agent waits for cb, so nothing is written before the certificate is checked
+    createConnection(options, cb) {
+        connect(options, (err, sock) => {
+            if (err) return cb(err);
+            sock.setKeepAlive(true, 10000);
+            cb(null, sock);
+        });
+    }
+}
+
+function agent(opts) {
+    const a = new VerifiedAgent(Object.assign({ keepAlive: true, keepAliveMsecs: 10000, maxSockets: 4, maxFreeSockets: 2 }, opts));
+    // close connections that stay idle, rather than finding them dead at the next request
+    a.on('free', (sock) => {
+        sock.setTimeout(IDLE_MS);
+        if (!sock._idleWatch) {
+            sock._idleWatch = true;
+            sock.on('timeout', () => { if (!sock._httpMessage) sock.destroy(); });
+        }
+    });
+    return a;
+}
+
 function request(options, onResponse) {
+    if (options.agent instanceof VerifiedAgent) return https.request(options, onResponse);
     const req = new EventEmitter();
     const pending = [];
     let ended = false;
@@ -176,4 +206,4 @@ function get(options, onResponse) {
     return req;
 }
 
-module.exports = { request, get, connect, refusal, DATE_ERRORS };
+module.exports = { request, get, connect, agent, refusal, DATE_ERRORS };

@@ -19,6 +19,7 @@ const tlsDates = require('./tls_dates');
 // polling the channel: quickly while waiting to be paired, slowly once paired (for the phone's unpair)
 const PAIRING_POLL_MS = 2500;
 const PAIRED_POLL_MS = 60000;
+const BACKGROUND_POLL_MS = 30000;   // not paired, app not on screen
 
 let crypto;
 try { crypto = require('crypto'); } catch (e) {}
@@ -176,6 +177,7 @@ class CloudPairManager {
             // Once paired, keep polling slowly so a phone-side (authenticated) unpair still arrives
             const paired = this.isPaired();
             if (paired && Date.now() - this.lastPollAt < PAIRED_POLL_MS) return;
+            if (!paired && this.isOnScreen && !this.isOnScreen() && Date.now() - this.lastPollAt < BACKGROUND_POLL_MS) return;
             this.lastPollAt = Date.now();
             // The first poll of a channel we are already paired on returns the cached history,
             // the original pairing message included: that is not acted on again.

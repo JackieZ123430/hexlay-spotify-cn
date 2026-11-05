@@ -165,7 +165,8 @@ class SpotifyClient {
         // Playback state
         this.isPlaying = false;
         this.currentPlaylist = this.playlists[0] || null;
-        this.currentTrack = this.currentPlaylist && this.currentPlaylist.tracks ? this.currentPlaylist.tracks[0] : null;
+        // online, "now playing" only ever comes from Spotify's player; the demo shows its first track
+        this.currentTrack = this.isDemoMode && this.currentPlaylist && this.currentPlaylist.tracks ? this.currentPlaylist.tracks[0] : null;
         this.trackIndex = 0;
         this.progressMs = 0;
         this.lastTickTime = Date.now();
@@ -183,6 +184,13 @@ class SpotifyClient {
         this._refreshPromise = null;
         this._refreshFailedAt = 0;
 
+        // one kept-alive, certificate-checked connection to api.spotify.com: no handshake per call
+        this.agent = tlsDates.agent();
+        this.lastDeviceSync = 0;
+        this.syncingDevices = false;
+        this._lastCmdAt = 0;          // polls that started before the last command are not applied
+        this._noSession = 0;          // consecutive polls without an active device
+
         this._loadAuth();
         if (this.token || this.refreshToken) {
             this.initialFetch();
@@ -190,8 +198,10 @@ class SpotifyClient {
 
         // Run initial internet check and schedule periodic check
         this.checkInternetConnection().catch(() => {});
+        // re-checked only while the app is on screen (main.js sets isOnScreen)
+        if (!this.isOnScreen) this.isOnScreen = () => true;
         setInterval(() => {
-            this.checkInternetConnection().catch(() => {});
+            if (this.isOnScreen()) this.checkInternetConnection().catch(() => {});
         }, 12000);
     }
 
@@ -335,14 +345,55 @@ class SpotifyClient {
     logout() {
         this.token = null;
         this.refreshToken = null;
+        this.expiresAt = 0;
         this.isOnline = false;
-        this.playlists = DEMO_PLAYLISTS;
-        this.currentPlaylist = this.playlists[0];
-        this.currentTrack = this.currentPlaylist.tracks[0];
+        this.clearPlayback('logged out');
+        // nothing of the account stays on screen (the demo keeps its own data)
+        this.playlists = this.isDemoMode ? DEMO_PLAYLISTS : [];
+        this.likedSongs = [];
+        this.likedTotal = 0;
+        this.devices = this.isDemoMode ? DEMO_DEVICES : [];
+        this.currentPlaylist = this.playlists[0] || null;
+        this.currentTrack = this.isDemoMode && this.currentPlaylist ? this.currentPlaylist.tracks[0] : null;
+        this.trackIndex = 0;
+        this.shuffle = false;
+        this.repeat = 'off';
+        this.lastPlaylistsFetch = 0;
+        this.lastLikedFetch = 0;
+        try { this.agent.destroy(); } catch (e) {}
+        this.agent = tlsDates.agent();
 
         this._forgetAuthFiles();
 
         this.log.info('Logged out from Spotify');
+    }
+
+    /** Nothing is playing any more (no active device, or logged out): clear "now playing". */
+    clearPlayback(reason) {
+        const had = !!(this.currentTrack || this.isPlaying || this.activeDevice);
+        this.isPlaying = false;
+        this.currentTrack = null;
+        this.progressMs = 0;
+        this.activeDevice = null;
+        this.remoteQueue = [];
+        this.isCurrentLiked = false;
+        this._lastCheckedTrackId = null;
+        this.devices = (this.devices || []).map((d) => Object.assign({}, d, { isActive: false }));
+        if (had) this.log.info('Spotify: now playing cleared (' + reason + ')');
+    }
+
+    /**
+     * A command was sent: polls already on the way would show the old state, and Spotify itself
+     * may answer with the old state for a moment. expect: { playing } or { notTrackId } to hold
+     * for HOLD_MS unless Spotify confirms it sooner.
+     */
+    _cmd(expect) {
+        this._lastCmdAt = Date.now();
+        this._expect = expect ? Object.assign({ until: Date.now() + 1500 }, expect) : null;
+    }
+
+    _pollSoon(ms) {
+        setTimeout(() => this.pollPlayer(), ms || 250);
     }
 
     _forgetAuthFiles() {
@@ -473,7 +524,7 @@ class SpotifyClient {
     }
 
     // Call Spotify Web API with Bearer token
-    async _request(method, endpoint, body, isRetry) {
+    async _request(method, endpoint, body, isRetry, netRetried) {
         if (!this.token) throw new Error('Not authenticated');
         const usedToken = this.token;
         return new Promise((resolve, reject) => {
@@ -482,6 +533,7 @@ class SpotifyClient {
                 port: 443,
                 path: endpoint,
                 method: method,
+                agent: this.agent,
                 headers: {
                     'Authorization': 'Bearer ' + usedToken,
                     'Content-Type': 'application/json',
@@ -522,7 +574,16 @@ class SpotifyClient {
                     }
                 });
             });
-            req.on('error', reject);
+            // a kept-alive connection the server closed meanwhile: try once more on a fresh one
+            // (not for POST: next / previous must not run twice)
+            req.on('error', (err) => {
+                const stale = /ECONNRESET|EPIPE|ECONNABORTED|socket hang up/i.test(String((err && (err.code || err.message)) || ''));
+                if (stale && !netRetried && method !== 'POST') {
+                    this._request(method, endpoint, body, isRetry, true).then(resolve, reject);
+                } else {
+                    reject(err);
+                }
+            });
             req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
             if (body) req.write(JSON.stringify(body));
             req.end();
@@ -531,37 +592,53 @@ class SpotifyClient {
 
     async pollPlayer() {
         if (!this.token) return;
+        const startedAt = Date.now();
+        let data;
         try {
-            const data = await this._request('GET', '/v1/me/player');
-            if (data && data.item) {
-                this.isOnline = true;
-                this.isPlaying = data.is_playing;
-                this.progressMs = data.progress_ms;
-                this.lastTickTime = Date.now();
-                this.shuffle = data.shuffle_state;
-                this.repeat = data.repeat_state;
-                if (data.device) {
-                    this.activeDevice = data.device.name + ' (' + data.device.type + ')';
-                    this.volume = data.device.volume_percent;
-                }
-                const albumImages = (data.item.album && data.item.album.images) || [];
-                const bestArt = albumImages.find((img) => img.width >= 200 && img.width <= 400) || albumImages[0];
-                this.currentTrack = {
-                    id: data.item.id,
-                    title: decodeHtmlEntities(data.item.name),
-                    artist: decodeHtmlEntities((data.item.artists || []).map((a) => a.name).join(', ')),
-                    album: decodeHtmlEntities(data.item.album ? data.item.album.name : ''),
-                    albumArt: bestArt ? bestArt.url : '',
-                    durationMs: data.item.duration_ms,
-                    uri: data.item.uri,
-                };
-                if (data.item.id && data.item.id !== this._lastCheckedTrackId) {
-                    this._lastCheckedTrackId = data.item.id;
-                    this.checkTrackLiked(data.item.id);
-                }
-            }
+            data = await this._request('GET', '/v1/me/player?additional_types=episode');
         } catch (e) {
-            // Player might be idle/empty
+            return;              // network trouble says nothing about the phone: keep the state
+        }
+        // a command was sent while this poll was on the way: its answer shows the old state
+        if (startedAt < this._lastCmdAt) return;
+        this.isOnline = true;
+        // 204 (no body) or no active device: the phone left Spotify Connect / went offline.
+        // Two polls in a row, so a device switch doesn't blank the screen for a moment.
+        if (!data || !data.device || data.device.is_active === false) {
+            if (++this._noSession >= 2) this.clearPlayback('no active Spotify device');
+            return;
+        }
+        this._noSession = 0;
+        const ex = this._expect && Date.now() < this._expect.until ? this._expect : null;
+        const playing = !!data.is_playing;
+        const staleTrack = ex && ex.notTrackId && data.item && data.item.id === ex.notTrackId;
+        if (ex && ex.playing !== undefined && playing !== ex.playing) return;   // not applied yet
+        if (staleTrack) return;
+        this._expect = null;
+        this.isPlaying = playing;
+        this.progressMs = data.progress_ms || 0;
+        this.lastTickTime = Date.now();
+        this.shuffle = data.shuffle_state;
+        this.repeat = data.repeat_state;
+        this.activeDevice = decodeHtmlEntities(data.device.name) + ' (' + data.device.type + ')';
+        if (typeof data.device.volume_percent === 'number') this.volume = data.device.volume_percent;
+        const it = data.item;
+        if (!it) return;         // an ad or a private session: keep the last track shown
+        const images = (it.album && it.album.images) || it.images || (it.show && it.show.images) || [];
+        const bestArt = images.find((img) => img.width >= 200 && img.width <= 400) || images[0];
+        this.currentTrack = {
+            id: it.id,
+            title: decodeHtmlEntities(it.name),
+            artist: decodeHtmlEntities(it.artists ? it.artists.map((a) => a.name).join(', ') : (it.show ? it.show.name : '')),
+            album: decodeHtmlEntities(it.album ? it.album.name : (it.show ? it.show.name : '')),
+            albumArt: bestArt ? bestArt.url : '',
+            durationMs: it.duration_ms,
+            uri: it.uri,
+        };
+        if (it.id && it.id !== this._lastCheckedTrackId) {
+            this._lastCheckedTrackId = it.id;
+            if (it.type !== 'episode') this.checkTrackLiked(it.id); else this.isCurrentLiked = false;
+            this.fetchQueue().catch(() => {});        // the queue changes with the track
         }
     }
 
@@ -627,7 +704,7 @@ class SpotifyClient {
                 if ((!playlist.trackCount || playlist.trackCount === 0) && playlist.tracks.length > 0) {
                     playlist.trackCount = playlist.tracks.length;
                 }
-                if (!this.currentTrack && playlist.tracks[0]) {
+                if (this.isDemoMode && !this.currentTrack && playlist.tracks[0]) {
                     this.currentTrack = playlist.tracks[0];
                 }
             }
@@ -648,14 +725,8 @@ class SpotifyClient {
                     isActive: d.is_active,
                     volume: d.volume_percent
                 }));
-                const active = this.devices.find((d) => d.isActive);
-                if (active) {
-                    this.activeDevice = active.name + ' (' + active.type + ')';
-                } else if (this.devices.length > 0) {
-                    this.activeDevice = this.devices[0].name;
-                } else {
-                    this.activeDevice = 'No Active Target';
-                }
+                // the active device comes from the player poll; none active here = nothing playing
+                if (!this.devices.some((d) => d.isActive) && this._noSession > 0) this.activeDevice = null;
             }
         } catch (e) {
             //
@@ -731,9 +802,8 @@ class SpotifyClient {
             const targetDev = this.devices.find((d) => d.isActive) || this.devices[0];
             const deviceParam = (targetDev && targetDev.id) ? `?device_id=${targetDev.id}` : '';
             const uris = this.likedSongs.slice(index, index + 30).map((t) => t.uri);
-            this._request('PUT', `/v1/me/player/play${deviceParam}`, { uris }).then(() => {
-                setTimeout(() => this.pollPlayer(), 400);
-            }).catch(() => {});
+            this._cmd();
+            this._request('PUT', `/v1/me/player/play${deviceParam}`, { uris }).then(() => this._pollSoon(400), () => {});
         }
     }
 
@@ -754,18 +824,19 @@ class SpotifyClient {
             });
         }
 
-        // Poll state from Spotify cloud every 2.5 seconds
-        if (this.token && now - this.lastSync > 2500 && !this.syncing) {
+        // Player state every second, devices every 5 s. tick() runs from the render loop, which
+        // runs only while the Spotify screen is shown: nothing is polled in the background.
+        if (this.token && now - this.lastSync > 1000 && !this.syncing) {
             this.lastSync = now;
             this.syncing = true;
-            Promise.all([
-                this.pollPlayer(),
-                this.fetchDevices()
-            ]).then(() => {
-                this.syncing = false;
-            }).catch(() => {
-                this.syncing = false;
-            });
+            const done = () => { this.syncing = false; };
+            this.pollPlayer().then(done, done);
+        }
+        if (this.token && now - this.lastDeviceSync > 5000 && !this.syncingDevices) {
+            this.lastDeviceSync = now;
+            this.syncingDevices = true;
+            const done = () => { this.syncingDevices = false; };
+            this.fetchDevices().then(done, done);
         }
 
         // Retry playlists if online and authenticated, but none loaded yet
@@ -794,14 +865,16 @@ class SpotifyClient {
         this.isPlaying = true;
         this.lastTickTime = Date.now();
         if (this.isOnline) {
-            this._request('PUT', '/v1/me/player/play').catch(() => {});
+            this._cmd({ playing: true });
+            this._request('PUT', '/v1/me/player/play').then(() => this._pollSoon(), () => {});
         }
     }
 
     pause() {
         this.isPlaying = false;
         if (this.isOnline) {
-            this._request('PUT', '/v1/me/player/pause').catch(() => {});
+            this._cmd({ playing: false });
+            this._request('PUT', '/v1/me/player/pause').then(() => this._pollSoon(), () => {});
         }
     }
 
@@ -812,9 +885,14 @@ class SpotifyClient {
 
     nextTrack() {
         if (this.isOnline) {
-            this._request('POST', '/v1/me/player/next').then(() => {
-                setTimeout(() => this.pollPlayer(), 300);
-            }).catch(() => {});
+            this._cmd(this.currentTrack && this.currentTrack.id ? { notTrackId: this.currentTrack.id } : null);
+            // show the next queued track at once; the poll after the command confirms it
+            if (this.remoteQueue && this.remoteQueue.length) {
+                this.currentTrack = this.remoteQueue.shift();
+                this.progressMs = 0;
+                this.lastTickTime = Date.now();
+            }
+            this._request('POST', '/v1/me/player/next').then(() => this._pollSoon(), () => {});
             return;
         }
         const pl = this.currentPlaylist;
@@ -827,9 +905,10 @@ class SpotifyClient {
 
     prevTrack() {
         if (this.isOnline) {
-            this._request('POST', '/v1/me/player/previous').then(() => {
-                setTimeout(() => this.pollPlayer(), 300);
-            }).catch(() => {});
+            this._cmd();
+            this.progressMs = 0;
+            this.lastTickTime = Date.now();
+            this._request('POST', '/v1/me/player/previous').then(() => this._pollSoon(), () => {});
             return;
         }
         if (this.progressMs > 3000) {
@@ -850,13 +929,15 @@ class SpotifyClient {
         this.progressMs = pos;
         this.lastTickTime = Date.now();
         if (this.isOnline) {
-            this._request('PUT', '/v1/me/player/seek?position_ms=' + pos).catch(() => {});
+            this._cmd();
+            this._request('PUT', '/v1/me/player/seek?position_ms=' + pos).then(() => this._pollSoon(400), () => {});
         }
     }
 
     toggleShuffle() {
         this.shuffle = !this.shuffle;
         if (this.isOnline) {
+            this._cmd();
             this._request('PUT', '/v1/me/player/shuffle?state=' + this.shuffle).catch(() => {});
         }
     }
@@ -866,6 +947,7 @@ class SpotifyClient {
         const next = modes[(modes.indexOf(this.repeat) + 1) % modes.length];
         this.repeat = next;
         if (this.isOnline) {
+            this._cmd();
             this._request('PUT', '/v1/me/player/repeat?state=' + this.repeat).catch(() => {});
         }
     }
@@ -917,9 +999,8 @@ class SpotifyClient {
                     : { uris: [this.currentTrack.uri] };
                 const targetDev = this.devices.find((d) => d.isActive) || this.devices[0];
                 const deviceParam = (targetDev && targetDev.id) ? `?device_id=${targetDev.id}` : '';
-                this._request('PUT', `/v1/me/player/play${deviceParam}`, body).then(() => {
-                    setTimeout(() => this.pollPlayer(), 400);
-                }).catch(() => {});
+                this._cmd();
+                this._request('PUT', `/v1/me/player/play${deviceParam}`, body).then(() => this._pollSoon(400), () => {});
             }
         }
     }

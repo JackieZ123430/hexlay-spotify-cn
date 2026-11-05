@@ -203,11 +203,16 @@ mgu.run({
             cachedQrUrl = null;
             cloudPair.reset();
             cloudPair.startPolling();
+            artManager.load(null);
             page = 3;
             notify('Spotify Disconnected.');
             render().catch(() => {});
         };
         cloudPair.startPolling();
+        // background: no internet checks, slow pairing polls
+        const onScreen = () => !ui.isVisible || ui.isVisible('MAIN');
+        spotify.isOnScreen = onScreen;
+        cloudPair.isOnScreen = onScreen;
 
         // Default to Online mode (demo !== 'on')
         // If not authenticated, open directly on the Connect tab!
@@ -897,6 +902,8 @@ mgu.run({
 
             if (spotify.currentTrack && spotify.currentTrack.albumArt) {
                 artManager.load(spotify.currentTrack.albumArt);
+            } else if (artManager.hasArt) {
+                artManager.load(null);           // nothing playing: no leftover album art
             }
 
             const t = ctx.theme();
@@ -950,7 +957,8 @@ mgu.run({
         ctx.onTab((idx) => { page = idx; return render(); });
 
         // Start 60 fps render loop and render initial frame
-        ctx.loop('MAIN', 15, render);
+        // 30 fps while music plays (spectrum, progress), 10 fps otherwise; taps redraw at once
+        ctx.loop('MAIN', 15, render, { maxFps: () => (spotify.isPlaying ? 30 : 10) });
         await render();
         log.info('Spotify app ready');
     }

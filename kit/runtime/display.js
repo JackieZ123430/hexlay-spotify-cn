@@ -432,7 +432,9 @@ class Display {
                 else {
                     this.pressed = key; this.pressedT = Date.now(); this._repaint();
                     setTimeout(() => this._repaint(), 320);
-                    try { Promise.resolve(tgt.run()).catch((e) => this.log.error('target', e)); } catch (e) { this.log.error('target', e); }
+                    // where on it the finger lifted (a slider, a progress bar); the controller's press passes nothing
+                    const at = { x: x - tgt.x, y: y - tgt.y, w: tgt.w, h: tgt.h };
+                    try { Promise.resolve(tgt.run(at)).catch((e) => this.log.error('target', e)); } catch (e) { this.log.error('target', e); }
                 }
                 return;
             }

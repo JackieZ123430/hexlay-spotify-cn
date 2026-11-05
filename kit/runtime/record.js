@@ -110,6 +110,7 @@ class Recorder {
     words() { return this.u.subarray(0, this.n); }
     /**
      * Something on the page a tap (or the iDrive controller, turned onto it and pressed) runs: run().
+     * A tap passes run({ x, y, w, h }): where on the target it was (target px) and its size; the controller nothing.
      * key names it from frame to frame (the controller stays on it). Drawn by the caller; where the kit
      * runs the screen (display.js) it rings the one the controller is on.
      */

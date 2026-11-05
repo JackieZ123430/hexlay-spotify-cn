@@ -47,7 +47,13 @@ function decodeHtmlEntities(str) {
         .replace(/&#39;/g, "'")
         .replace(/&quot;/g, '"')
         .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>');
+        .replace(/&gt;/g, '>')
+        // typographic punctuation the car's fonts do not have (drawn as "?"): its ASCII look-alike
+        .replace(/[\u2018\u2019\u201A\u2032\u00B4]/g, "'")
+        .replace(/[\u201C\u201D\u201E\u2033]/g, '"')
+        .replace(/[\u2010-\u2015\u2212]/g, '-')
+        .replace(/\u2026/g, '...')
+        .replace(/[\u00A0\u2007\u202F]/g, ' ');
 }
 
 const DEMO_ART = 'https://i.scdn.co/image/ab67616d00001e02ba5db46f4b838ef6027e6f96';
@@ -120,6 +126,22 @@ const DEMO_DEVICES = [
     { id: 'dev_car', name: 'BMW M850i ConnectedDrive', type: 'Automobile', isActive: false, volume: 100 },
     { id: 'dev_mac', name: 'MacBook Pro', type: 'Computer', isActive: false, volume: 65 },
 ];
+
+/** A Spotify track object as the screen's track (null for a local file, an episode without id, a gap). */
+function mapTrack(t) {
+    if (!t || !t.id) return null;
+    const albumImages = (t.album && t.album.images) || [];
+    const bestArt = albumImages.find((img) => img.width >= 200 && img.width <= 400) || albumImages[0];
+    return {
+        id: t.id,
+        title: decodeHtmlEntities(t.name),
+        artist: decodeHtmlEntities((t.artists || []).map((a) => a.name).join(', ')),
+        album: decodeHtmlEntities(t.album ? t.album.name : ''),
+        albumArt: bestArt ? bestArt.url : '',
+        durationMs: t.duration_ms,
+        uri: t.uri
+    };
+}
 
 class SpotifyClient {
     isAuthenticated() {
@@ -352,6 +374,8 @@ class SpotifyClient {
         this.playlists = this.isDemoMode ? DEMO_PLAYLISTS : [];
         this.likedSongs = [];
         this.likedTotal = 0;
+        this._userId = null;
+        this.profile = null;
         this.devices = this.isDemoMode ? DEMO_DEVICES : [];
         this.currentPlaylist = this.playlists[0] || null;
         this.currentTrack = this.isDemoMode && this.currentPlaylist ? this.currentPlaylist.tracks[0] : null;
@@ -515,6 +539,7 @@ class SpotifyClient {
                 await this.refreshAccessToken();
             }
             await this.pollPlayer();
+            await this.fetchProfile();
             await this.fetchPlaylists();
             await this.fetchLikedSongs();
             await this.fetchDevices();
@@ -619,8 +644,13 @@ class SpotifyClient {
         this.isPlaying = playing;
         this.progressMs = data.progress_ms || 0;
         this.lastTickTime = Date.now();
-        this.shuffle = data.shuffle_state;
-        this.repeat = data.repeat_state;
+        // a shuffle / repeat just tapped holds until Spotify reports it (it lags a second or two)
+        const now = Date.now();
+        const hS = this._holdShuffle, hR = this._holdRepeat;
+        if (hS && now < hS.until && data.shuffle_state !== hS.v) { /* keep the tapped state */ }
+        else { this._holdShuffle = null; this.shuffle = data.shuffle_state; }
+        if (hR && now < hR.until && data.repeat_state !== hR.v) { /* keep the tapped state */ }
+        else { this._holdRepeat = null; this.repeat = data.repeat_state; }
         this.activeDevice = decodeHtmlEntities(data.device.name) + ' (' + data.device.type + ')';
         // what plays: the playlist / album / liked songs (its URI), for the "playing" marks
         this.contextUri = (data.context && data.context.uri) || null;
@@ -650,9 +680,19 @@ class SpotifyClient {
         this.isLoadingPlaylists = true;
         this.lastPlaylistsFetch = Date.now();
         try {
-            const res = await this._request('GET', '/v1/me/playlists?limit=25');
-            if (res && res.items) {
-                const list = res.items.map((pl, i) => {
+            // every page (50 a page, up to 300 playlists), not only the first 25
+            let items = [], offset = 0, total = 0, got = false;
+            do {
+                const res = await this._request('GET', '/v1/me/playlists?limit=50&offset=' + offset);
+                if (!res || !res.items) break;
+                got = true;
+                items = items.concat(res.items.filter(Boolean));
+                total = res.total || items.length;
+                offset += res.items.length;
+                if (!res.next || !res.items.length) break;
+            } while (offset < Math.min(total, 300));
+            if (got) {
+                const list = items.map((pl, i) => {
                     const count = pl.tracks ? (pl.tracks.total != null ? pl.tracks.total : 0) : (pl.items ? (pl.items.total != null ? pl.items.total : 0) : 0);
                     return {
                         id: pl.id,
@@ -664,10 +704,19 @@ class SpotifyClient {
                         tracks: []
                     };
                 });
+                // a refetch keeps the songs already loaded (the screen may show one of them)
+                const old = {};
+                (this.playlists || []).forEach((p) => { if (p && p.id) old[p.id] = p; });
+                list.forEach((p) => {
+                    const o = old[p.id];
+                    if (o && o.tracksLoaded) {
+                        p.tracks = o.tracks; p.tracksLoaded = true;
+                        p._offset = o._offset; p._total = o._total; p._itemsPath = o._itemsPath;
+                    }
+                });
                 this.playlists = list;
-                if (list[0] && (!this.currentPlaylist || !this.currentPlaylist.tracks)) {
-                    this.selectPlaylist(list[0]);
-                }
+                const cur = this.currentPlaylist && list.find((p) => p.id === this.currentPlaylist.id);
+                if (list.length) this.selectPlaylist(cur || list[0]);
             }
         } catch (e) {
             this.log.warn('Fetch playlists error: ' + e.message);
@@ -676,43 +725,87 @@ class SpotifyClient {
         }
     }
 
+    /**
+     * The songs of a playlist the screen shows: fetched when missing, once at a time, and again
+     * 5 s after a failure (at startup the first one can fail while the token is refreshed).
+     */
+    ensureTracks(playlist) {
+        if (!this.token || !playlist || !playlist.id) return;
+        // the built-in demo playlists come with their songs (the demo setting itself says nothing:
+        // logged in, the account's own playlists show with it on too)
+        if (playlist.uri && playlist.uri.startsWith('spotify:playlist:demo')) return;
+        if (playlist.tracksLoaded || playlist._loadingTracks) return;
+        if (playlist._tracksFailedAt && Date.now() - playlist._tracksFailedAt < 5000) return;
+        this.fetchTracksForPlaylist(playlist);
+    }
+
+    /** A page of a playlist's songs (/items, or /tracks where /items is not served). */
+    async _playlistPage(playlist, offset) {
+        const q = '?limit=50&offset=' + offset;
+        if (playlist._itemsPath) return this._request('GET', playlist._itemsPath + q);
+        try {
+            const res = await this._request('GET', `/v1/playlists/${playlist.id}/items` + q);
+            playlist._itemsPath = `/v1/playlists/${playlist.id}/items`;
+            return res;
+        } catch (err) {
+            const res = await this._request('GET', `/v1/playlists/${playlist.id}/tracks` + q);
+            playlist._itemsPath = `/v1/playlists/${playlist.id}/tracks`;
+            return res;
+        }
+    }
+
     async fetchTracksForPlaylist(playlist) {
         if (!this.token || !playlist || !playlist.id) return;
+        playlist._loadingTracks = true;
         try {
-            let res = null;
-            try {
-                res = await this._request('GET', `/v1/playlists/${playlist.id}/items?limit=50`);
-            } catch (err) {
-                res = await this._request('GET', `/v1/playlists/${playlist.id}/tracks?limit=50`);
-            }
+            const res = await this._playlistPage(playlist, 0);
             if (res && res.items) {
-                playlist.tracks = res.items
-                    .map((item) => {
-                        const t = item.item || item.track;
-                        if (!t || !t.id) return null;
-                        const albumImages = (t.album && t.album.images) || [];
-                        const bestArt = albumImages.find((img) => img.width >= 200 && img.width <= 400) || albumImages[0];
-                        return {
-                            id: t.id,
-                            title: decodeHtmlEntities(t.name),
-                            artist: decodeHtmlEntities((t.artists || []).map((a) => a.name).join(', ')),
-                            album: decodeHtmlEntities(t.album ? t.album.name : ''),
-                            albumArt: bestArt ? bestArt.url : '',
-                            durationMs: t.duration_ms,
-                            uri: t.uri
-                        };
-                    })
-                    .filter(Boolean);
-
+                playlist.tracks = res.items.map((item) => mapTrack(item.item || item.track)).filter(Boolean);
+                playlist._offset = res.items.length;
+                playlist._total = res.total != null ? res.total : res.items.length;
                 if ((!playlist.trackCount || playlist.trackCount === 0) && playlist.tracks.length > 0) {
-                    playlist.trackCount = playlist.tracks.length;
+                    playlist.trackCount = playlist._total || playlist.tracks.length;
                 }
                 if (this.isDemoMode && !this.currentTrack && playlist.tracks[0]) {
                     this.currentTrack = playlist.tracks[0];
                 }
+                playlist.tracksLoaded = true;
+                playlist._tracksFailedAt = 0;
+            } else {
+                playlist._tracksFailedAt = Date.now();
             }
         } catch (e) {
-            this.log.warn('Fetch tracks error: ' + e.message);
+            playlist._tracksFailedAt = Date.now();
+            this.log.warn('Fetch tracks error (' + playlist.name + '): ' + e.message);
+        } finally {
+            playlist._loadingTracks = false;
+        }
+    }
+
+    /** The playlist has more songs than loaded. */
+    hasMoreTracks(playlist) {
+        return !!(playlist && playlist.tracksLoaded && this.token && (playlist._offset || 0) < (playlist._total || 0));
+    }
+
+    /** The playlist's next page of songs (its list scrolled near the end): once at a time. */
+    async loadMoreTracks(playlist) {
+        if (!this.hasMoreTracks(playlist) || playlist._loadingMore) return;
+        if (playlist._moreFailedAt && Date.now() - playlist._moreFailedAt < 5000) return;
+        playlist._loadingMore = true;
+        const offset = playlist._offset;
+        try {
+            const res = await this._playlistPage(playlist, offset);
+            if (res && res.items && playlist._offset === offset) {
+                playlist.tracks = playlist.tracks.concat(res.items.map((item) => mapTrack(item.item || item.track)).filter(Boolean));
+                playlist._offset = offset + res.items.length;
+                if (res.total != null) playlist._total = res.total;
+                if (!res.items.length) playlist._offset = playlist._total;
+            }
+        } catch (e) {
+            playlist._moreFailedAt = Date.now();
+            this.log.warn('Fetch more tracks error (' + playlist.name + '): ' + e.message);
+        } finally {
+            playlist._loadingMore = false;
         }
     }
 
@@ -736,6 +829,7 @@ class SpotifyClient {
         }
     }
 
+    /** Liked Songs, the first page (a refetch, after a like, starts over). More come with loadMoreLiked(). */
     async fetchLikedSongs() {
         if (!this.token) return;
         this.isLoadingLiked = true;
@@ -744,27 +838,43 @@ class SpotifyClient {
             const res = await this._request('GET', '/v1/me/tracks?limit=50');
             if (res && res.items) {
                 this.likedTotal = res.total || res.items.length;
-                this.likedSongs = res.items
-                    .filter((item) => item.track && item.track.id)
-                    .map((item) => {
-                        const t = item.track;
-                        const albumImages = (t.album && t.album.images) || [];
-                        const bestArt = albumImages.find((img) => img.width >= 200 && img.width <= 400) || albumImages[0];
-                        return {
-                            id: t.id,
-                            title: decodeHtmlEntities(t.name),
-                            artist: decodeHtmlEntities((t.artists || []).map((a) => a.name).join(', ')),
-                            album: decodeHtmlEntities(t.album ? t.album.name : ''),
-                            albumArt: bestArt ? bestArt.url : '',
-                            durationMs: t.duration_ms,
-                            uri: t.uri
-                        };
-                    });
+                this.likedSongs = res.items.map((item) => mapTrack(item.track)).filter(Boolean);
+                this._likedOffset = res.items.length;
             }
         } catch (e) {
             this.log.warn('Fetch liked songs error: ' + e.message);
         } finally {
             this.isLoadingLiked = false;
+        }
+    }
+
+    /** More Liked Songs are there than loaded. */
+    hasMoreLiked() {
+        // a token means the account's own songs show (the demo setting on or not)
+        return !!this.token && (this._likedOffset || 0) < (this.likedTotal || 0);
+    }
+
+    /** The next page of Liked Songs (the list scrolled near its end): once at a time. */
+    async loadMoreLiked() {
+        if (!this.hasMoreLiked() || this.isLoadingMoreLiked || this.isLoadingLiked) return;
+        if (this._likedMoreFailedAt && Date.now() - this._likedMoreFailedAt < 5000) return;
+        this.isLoadingMoreLiked = true;
+        const offset = this._likedOffset;
+        try {
+            const res = await this._request('GET', '/v1/me/tracks?limit=50&offset=' + offset);
+            // a refetch started over meanwhile: this page belongs to the old list
+            if (res && res.items && this._likedOffset === offset) {
+                const have = new Set(this.likedSongs.map((t) => t.id));
+                this.likedSongs = this.likedSongs.concat(res.items.map((item) => mapTrack(item.track)).filter((t) => t && !have.has(t.id)));
+                this._likedOffset = offset + res.items.length;
+                if (res.total) this.likedTotal = res.total;
+                if (!res.items.length) this._likedOffset = this.likedTotal;      // nothing more after all
+            }
+        } catch (e) {
+            this._likedMoreFailedAt = Date.now();
+            this.log.warn('Fetch more liked songs error: ' + e.message);
+        } finally {
+            this.isLoadingMoreLiked = false;
         }
     }
 
@@ -804,10 +914,51 @@ class SpotifyClient {
         if (this.isOnline) {
             const targetDev = this.devices.find((d) => d.isActive) || this.devices[0];
             const deviceParam = (targetDev && targetDev.id) ? `?device_id=${targetDev.id}` : '';
-            const uris = this.likedSongs.slice(index, index + 30).map((t) => t.uri);
+            const path = `/v1/me/player/play${deviceParam}`;
+            const fallback = () => {
+                // a bare track list: the phone (iOS) drops this one as often as not
+                const uris = this.likedSongs.slice(index, index + 30).map((t) => t.uri);
+                return this._request('PUT', path, { uris });
+            };
             this._cmd();
-            this._request('PUT', `/v1/me/player/play${deviceParam}`, { uris }).then(() => this._pollSoon(400), () => {});
+            // Liked Songs as a real context, as Spotify's own apps play it: the phone keeps it
+            // (a list of URIs made the iPhone stop and drop "now playing") and it plays on
+            // past the 50 songs loaded here
+            return this._likedContextUri().then((ctx) => ctx
+                ? this._request('PUT', path, { context_uri: ctx, offset: { uri: trk.uri } }).catch((e) => {
+                    this.log.warn('Liked Songs context refused (' + e.message + '), playing as a track list');
+                    return fallback();
+                })
+                : fallback()
+            ).then(() => this._pollSoon(400), (e) => {
+                this.log.warn('Liked Songs play failed: ' + e.message);
+                this._pollSoon(100);     // show what really plays, not the song that was tapped
+            });
         }
+    }
+
+    /** The account: its id (for Liked Songs as a context) and, for the Connect page, its name and plan. */
+    async fetchProfile() {
+        if (!this.token) return null;
+        try {
+            const me = await this._request('GET', '/v1/me');
+            if (me && me.id) {
+                this._userId = me.id;
+                this.profile = {
+                    name: decodeHtmlEntities(me.display_name || me.id),
+                    product: me.product || '',          // premium | free | open
+                };
+            }
+        } catch (e) {
+            this.log.warn('Fetch profile error: ' + e.message);
+        }
+        return this.profile;
+    }
+
+    /** spotify:user:<id>:collection, the account's Liked Songs as a context (null if the id is unknown). */
+    async _likedContextUri() {
+        if (!this._userId) await this.fetchProfile();
+        return this._userId ? 'spotify:user:' + this._userId + ':collection' : null;
     }
 
     // Tick called every frame
@@ -869,21 +1020,24 @@ class SpotifyClient {
         this.lastTickTime = Date.now();
         if (this.isOnline) {
             this._cmd({ playing: true });
-            this._request('PUT', '/v1/me/player/play').then(() => this._pollSoon(), () => {});
+            return this._request('PUT', '/v1/me/player/play').then(() => this._pollSoon(), () => this._pollSoon(100));
         }
+        return Promise.resolve();
     }
 
     pause() {
         this.isPlaying = false;
         if (this.isOnline) {
             this._cmd({ playing: false });
-            this._request('PUT', '/v1/me/player/pause').then(() => this._pollSoon(), () => {});
+            return this._request('PUT', '/v1/me/player/pause').then(() => this._pollSoon(), () => this._pollSoon(100));
         }
+        return Promise.resolve();
     }
 
+    /* The commands below return a promise that settles when Spotify has answered (never rejects):
+     * the screen shows the button busy until then. */
     togglePlay() {
-        if (this.isPlaying) this.pause();
-        else this.play();
+        return this.isPlaying ? this.pause() : this.play();
     }
 
     nextTrack() {
@@ -895,8 +1049,7 @@ class SpotifyClient {
                 this.progressMs = 0;
                 this.lastTickTime = Date.now();
             }
-            this._request('POST', '/v1/me/player/next').then(() => this._pollSoon(), () => {});
-            return;
+            return this._request('POST', '/v1/me/player/next').then(() => this._pollSoon(), () => this._pollSoon(100));
         }
         const pl = this.currentPlaylist;
         if (!pl || !pl.tracks.length) return;
@@ -911,8 +1064,7 @@ class SpotifyClient {
             this._cmd();
             this.progressMs = 0;
             this.lastTickTime = Date.now();
-            this._request('POST', '/v1/me/player/previous').then(() => this._pollSoon(), () => {});
-            return;
+            return this._request('POST', '/v1/me/player/previous').then(() => this._pollSoon(), () => this._pollSoon(100));
         }
         if (this.progressMs > 3000) {
             this.progressMs = 0;
@@ -937,11 +1089,20 @@ class SpotifyClient {
         }
     }
 
+    /*
+     * Shuffle and repeat show the new state at once and keep it (4 s) against polls
+     * that still bring the old one: without that a tap seemed to miss, the button flipping back.
+     * A refused command (a free account, a device that does not take it) lets the poll put it back.
+     */
     toggleShuffle() {
         this.shuffle = !this.shuffle;
         if (this.isOnline) {
-            this._cmd();
-            this._request('PUT', '/v1/me/player/shuffle?state=' + this.shuffle).catch(() => {});
+            this._holdShuffle = { v: this.shuffle, until: Date.now() + 4000 };
+            return this._request('PUT', '/v1/me/player/shuffle?state=' + this.shuffle).then(() => this._pollSoon(600), (e) => {
+                this.log.warn('Shuffle refused: ' + e.message);
+                this._holdShuffle = null;
+                this._pollSoon(100);
+            });
         }
     }
 
@@ -950,40 +1111,54 @@ class SpotifyClient {
         const next = modes[(modes.indexOf(this.repeat) + 1) % modes.length];
         this.repeat = next;
         if (this.isOnline) {
-            this._cmd();
-            this._request('PUT', '/v1/me/player/repeat?state=' + this.repeat).catch(() => {});
+            this._holdRepeat = { v: next, until: Date.now() + 4000 };
+            return this._request('PUT', '/v1/me/player/repeat?state=' + next).then(() => this._pollSoon(600), (e) => {
+                this.log.warn('Repeat refused: ' + e.message);
+                this._holdRepeat = null;
+                this._pollSoon(100);
+            });
         }
     }
 
+    /* Liked or not: Spotify's library endpoints (/v1/me/library, by URI). The older
+     * /v1/me/tracks/contains answers 403 now, which left the heart empty on liked songs. */
     async checkTrackLiked(trackId) {
         if (!this.token || !trackId) return;
+        const uri = 'spotify:track:' + trackId;
         try {
-            const res = await this._request('GET', `/v1/me/tracks/contains?ids=${trackId}`);
-            if (Array.isArray(res)) {
+            const res = await this._request('GET', '/v1/me/library/contains?uris=' + encodeURIComponent(uri));
+            // the track changed meanwhile: this answer is about another song
+            if (Array.isArray(res) && this.currentTrack && this.currentTrack.id === trackId) {
                 this.isCurrentLiked = !!res[0];
             }
         } catch (e) {
-            // ignore
+            this.log.warn('Liked check failed: ' + e.message);
         }
     }
 
     async toggleLikeCurrent() {
         if (!this.currentTrack || !this.currentTrack.id) return;
         const id = this.currentTrack.id;
-        this.isCurrentLiked = !this.isCurrentLiked;
-        if (this.isOnline) {
-            const method = this.isCurrentLiked ? 'PUT' : 'DELETE';
-            this._request(method, `/v1/me/tracks?ids=${id}`).then(() => {
-                this.fetchLikedSongs();
-            }).catch(() => {});
+        const like = !this.isCurrentLiked;
+        this.isCurrentLiked = like;
+        if (!this.isOnline) return;
+        const method = like ? 'PUT' : 'DELETE';
+        const uri = 'spotify:track:' + id;
+        try {
+            await this._request(method, '/v1/me/library?uris=' + encodeURIComponent(uri)).catch((e) => {
+                this.log.warn('Library ' + method + ' refused (' + e.message + '), trying /v1/me/tracks');
+                return this._request(method, '/v1/me/tracks?ids=' + id);
+            });
+            this.fetchLikedSongs().catch(() => {});
+        } catch (e) {
+            this.log.warn((like ? 'Like' : 'Unlike') + ' failed: ' + e.message);
+            if (this.currentTrack && this.currentTrack.id === id) this.isCurrentLiked = !like;   // show the truth
         }
     }
 
     selectPlaylist(playlist) {
         this.currentPlaylist = playlist;
-        if (this.isOnline && (!playlist.tracks || !playlist.tracks.length)) {
-            this.fetchTracksForPlaylist(playlist);
-        }
+        this.ensureTracks(playlist);
     }
 
     playTrack(playlist, index) {
@@ -1003,20 +1178,51 @@ class SpotifyClient {
                 const targetDev = this.devices.find((d) => d.isActive) || this.devices[0];
                 const deviceParam = (targetDev && targetDev.id) ? `?device_id=${targetDev.id}` : '';
                 this._cmd();
-                this._request('PUT', `/v1/me/player/play${deviceParam}`, body).then(() => this._pollSoon(400), () => {});
+                return this._request('PUT', `/v1/me/player/play${deviceParam}`, body).then(() => this._pollSoon(400), () => this._pollSoon(100));
             }
         }
     }
 
+    /** Jump to positionMs in the song that plays. */
+    seek(positionMs) {
+        const dur = this.currentTrack && this.currentTrack.durationMs;
+        if (!dur) return Promise.resolve();
+        const pos = Math.max(0, Math.min(dur - 1000, Math.round(positionMs)));
+        this.progressMs = pos;
+        this.lastTickTime = Date.now();
+        if (!this.isOnline) return Promise.resolve();
+        this._cmd();
+        return this._request('PUT', '/v1/me/player/seek?position_ms=' + pos)
+            .then(() => this._pollSoon(400), (e) => { this.log.warn('Seek failed: ' + e.message); this._pollSoon(100); });
+    }
+
+    /**
+     * A song from Up Next: played on in what plays now (its playlist / album / Liked Songs, from that
+     * song on), or alone where the context does not have it (a song queued by hand).
+     */
+    playQueued(trk) {
+        if (!trk || !trk.uri) return Promise.resolve();
+        this.currentTrack = trk;
+        this.isPlaying = true;
+        this.progressMs = 0;
+        this.lastTickTime = Date.now();
+        if (!this.isOnline) return Promise.resolve();
+        const targetDev = this.devices.find((d) => d.isActive) || this.devices[0];
+        const path = '/v1/me/player/play' + ((targetDev && targetDev.id) ? '?device_id=' + targetDev.id : '');
+        const ctx = this.contextUri;
+        const alone = () => this._request('PUT', path, { uris: [trk.uri] });
+        this._cmd();
+        return (ctx ? this._request('PUT', path, { context_uri: ctx, offset: { uri: trk.uri } }).catch(alone) : alone())
+            .then(() => this._pollSoon(400), (e) => { this.log.warn('Play from Up Next failed: ' + e.message); this._pollSoon(100); });
+    }
+
+    /* Settles once the device list shows where the music went (busy until then on the screen). */
     transferToDevice(deviceId) {
-        if (this.isOnline) {
-            this._request('PUT', '/v1/me/player', { device_ids: [deviceId], play: true }).then(() => {
-                setTimeout(() => {
-                    this.fetchDevices();
-                    this.pollPlayer();
-                }, 500);
-            }).catch(() => {});
-        }
+        if (!this.isOnline) return Promise.resolve();
+        return this._request('PUT', '/v1/me/player', { device_ids: [deviceId], play: true })
+            .then(() => new Promise((r) => setTimeout(r, 500)))
+            .then(() => Promise.all([this.fetchDevices(), this.pollPlayer()]))
+            .catch((e) => this.log.warn('Transfer failed: ' + e.message));
     }
 
     getPlaylists() {

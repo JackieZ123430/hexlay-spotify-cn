@@ -138,46 +138,148 @@ function drawPrevIcon(cv, cx, cy, sz, col) {
     );
 }
 
+/** A smooth S from (x0,y0) to (x1,y1): flat at both ends (a cubic ease), as points for a polyline. */
+function sCurve(x0, y0, x1, y1, n) {
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+        const u = i / n, e = u * u * (3 - 2 * u);
+        pts.push([x0 + (x1 - x0) * u, y0 + (y1 - y0) * e]);
+    }
+    return pts;
+}
+
+/** An arrowhead (open chevron) at (x,y) pointing along angle dir (radians, 0 = right). */
+function drawArrowHead(cv, x, y, dir, len, width, col) {
+    [2.45, -2.45].forEach((a) => {
+        cv.line(x, y, x + Math.cos(dir + a) * len, y + Math.sin(dir + a) * len, width, col);
+    });
+    cv.circle(x, y, width / 2, col);
+}
+
 function drawShuffleIcon(cv, cx, cy, sz, col) {
-    const w = sz * 0.8, h = sz * 0.5;
-    const x0 = cx - w / 2, x1 = cx + w / 2;
+    const w = sz, h = sz * 0.56, lw = Math.max(2, sz * 0.1);
+    const x0 = cx - w / 2, x1 = cx + w / 2 - lw;
     const y0 = cy - h / 2, y1 = cy + h / 2;
-    cv.line(x0, y0, cx - w * 0.1, y0, 2, col);
-    cv.line(cx - w * 0.1, y0, cx + w * 0.1, y1, 2, col);
-    cv.line(cx + w * 0.1, y1, x1, y1, 2, col);
-
-    cv.line(x0, y1, cx - w * 0.1, y1, 2, col);
-    cv.line(cx - w * 0.1, y1, cx + w * 0.1, y0, 2, col);
-    cv.line(cx + w * 0.1, y0, x1, y0, 2, col);
-
-    drawTriangle(cv, [x1 - 4, y0 - 4], [x1 + 4, y0], [x1 - 4, y0 + 4], col);
-    drawTriangle(cv, [x1 - 4, y1 - 4], [x1 + 4, y1], [x1 - 4, y1 + 4], col);
+    const run = w * 0.18;                       // flat lead-in and lead-out
+    // top-left to bottom-right, and bottom-left to top-right, crossing in the middle
+    cv.polyline([[x0, y0]].concat(sCurve(x0 + run, y0, x1 - run, y1, 14), [[x1, y1]]), lw, col);
+    cv.polyline([[x0, y1]].concat(sCurve(x0 + run, y1, x1 - run, y0, 14), [[x1, y0]]), lw, col);
+    const ah = sz * 0.26;
+    drawArrowHead(cv, x1 + lw * 0.4, y0, 0, ah, lw, col);
+    drawArrowHead(cv, x1 + lw * 0.4, y1, 0, ah, lw, col);
 }
 
 function drawRepeatIcon(cv, cx, cy, sz, col, mode) {
-    const w = sz * 0.8, h = sz * 0.55;
-    const x0 = cx - w / 2, x1 = cx + w / 2;
-    const y0 = cy - h / 2, y1 = cy + h / 2;
-    cv.line(x0 + 4, y0, x1 - 2, y0, 2, col);
-    cv.line(x1, y0 + 3, x1, y1 - 3, 2, col);
-    cv.line(x1 - 4, y1, x0 + 2, y1, 2, col);
-    cv.line(x0, y1 - 3, x0, y0 + 3, 2, col);
-    drawTriangle(cv, [x1 - 3, y0 - 4], [x1 + 4, y0], [x1 - 3, y0 + 4], col);
+    const w = sz, h = sz * 0.62, lw = Math.max(2, sz * 0.1);
+    const r = h * 0.42, hl = lw / 2;
+    const x0 = cx - w / 2, x1 = cx + w / 2, y0 = cy - h / 2, y1 = cy + h / 2;
+    // a rounded loop, open at the top right where the arrow points into it
+    cv.line(x0 + r, y0, x1 - r - sz * 0.22, y0, lw, col);                  // top (stops at the gap)
+    cv.arc(x1 - r, y0 + r, r - hl, r + hl, 0, 90, col);                    // top-right corner
+    cv.line(x1, y0 + r, x1, y1 - r, lw, col);
+    cv.arc(x1 - r, y1 - r, r - hl, r + hl, 90, 180, col);
+    cv.line(x1 - r, y1, x0 + r + sz * 0.22, y1, lw, col);                  // bottom (gap at the left)
+    cv.arc(x0 + r, y1 - r, r - hl, r + hl, 180, 270, col);
+    cv.line(x0, y1 - r, x0, y0 + r, lw, col);
+    cv.arc(x0 + r, y0 + r, r - hl, r + hl, 270, 360, col);
+    const ah = sz * 0.24;
+    drawArrowHead(cv, x1 - r - sz * 0.22 + ah * 0.5, y0, 0, ah, lw, col);
+    drawArrowHead(cv, x0 + r + sz * 0.22 - ah * 0.5, y1, Math.PI, ah, lw, col);
     if (mode === 'track') {
-        cv.text('1', cx, cy + 5, 11, col, { align: 'center', font: 'bold' });
+        // repeat one: a small "1" badge on the loop
+        cv.circle(x1, y0, sz * 0.3, col);
+        cv.text('1', x1, y0 + sz * 0.13, Math.round(sz * 0.38), '#000000', { align: 'center', font: 'bold' });
     }
 }
 
+/** A heart: two lobes and a point, filled, or as an outline. */
 function drawHeartIcon(cv, cx, cy, sz, col, filled) {
-    const r = sz * 0.3;
-    cv.circle(cx - r, cy - r * 0.5, r, col);
-    cv.circle(cx + r, cy - r * 0.5, r, col);
-    drawTriangle(cv,
-        [cx - r * 2, cy - r * 0.3],
-        [cx + r * 2, cy - r * 0.3],
-        [cx, cy + sz * 0.6],
-        col
-    );
+    const r = sz * 0.27, d = r * 0.9;
+    const ly = cy - sz * 0.5 + r + sz * 0.06;          // the lobes' centres
+    const tipY = ly + d + 1.414 * r;
+    const dip = ly - Math.sqrt(r * r - d * d);
+    const lT = [cx - d - 0.707 * r, ly + 0.707 * r], rT = [cx + d + 0.707 * r, ly + 0.707 * r];
+    if (filled) {
+        cv.circle(cx - d, ly, r, col);
+        cv.circle(cx + d, ly, r, col);
+        cv.quad([lT, [cx, dip], rT, [cx, tipY]], col);
+        return;
+    }
+    const lw = Math.max(2, sz * 0.1), hl = lw / 2;
+    const tA = Math.atan2(d, ly - dip) * 180 / Math.PI;       // where the lobes meet, from each centre
+    cv.arc(cx - d, ly, r - hl, r + hl, 225, 360, col);
+    cv.arc(cx - d, ly, r - hl, r + hl, 0, tA, col);
+    cv.arc(cx + d, ly, r - hl, r + hl, 360 - tA, 360, col);
+    cv.arc(cx + d, ly, r - hl, r + hl, 0, 135, col);
+    cv.line(lT[0], lT[1], cx, tipY, lw, col);
+    cv.line(rT[0], rT[1], cx, tipY, lw, col);
+    cv.circle(cx, tipY, hl, col);
+}
+
+/** A loading spinner: a faint ring and a turning arc (moves with each frame drawn). */
+function drawSpinner(cv, cx, cy, r, col, lw) {
+    lw = lw || Math.max(2, r * 0.3);
+    const r0 = r - lw / 2, r1 = r + lw / 2;
+    cv.arc(cx, cy, r0, r1, 0, 360, withAlpha(col, 0.2));
+    const a0 = (Date.now() / 2.4) % 360, a1 = a0 + 110;
+    if (a1 <= 360) cv.arc(cx, cy, r0, r1, a0, a1, col, { round: true });
+    else {
+        cv.arc(cx, cy, r0, r1, a0, 360, col, { round: true });
+        cv.arc(cx, cy, r0, r1, 0, a1 - 360, col, { round: true });
+    }
+}
+
+/** The row that closes a list while its next page loads: a spinner and what loads. */
+function drawLoadingRow(cv, t, x, y, w, label) {
+    cv.roundRect(x, y, w, 42, 8, withAlpha(t.track, 0.6));
+    drawSpinner(cv, x + 22, y + 21, 8, t.accent);
+    cv.text(label, x + 44, y + 27, 15, t.dim);
+}
+
+/** A device's kind as a small line glyph (phone, computer, speaker, TV, car; others a speaker). */
+function drawDeviceIcon(cv, cx, cy, type, col) {
+    const k = String(type || '').toLowerCase();
+    const lw = 2;
+    if (k === 'smartphone' || k === 'tablet') {
+        const w = k === 'tablet' ? 20 : 14, h = 24;
+        cv.strokeRoundRect(cx - w / 2, cy - h / 2, w, h, 3, lw, col);
+        cv.line(cx - 2.5, cy + h / 2 - 4, cx + 2.5, cy + h / 2 - 4, lw, col);
+    } else if (k === 'computer') {
+        cv.strokeRoundRect(cx - 13, cy - 11, 26, 17, 2, lw, col);
+        cv.line(cx - 16, cy + 10, cx + 16, cy + 10, lw, col);
+    } else if (k === 'tv') {
+        cv.strokeRoundRect(cx - 14, cy - 10, 28, 18, 2, lw, col);
+        cv.line(cx - 6, cy + 12, cx + 6, cy + 12, lw, col);
+    } else if (k === 'automobile') {
+        cv.strokeRoundRect(cx - 15, cy - 3, 30, 11, 4, lw, col);
+        cv.line(cx - 9, cy - 3, cx - 5, cy - 10, lw, col);
+        cv.line(cx - 5, cy - 10, cx + 6, cy - 10, lw, col);
+        cv.line(cx + 6, cy - 10, cx + 10, cy - 3, lw, col);
+        cv.circle(cx - 8, cy + 9, 3, col);
+        cv.circle(cx + 8, cy + 9, 3, col);
+    } else {
+        cv.strokeRoundRect(cx - 10, cy - 13, 20, 26, 4, lw, col);
+        cv.arc(cx, cy + 3, 4, 6, 0, 360, col);
+        cv.circle(cx, cy - 7, 2, col);
+    }
+}
+
+/** A spinner just left of a centred loading title (str drawn at cx, baseline y, this size). */
+function drawSpinnerBefore(cv, str, cx, y, size, col) {
+    const w = cv.textWidth ? cv.textWidth(str, size, { font: 'bold', spacing: 1 }) : str.length * size * 0.6;
+    drawSpinner(cv, cx - w / 2 - size, y - size * 0.36, size * 0.42, col);
+}
+
+/** str cut (with "..") to fit maxW pixels at this size: room decides, not a character count. */
+function fitText(cv, str, maxW, size, opts) {
+    str = String(str || '');
+    if (!cv.textWidth || cv.textWidth(str, size, opts) <= maxW) return str;
+    let lo = 0, hi = str.length;
+    while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (cv.textWidth(str.slice(0, mid).replace(/\s+$/, '') + '..', size, opts) <= maxW) lo = mid; else hi = mid - 1;
+    }
+    return str.slice(0, lo).replace(/\s+$/, '') + '..';
 }
 
 mgu.run({
@@ -223,6 +325,30 @@ mgu.run({
         let trackScroll = 0;
         let likedScroll = 0;
         let queueScroll = 0;
+
+        /*
+         * Busy buttons. A tap that has to wait for Spotify (or the network) marks its button busy:
+         * it shows a spinner and takes no other tap until the answer is in, so a slow phone is not
+         * sent the same command twice. One key per group of buttons that must not overlap:
+         *   start     a song started from a list (id: the row)    transport  play/pause, next, previous
+         *   shuffle, repeat, like      devices  refresh            transfer   moving playback (id: device)
+         *   playlists refresh          net      the internet check
+         * A request that never answers frees its button after BUSY_MAX_MS.
+         */
+        const BUSY_MAX_MS = 12000;
+        const busy = {};
+        const isBusy = (key) => !!busy[key] && Date.now() - busy[key].at < BUSY_MAX_MS;
+        const busyOn = (key, id) => isBusy(key) && busy[key].id === id;
+        function runBusy(key, fn, id) {
+            if (isBusy(key)) return;
+            const mark = { at: Date.now(), id };
+            busy[key] = mark;
+            let p;
+            try { p = Promise.resolve(fn()); } catch (e) { p = Promise.resolve(); log.warn(key + ': ' + e.message); }
+            const done = () => { if (busy[key] === mark) delete busy[key]; render(); };
+            p.then(done, done);
+            render();
+        }
 
         // "Playing" marks follow what Spotify plays (its context and track), not what is selected here
         const playingFrom = (pl) => !!(pl && pl.uri && spotify.contextUri && spotify.contextUri === pl.uri);
@@ -286,11 +412,17 @@ mgu.run({
             // Action Buttons: [RETRY CONNECTION] and [SWITCH TO DEMO MODE]
             const btnW = 280, btnH = 52, btnY = 345;
             const b1X = 228;
-            cv.roundRect(b1X, btnY, btnW, btnH, 10, '#004e8c');
+            const netBusy = isBusy('net');
+            cv.roundRect(b1X, btnY, btnW, btnH, 10, netBusy ? '#00365f' : '#004e8c');
             cv.strokeRoundRect(b1X, btnY, btnW, btnH, 10, 1.5, '#00a3e0');
-            cv.text('RETRY CONNECTION', b1X + btnW / 2, btnY + 32, 16, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+            if (netBusy) {
+                drawSpinner(cv, b1X + 62, btnY + btnH / 2, 10, '#ffffff');
+                cv.text('CHECKING...', b1X + btnW / 2 + 14, btnY + 32, 16, '#cbd5e1', { align: 'center', font: 'bold', spacing: 1 });
+            } else {
+                cv.text('RETRY CONNECTION', b1X + btnW / 2, btnY + 32, 16, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+            }
             cv.target(b1X, btnY, btnW, btnH, () => {
-                spotify.checkInternetConnection().then(() => render());
+                runBusy('net', () => spotify.checkInternetConnection());
             }, 'btn_retry_net', 15);
 
             const b2X = b1X + btnW + 24;
@@ -351,9 +483,11 @@ mgu.run({
 
             // Track metadata
             if (curTrk) {
-                cv.text(trunc(curTrk.title, 34), dockX + 70, dockY + 28, 18, isPlaying ? t.accent : t.text, { font: 'bold' });
+                // up to the time in the middle of the dock
+                const dockTextW = 820 - (dockX + 70);
+                cv.text(fitText(cv, curTrk.title, dockTextW, 18, { font: 'bold' }), dockX + 70, dockY + 28, 18, isPlaying ? t.accent : t.text, { font: 'bold' });
                 const metaStr = curTrk.artist + (curTrk.album ? '  -  ' + curTrk.album : '');
-                cv.text(trunc(metaStr, 44), dockX + 70, dockY + 49, 14, t.dim);
+                cv.text(fitText(cv, metaStr, dockTextW, 14), dockX + 70, dockY + 49, 14, t.dim);
             } else {
                 cv.text('No Track Playing', dockX + 70, dockY + 28, 18, t.dim, { font: 'bold' });
                 cv.text('Select any song from Playlists or Liked Songs to begin', dockX + 70, dockY + 49, 14, t.dim);
@@ -374,32 +508,33 @@ mgu.run({
             // 1. Prev
             const prevX = 1160, prevY = dockY + 12, prevW = 54, prevH = 42;
             cv.roundRect(prevX, prevY, prevW, prevH, 8, withAlpha(t.panelEdge, 0.7));
-            drawPrevIcon(cv, prevX + prevW / 2, prevY + prevH / 2, 16, t.text);
+            if (busyOn('transport', 'prev')) drawSpinner(cv, prevX + prevW / 2, prevY + prevH / 2, 9, t.text);
+            else drawPrevIcon(cv, prevX + prevW / 2, prevY + prevH / 2, 16, isBusy('transport') ? t.dim : t.text);
             cv.target(prevX, prevY, prevW, prevH, () => {
-                spotify.prevTrack();
-                render();
+                runBusy('transport', () => spotify.prevTrack(), 'prev');
             }, 'dock_prev', 12);
 
             // 2. Play / Pause
             const playX = 1228, playY = dockY + 9, playW = 72, playH = 48;
-            cv.roundRect(playX, playY, playW, playH, 24, t.accent);
-            if (isPlaying) {
+            cv.roundRect(playX, playY, playW, playH, 24, isBusy('transport') ? withAlpha(t.accent, 0.6) : t.accent);
+            if (busyOn('transport', 'play')) {
+                drawSpinner(cv, playX + playW / 2, playY + playH / 2, 10, '#000000');
+            } else if (isPlaying) {
                 drawPauseIcon(cv, playX + playW / 2, playY + playH / 2, 18, '#000000');
             } else {
                 drawPlayIcon(cv, playX + playW / 2, playY + playH / 2, 18, '#000000');
             }
             cv.target(playX, playY, playW, playH, () => {
-                spotify.togglePlay();
-                render();
+                runBusy('transport', () => spotify.togglePlay(), 'play');
             }, 'dock_play', 15);
 
             // 3. Next
             const nextX = 1314, nextY = dockY + 12, nextW = 54, nextH = 42;
             cv.roundRect(nextX, nextY, nextW, nextH, 8, withAlpha(t.panelEdge, 0.7));
-            drawNextIcon(cv, nextX + nextW / 2, nextY + nextH / 2, 16, t.text);
+            if (busyOn('transport', 'next')) drawSpinner(cv, nextX + nextW / 2, nextY + nextH / 2, 9, t.text);
+            else drawNextIcon(cv, nextX + nextW / 2, nextY + nextH / 2, 16, isBusy('transport') ? t.dim : t.text);
             cv.target(nextX, nextY, nextW, nextH, () => {
-                spotify.nextTrack();
-                render();
+                runBusy('transport', () => spotify.nextTrack(), 'next');
             }, 'dock_next', 12);
 
             // 4. "NOW PLAYING >" button
@@ -435,16 +570,23 @@ mgu.run({
                     cv.roundRect(48, 100, 1504, 200, 12, t.track);
                     cv.strokeRoundRect(48, 100, 1504, 200, 12, 1, t.panelEdge);
 
-                    const isBusy = spotify.isLoadingPlaylists || spotify.syncing;
-                    cv.text(isBusy ? 'LOADING PLAYLISTS...' : 'NO PLAYLISTS FOUND', 800, 175, 22, t.dim, { align: 'center', font: 'bold', spacing: 1 });
-                    cv.text(isBusy ? 'Fetching your playlists from Spotify cloud...' : 'Create or follow playlists on Spotify, or browse Liked Songs.', 800, 210, 16, t.dim, { align: 'center' });
+                    const loading = spotify.isLoadingPlaylists || spotify.syncing;
+                    cv.text(loading ? 'LOADING PLAYLISTS...' : 'NO PLAYLISTS FOUND', 800, 175, 22, t.dim, { align: 'center', font: 'bold', spacing: 1 });
+                    if (loading) drawSpinnerBefore(cv, 'LOADING PLAYLISTS...', 800, 175, 22, t.accent);
+                    cv.text(loading ? 'Fetching your playlists from Spotify cloud...' : 'Create or follow playlists on Spotify, or browse Liked Songs.', 800, 210, 16, t.dim, { align: 'center' });
 
                     const rfW = 240, rfH = 44, rfX = 680, rfY = 236;
-                    cv.roundRect(rfX, rfY, rfW, rfH, 8, withAlpha(t.accent, 0.22));
-                    cv.strokeRoundRect(rfX, rfY, rfW, rfH, 8, 1.5, t.accent);
-                    cv.text('REFRESH PLAYLISTS', rfX + rfW / 2, rfY + 27, 14, t.accent, { align: 'center', font: 'bold', spacing: 1 });
+                    const plBusy = isBusy('playlists') || spotify.isLoadingPlaylists;
+                    cv.roundRect(rfX, rfY, rfW, rfH, 8, withAlpha(t.accent, plBusy ? 0.1 : 0.22));
+                    cv.strokeRoundRect(rfX, rfY, rfW, rfH, 8, 1.5, withAlpha(t.accent, plBusy ? 0.5 : 1));
+                    if (plBusy) {
+                        drawSpinner(cv, rfX + 40, rfY + rfH / 2, 9, t.accent);
+                        cv.text('LOADING...', rfX + rfW / 2 + 12, rfY + 27, 14, withAlpha(t.accent, 0.8), { align: 'center', font: 'bold', spacing: 1 });
+                    } else {
+                        cv.text('REFRESH PLAYLISTS', rfX + rfW / 2, rfY + 27, 14, t.accent, { align: 'center', font: 'bold', spacing: 1 });
+                    }
                     cv.target(rfX, rfY, rfW, rfH, () => {
-                        spotify.fetchPlaylists().then(() => render());
+                        if (!spotify.isLoadingPlaylists) runBusy('playlists', () => spotify.fetchPlaylists());
                     }, 'btn_refresh_pls', 12);
 
                     drawBottomPlayerDock(cv, t);
@@ -488,8 +630,9 @@ mgu.run({
 
                 // Accent tag
                 cv.roundRect(44, py + 8, 5, 42, 2.5, isPlPlaying ? t.accent : (pl.accent || t.accent));
-                cv.text(trunc(pl.name, 22), 62, py + 26, 21, isSel ? t.text : '#e0e0e0', { font: 'bold' });
-                cv.text((pl.trackCount || 0) + ' songs  -  ' + trunc(pl.description || 'Playlist', 26), 62, py + 48, 15, t.dim);
+                const plTextW = (isPlPlaying ? 452 : 486) - 62;     // up to the equalizer, or the row's end
+                cv.text(fitText(cv, pl.name, plTextW, 21, { font: 'bold' }), 62, py + 26, 21, isSel ? t.text : '#e0e0e0', { font: 'bold' });
+                cv.text(fitText(cv, (pl.trackCount || 0) + ' songs  -  ' + (pl.description || 'Playlist'), plTextW, 15), 62, py + 48, 15, t.dim);
 
                 if (isPlPlaying) {
                     drawMiniEqualizer(cv, 470, py + 29, t.accent, spotify.isPlaying, spectrumSeed);
@@ -508,53 +651,70 @@ mgu.run({
             const ctxHere = !spotify.contextUri || !/:playlist:/.test(spotify.contextUri) || playingFrom(curPl);
             const trackTotal = curPl.trackCount || (curPl.tracks ? curPl.tracks.length : 0);
 
-            G.panelExact(cv, t, 540, 44, 1036, 396 + ex, trunc(curPl.name, 36) + ' (' + trackTotal + ' tracks)');
+            G.panelExact(cv, t, 540, 44, 1036, 396 + ex, fitText(cv, curPl.name, 760, 26, { font: 'bold' }) + ' (' + trackTotal + ' tracks)');
+
+            // the songs of the playlist shown: fetched (and retried) from here, whatever selected it
+            spotify.ensureTracks(curPl);
 
             if (!curPl.tracks || curPl.tracks.length === 0) {
+                const none = !!curPl.tracksLoaded;
                 cv.roundRect(556, 120, 1004, 180, 12, t.track);
-                cv.text('LOADING SONGS...', 1058, 195, 22, t.dim, { align: 'center', font: 'bold', spacing: 1 });
-                cv.text('Fetching track list from Spotify cloud...', 1058, 230, 16, t.dim, { align: 'center' });
+                cv.text(none ? 'NO SONGS' : 'LOADING SONGS...', 1058, 195, 22, t.dim, { align: 'center', font: 'bold', spacing: 1 });
+                if (!none) drawSpinnerBefore(cv, 'LOADING SONGS...', 1058, 195, 22, t.accent);
+                cv.text(none ? 'This playlist has no songs that can be played here.' : 'Fetching track list from Spotify cloud...', 1058, 230, 16, t.dim, { align: 'center' });
             } else {
                 const VISIBLE_TRK = 7 + Math.floor(ex / 47);
-                trackScroll = Math.max(0, Math.min(trackScroll, Math.max(0, curPl.tracks.length - VISIBLE_TRK)));
-                listGeo.trk = { x0: 540, x1: 1576, rowH: 47, count: curPl.tracks.length, visible: VISIBLE_TRK };
+                // more songs than loaded: a "loading" row closes the list, and the next page comes
+                // as the list nears its end
+                const moreTrk = spotify.hasMoreTracks(curPl);
+                const trkRows = curPl.tracks.length + (moreTrk ? 1 : 0);
+                trackScroll = Math.max(0, Math.min(trackScroll, Math.max(0, trkRows - VISIBLE_TRK)));
+                listGeo.trk = { x0: 540, x1: 1576, rowH: 47, count: trkRows, visible: VISIBLE_TRK };
+                if (moreTrk && trackScroll + VISIBLE_TRK >= curPl.tracks.length - 5) spotify.loadMoreTracks(curPl);
 
                 // Right Pane Tracks Scrollbar
-                drawScrollbar(cv, t, 1554, 98, 330 + ex, curPl.tracks.length, VISIBLE_TRK, trackScroll, () => {
+                drawScrollbar(cv, t, 1554, 98, 330 + ex, trkRows, VISIBLE_TRK, trackScroll, () => {
                     trackScroll = Math.max(0, trackScroll - VISIBLE_TRK);
                 }, () => {
-                    trackScroll = Math.min(Math.max(0, curPl.tracks.length - VISIBLE_TRK), trackScroll + VISIBLE_TRK);
+                    trackScroll = Math.min(Math.max(0, trkRows - VISIBLE_TRK), trackScroll + VISIBLE_TRK);
                 });
 
                 const visibleTracks = curPl.tracks.slice(trackScroll, trackScroll + VISIBLE_TRK);
+                if (moreTrk && trackScroll + VISIBLE_TRK > curPl.tracks.length) {
+                    drawLoadingRow(cv, t, 556, 98 + (curPl.tracks.length - trackScroll) * 47, 980,
+                        'Loading more songs (' + curPl.tracks.length + ' of ' + (curPl._total || trackTotal) + ')...');
+                }
 
                 visibleTracks.forEach((trk, vIdx) => {
                     const realIdx = trackScroll + vIdx;
                     const ty = 98 + vIdx * 47;
-                    const isPlayingThis = ctxHere && isPlayingTrack(trk);
+                    const startKey = 'pl:' + curPl.id + ':' + realIdx;
+                    const starting = busyOn('start', startKey);
+                    const isPlayingThis = starting || (ctxHere && isPlayingTrack(trk));
 
                     if (isPlayingThis) {
                         cv.roundRect(556, ty, 980, 42, 8, withAlpha(t.accent, 0.22));
                         cv.strokeRoundRect(556, ty, 980, 42, 8, 1.5, t.accent);
-                        drawMiniEqualizer(cv, 578, ty + 21, t.accent, spotify.isPlaying, spectrumSeed);
+                        if (starting) drawSpinner(cv, 578, ty + 21, 8, t.accent);
+                        else drawMiniEqualizer(cv, 578, ty + 21, t.accent, spotify.isPlaying, spectrumSeed);
                     } else {
                         cv.roundRect(556, ty, 980, 42, 8, t.track);
                         cv.text(String(realIdx + 1), 578, ty + 26, 15, t.dim, { align: 'center', font: 'num' });
                     }
 
                     // Strict column bounds prevent overlap:
-                    cv.text(trunc(trk.title, 26), 606, ty + 27, 19, isPlayingThis ? t.accent : t.text, { font: 'bold' });
+                    cv.text(fitText(cv, trk.title, 290, 19, { font: 'bold' }), 606, ty + 27, 19, isPlayingThis ? t.accent : t.text, { font: 'bold' });
                     const metaText = trk.artist + (trk.album ? '  -  ' + trk.album : '');
-                    cv.text(trunc(metaText, 40), 910, ty + 27, 16, t.dim);
+                    cv.text(fitText(cv, metaText, (isPlayingThis ? 1384 : 1460) - 910, 16), 910, ty + 27, 16, t.dim);
                     cv.text(fmtTime(trk.durationMs), isPlayingThis ? 1430 : 1510, ty + 27, 15, t.dim, { align: 'right', font: 'num' });
 
                     if (isPlayingThis) {
-                        cv.roundRect(1444, ty + 7, 54, 28, 6, t.accent);
-                        cv.text('PLAYING', 1471, ty + 24, 11, '#000000', { align: 'center', font: 'bold' });
+                        cv.roundRect(1444, ty + 7, 54, 28, 6, starting ? withAlpha(t.accent, 0.35) : t.accent);
+                        cv.text(starting ? 'WAIT' : 'PLAYING', 1471, ty + 24, 11, starting ? t.accent : '#000000', { align: 'center', font: 'bold' });
                     }
 
                     cv.target(556, ty, 980, 42, () => {
-                        spotify.playTrack(curPl, realIdx);
+                        runBusy('start', () => spotify.playTrack(curPl, realIdx), startKey);
                     }, 'trk_' + realIdx, 8);
                 });
             }
@@ -577,62 +737,74 @@ mgu.run({
             const total = spotify.likedTotal || liked.length;
             const ex = cv.extra || 0;
             const VISIBLE_LIKED = 7 + Math.floor(ex / 47);
-            likedScroll = Math.max(0, Math.min(likedScroll, Math.max(0, liked.length - VISIBLE_LIKED)));
-            listGeo.liked = { x0: 24, x1: 1576, rowH: 47, count: liked.length, visible: VISIBLE_LIKED };
+            // more liked songs than loaded: a "loading" row closes the list, the next page comes near its end
+            const moreLiked = liked === spotify.likedSongs && spotify.hasMoreLiked();
+            const likedRows = liked.length + (moreLiked ? 1 : 0);
+            likedScroll = Math.max(0, Math.min(likedScroll, Math.max(0, likedRows - VISIBLE_LIKED)));
+            listGeo.liked = { x0: 24, x1: 1576, rowH: 47, count: likedRows, visible: VISIBLE_LIKED };
+            if (moreLiked && likedScroll + VISIBLE_LIKED >= liked.length - 5) spotify.loadMoreLiked();
             cv.scroll = true;
             const startIdx = total > 0 ? likedScroll + 1 : 0;
-            const endIdx = Math.min(likedScroll + VISIBLE_LIKED, total);
+            const endIdx = Math.min(likedScroll + VISIBLE_LIKED, liked.length, total);
             const title = 'Liked Songs (' + (total > 0 ? (startIdx + '-' + endIdx + ' of ' + total) : '0') + ' tracks)';
 
             G.panelExact(cv, t, 24, 44, 1552, 396 + ex, title);
 
             // Liked Songs Scrollbar
-            drawScrollbar(cv, t, 1554, 98, 330 + ex, liked.length, VISIBLE_LIKED, likedScroll, () => {
+            drawScrollbar(cv, t, 1554, 98, 330 + ex, likedRows, VISIBLE_LIKED, likedScroll, () => {
                 likedScroll = Math.max(0, likedScroll - VISIBLE_LIKED);
             }, () => {
-                likedScroll = Math.min(Math.max(0, liked.length - VISIBLE_LIKED), likedScroll + VISIBLE_LIKED);
+                likedScroll = Math.min(Math.max(0, likedRows - VISIBLE_LIKED), likedScroll + VISIBLE_LIKED);
             });
 
             if (!liked || liked.length === 0) {
                 cv.roundRect(48, 100, 1504, 200, 12, t.track);
                 cv.strokeRoundRect(48, 100, 1504, 200, 12, 1, t.panelEdge);
-                const isBusy = spotify.isLoadingLiked || spotify.syncing;
-                cv.text(isBusy ? 'LOADING LIKED SONGS...' : 'NO LIKED SONGS FOUND', 800, 180, 22, t.dim, { align: 'center', font: 'bold', spacing: 1 });
-                cv.text(isBusy ? 'Fetching your saved songs from Spotify cloud...' : 'Like songs on Spotify to access them directly here.', 800, 215, 16, t.dim, { align: 'center' });
+                const loading = spotify.isLoadingLiked || spotify.syncing;
+                cv.text(loading ? 'LOADING LIKED SONGS...' : 'NO LIKED SONGS FOUND', 800, 180, 22, t.dim, { align: 'center', font: 'bold', spacing: 1 });
+                if (loading) drawSpinnerBefore(cv, 'LOADING LIKED SONGS...', 800, 180, 22, t.accent);
+                cv.text(loading ? 'Fetching your saved songs from Spotify cloud...' : 'Like songs on Spotify to access them directly here.', 800, 215, 16, t.dim, { align: 'center' });
                 drawBottomPlayerDock(cv, t);
                 return;
             }
 
             const visible = liked.slice(likedScroll, likedScroll + VISIBLE_LIKED);
+            if (moreLiked && likedScroll + VISIBLE_LIKED > liked.length) {
+                drawLoadingRow(cv, t, 40, 98 + (liked.length - likedScroll) * 47, 1500,
+                    'Loading more liked songs (' + liked.length + ' of ' + total + ')...');
+            }
             visible.forEach((trk, vIdx) => {
                 const realIdx = likedScroll + vIdx;
                 const ty = 98 + vIdx * 47;
-                const isPlayingThis = isPlayingTrack(trk);
+                const startKey = 'liked:' + realIdx;
+                const starting = busyOn('start', startKey);
+                const isPlayingThis = starting || isPlayingTrack(trk);
 
                 if (isPlayingThis) {
                     cv.roundRect(40, ty, 1500, 42, 8, withAlpha(t.accent, 0.22));
                     cv.strokeRoundRect(40, ty, 1500, 42, 8, 1.5, t.accent);
-                    drawMiniEqualizer(cv, 64, ty + 21, t.accent, spotify.isPlaying, spectrumSeed);
+                    if (starting) drawSpinner(cv, 64, ty + 21, 8, t.accent);
+                    else drawMiniEqualizer(cv, 64, ty + 21, t.accent, spotify.isPlaying, spectrumSeed);
                 } else {
                     cv.roundRect(40, ty, 1500, 42, 8, t.track);
                     cv.text(String(realIdx + 1), 64, ty + 26, 15, t.dim, { align: 'center', font: 'num' });
                 }
 
                 // Heart tag
-                cv.text('*', 98, ty + 28, 20, '#1ed760', { align: 'center', font: 'bold' });
+                drawHeartIcon(cv, 98, ty + 21, 15, '#1ed760', true);
 
-                cv.text(trunc(trk.title, 36), 126, ty + 27, 19, isPlayingThis ? t.accent : t.text, { font: 'bold' });
+                cv.text(fitText(cv, trk.title, 540, 19, { font: 'bold' }), 126, ty + 27, 19, isPlayingThis ? t.accent : t.text, { font: 'bold' });
                 const metaText = trk.artist + (trk.album ? '  -  ' + trk.album : '');
-                cv.text(trunc(metaText, 48), 680, ty + 27, 16, t.dim);
+                cv.text(fitText(cv, metaText, (isPlayingThis ? 1394 : 1466) - 680, 16), 680, ty + 27, 16, t.dim);
                 cv.text(fmtTime(trk.durationMs), isPlayingThis ? 1440 : 1510, ty + 27, 15, t.dim, { align: 'right', font: 'num' });
 
                 if (isPlayingThis) {
-                    cv.roundRect(1450, ty + 7, 54, 28, 6, t.accent);
-                    cv.text('PLAYING', 1477, ty + 24, 11, '#000000', { align: 'center', font: 'bold' });
+                    cv.roundRect(1450, ty + 7, 54, 28, 6, starting ? withAlpha(t.accent, 0.35) : t.accent);
+                    cv.text(starting ? 'WAIT' : 'PLAYING', 1477, ty + 24, 11, starting ? t.accent : '#000000', { align: 'center', font: 'bold' });
                 }
 
                 cv.target(40, ty, 1500, 42, () => {
-                    spotify.playLikedSong(realIdx);
+                    runBusy('start', () => spotify.playLikedSong(realIdx), startKey);
                 }, 'liked_' + realIdx, 8);
             });
 
@@ -681,26 +853,37 @@ mgu.run({
                     drawMiniEqualizer(cv, cx, cy, '#ffffff', isPlaying, spectrumSeed);
                 }
 
-                // Right of Album Art: Track Info
-                const metaX = 310;
-                // Target Device badge
-                const devText = 'DEVICE: ' + (spotify.activeDevice || 'SPOTIFY').toUpperCase();
-                cv.roundRect(metaX, 108, 230, 26, 6, withAlpha(t.accent, 0.18));
-                cv.text(trunc(devText, 24), metaX + 12, 126, 11, t.accent, { font: 'bold', spacing: 0.5 });
+                // Right of Album Art: Track Info, as wide as the panel lets it be
+                const metaX = 310, metaW = 880 - metaX;
 
-                // Big Song Title
-                cv.text(trunc(curTrk.title, 26), metaX, 172, 28, isPlaying ? t.accent : t.text, { font: 'bold' });
+                // where it plays: a pill as wide as its text, a live dot when music plays
+                const devOpts = { font: 'bold', spacing: 1 };
+                const devText = fitText(cv, spotify.activeDevice ? 'PLAYING ON  ' + spotify.activeDevice.toUpperCase() : 'SPOTIFY CONNECT', metaW - 44, 12, devOpts);
+                const devW = cv.textWidth(devText, 12, devOpts) + 42;
+                cv.roundRect(metaX, 106, devW, 28, 14, withAlpha(t.accent, 0.16));
+                cv.circle(metaX + 16, 120, 4.5, isPlaying ? t.accent : withAlpha(t.accent, 0.45));
+                cv.text(devText, metaX + 30, 125, 12, t.accent, devOpts);
 
-                // Artist
-                cv.text(trunc(curTrk.artist, 32), metaX, 208, 21, t.text);
-
-                // Album
+                // Title, artist, album: cut only where the panel ends
+                cv.text(fitText(cv, curTrk.title, metaW, 32, { font: 'bold' }), metaX, 182, 32, t.text, { font: 'bold' });
+                cv.text(fitText(cv, curTrk.artist, metaW, 22), metaX, 218, 22, '#d4d8de');
                 if (curTrk.album) {
-                    cv.text(trunc(curTrk.album, 36), metaX, 240, 17, t.dim);
+                    cv.text(fitText(cv, curTrk.album, metaW, 17), metaX, 248, 17, t.dim);
                 }
 
-                // Audio Format Tag
-                cv.text('LOSSLESS STREAM  -  SPOTIFY CONNECT', metaX, 305, 12, t.dim, { font: 'bold', spacing: 0.5 });
+                // what it plays from: the playlist, Liked Songs or the album
+                const ctxUri = spotify.contextUri || '';
+                let fromKind = '', fromName = '';
+                if (/:collection$/.test(ctxUri)) { fromKind = 'LIKED SONGS'; }
+                else if (/:playlist:/.test(ctxUri)) {
+                    const pl = (spotify.playlists || []).find((p) => p.uri === ctxUri);
+                    fromKind = 'PLAYLIST'; fromName = pl ? pl.name : '';
+                } else if (/:album:/.test(ctxUri)) { fromKind = 'ALBUM'; fromName = curTrk.album || ''; }
+                else if (/:artist:/.test(ctxUri)) { fromKind = 'ARTIST'; }
+                if (fromKind) {
+                    cv.text('PLAYING FROM ' + fromKind, metaX, 304, 11, t.dim, { font: 'bold', spacing: 1.5 });
+                    if (fromName) cv.text(fitText(cv, fromName, metaW, 17, { font: 'bold' }), metaX, 326, 17, t.text, { font: 'bold' });
+                }
 
                 // Progress Bar
                 const progX = 54, progY = 360 + npEx, progW = 820, progH = 6;
@@ -713,74 +896,70 @@ mgu.run({
                 }
                 cv.text(fmtTime(spotify.progressMs), progX, progY + 24, 15, t.accent, { font: 'num' });
                 cv.text(fmtTime(curTrk.durationMs), progX + progW, progY + 24, 15, t.dim, { align: 'right', font: 'num' });
+                // a tap on the bar jumps there; the controller pressed on it jumps 15 s on
+                const seekPad = 10;
+                cv.target(progX - seekPad, progY - 16, progW + seekPad * 2, 34, (at) => {
+                    const to = at && at.w
+                        ? (Math.max(0, Math.min(progW, at.x - seekPad)) / progW) * dur
+                        : spotify.progressMs + 15000;
+                    runBusy('seek', () => spotify.seek(to));
+                }, 'np_seek', 6);
 
-                // Transport Controls
+                // Transport Controls: shuffle, previous, play, next, repeat centred under the panel,
+                // the heart at the right end. Secondary buttons are quiet until they are on.
                 const cy = 444 + npEx;
+                const midX = 464;
+                const btnBg = withAlpha(t.panelEdge, 0.55);
+                const toggle = (x, w, on, key, icon, run) => {
+                    const y = cy - 26, h = 52;
+                    cv.roundRect(x, y, w, h, 26, on ? withAlpha(t.accent, 0.18) : btnBg);
+                    if (on) cv.strokeRoundRect(x, y, w, h, 26, 1.5, withAlpha(t.accent, 0.8));
+                    if (isBusy(key)) {
+                        drawSpinner(cv, x + w / 2, cy, 10, on ? t.accent : '#aeb4bd');
+                    } else {
+                        if (on) cv.circle(x + w / 2, y + h - 7, 2.5, t.accent);      // "on" dot, as Spotify marks it
+                        icon(x + w / 2, on ? cy - 2 : cy, on ? t.accent : '#aeb4bd');
+                    }
+                    cv.target(x, y, w, h, () => runBusy(key, run), key, 10);
+                };
 
-                // 1. Shuffle
-                const isShuf = !!spotify.shuffle;
-                const bShufX = 140, bShufY = 416 + npEx, bShufW = 60, bShufH = 50;
-                cv.roundRect(bShufX, bShufY, bShufW, bShufH, 10, isShuf ? withAlpha(t.accent, 0.25) : withAlpha(t.panelEdge, 0.7));
-                if (isShuf) cv.strokeRoundRect(bShufX, bShufY, bShufW, bShufH, 10, 1.5, t.accent);
-                drawShuffleIcon(cv, bShufX + bShufW / 2, cy, 20, isShuf ? t.accent : t.dim);
-                cv.target(bShufX, bShufY, bShufW, bShufH, () => {
-                    spotify.toggleShuffle();
-                    render();
-                }, 'np_shuffle', 10);
-
-                // 2. Prev
-                const bPrevX = 222, bPrevY = 416 + npEx, bPrevW = 76, bPrevH = 50;
-                cv.roundRect(bPrevX, bPrevY, bPrevW, bPrevH, 10, withAlpha(t.panelEdge, 0.7));
-                drawPrevIcon(cv, bPrevX + bPrevW / 2, cy, 22, t.text);
-                cv.target(bPrevX, bPrevY, bPrevW, bPrevH, () => {
-                    spotify.prevTrack();
-                    render();
-                }, 'np_prev', 12);
-
-                // 3. Play / Pause (Big Accent Button)
-                const bPlayX = 320, bPlayY = 410 + npEx, bPlayW = 120, bPlayH = 62;
-                cv.roundRect(bPlayX, bPlayY, bPlayW, bPlayH, 31, t.accent);
-                if (isPlaying) {
-                    drawPauseIcon(cv, bPlayX + bPlayW / 2, cy, 26, '#000000');
-                } else {
-                    drawPlayIcon(cv, bPlayX + bPlayW / 2, cy, 26, '#000000');
-                }
-                cv.target(bPlayX, bPlayY, bPlayW, bPlayH, () => {
-                    spotify.togglePlay();
-                    render();
+                // 3. Play / Pause: the big round one
+                const playR = 36;
+                cv.circle(midX, cy, playR, isBusy('transport') ? withAlpha(t.accent, 0.6) : t.accent);
+                if (busyOn('transport', 'play')) drawSpinner(cv, midX, cy, 13, '#000000', 4);
+                else if (isPlaying) drawPauseIcon(cv, midX, cy, 28, '#000000');
+                else drawPlayIcon(cv, midX + 2, cy, 28, '#000000');
+                cv.target(midX - playR, cy - playR, playR * 2, playR * 2, () => {
+                    runBusy('transport', () => spotify.togglePlay(), 'play');
                 }, 'np_play', 15);
 
-                // 4. Next
-                const bNextX = 462, bNextY = 416 + npEx, bNextW = 76, bNextH = 50;
-                cv.roundRect(bNextX, bNextY, bNextW, bNextH, 10, withAlpha(t.panelEdge, 0.7));
-                drawNextIcon(cv, bNextX + bNextW / 2, cy, 22, t.text);
-                cv.target(bNextX, bNextY, bNextW, bNextH, () => {
-                    spotify.nextTrack();
-                    render();
-                }, 'np_next', 12);
+                // 2. / 4. Previous, Next: plain white glyphs on a soft round button
+                const skipW = 64, skipGap = 22;
+                const prevX = midX - playR - skipGap - skipW, nextX = midX + playR + skipGap;
+                [[prevX, 'np_prev', 'prev', drawPrevIcon, () => spotify.prevTrack()],
+                 [nextX, 'np_next', 'next', drawNextIcon, () => spotify.nextTrack()]].forEach(([x, key, id, icon, run]) => {
+                    cv.roundRect(x, cy - 26, skipW, 52, 26, btnBg);
+                    if (busyOn('transport', id)) drawSpinner(cv, x + skipW / 2, cy, 10, '#ffffff');
+                    else icon(cv, x + skipW / 2, cy, 24, isBusy('transport') ? '#6b7280' : '#ffffff');
+                    cv.target(x, cy - 26, skipW, 52, () => runBusy('transport', run, id), key, 12);
+                });
 
-                // 5. Repeat
+                // 1. / 5. Shuffle, Repeat
+                const togW = 60, togGap = 18;
+                toggle(prevX - togGap - togW, togW, !!spotify.shuffle, 'np_shuffle',
+                    (x, y, c) => drawShuffleIcon(cv, x, y, 24, c), () => spotify.toggleShuffle());
                 const repMode = spotify.repeat;
-                const isRep = repMode && repMode !== 'off';
-                const bRepX = 560, bRepY = 416 + npEx, bRepW = 60, bRepH = 50;
-                cv.roundRect(bRepX, bRepY, bRepW, bRepH, 10, isRep ? withAlpha(t.accent, 0.25) : withAlpha(t.panelEdge, 0.7));
-                if (isRep) cv.strokeRoundRect(bRepX, bRepY, bRepW, bRepH, 10, 1.5, t.accent);
-                drawRepeatIcon(cv, bRepX + bRepW / 2, cy, 20, isRep ? t.accent : t.dim, repMode);
-                cv.target(bRepX, bRepY, bRepW, bRepH, () => {
-                    spotify.toggleRepeat();
-                    render();
-                }, 'np_repeat', 10);
+                toggle(nextX + skipW + togGap, togW, !!(repMode && repMode !== 'off'), 'np_repeat',
+                    (x, y, c) => drawRepeatIcon(cv, x, y, 24, c, repMode), () => spotify.toggleRepeat());
 
-                // 6. Like (Heart)
+                // 6. Like: at the end of the progress bar's line
                 const isLiked = !!spotify.isCurrentLiked;
-                const bLikeX = 642, bLikeY = 416 + npEx, bLikeW = 60, bLikeH = 50;
-                cv.roundRect(bLikeX, bLikeY, bLikeW, bLikeH, 10, isLiked ? withAlpha(t.accent, 0.25) : withAlpha(t.panelEdge, 0.7));
-                if (isLiked) cv.strokeRoundRect(bLikeX, bLikeY, bLikeW, bLikeH, 10, 1.5, t.accent);
-                drawHeartIcon(cv, bLikeX + bLikeW / 2, cy - 2, 16, isLiked ? t.accent : t.dim, isLiked);
-                cv.target(bLikeX, bLikeY, bLikeW, bLikeH, () => {
-                    spotify.toggleLikeCurrent();
-                    render();
-                }, 'np_like', 10);
+                const likeW = 60, likeX = 874 - likeW;
+                cv.roundRect(likeX, cy - 26, likeW, 52, 26, isLiked ? withAlpha(t.accent, 0.18) : btnBg);
+                if (isLiked) cv.strokeRoundRect(likeX, cy - 26, likeW, 52, 26, 1.5, withAlpha(t.accent, 0.8));
+                if (isBusy('like')) drawSpinner(cv, likeX + likeW / 2, cy, 10, isLiked ? t.accent : '#aeb4bd');
+                else drawHeartIcon(cv, likeX + likeW / 2, cy + 1, 24, isLiked ? t.accent : '#aeb4bd', isLiked);
+                cv.target(likeX, cy - 26, likeW, 52, () => runBusy('like', () => spotify.toggleLikeCurrent()), 'np_like', 10);
             }
 
             // Right Pane: Up Next in Queue (w: 656, h: 468)
@@ -816,15 +995,18 @@ mgu.run({
                 const qy = 100 + idx * 51;
                 cv.roundRect(938, qy, 620, 44, 8, t.track);
                 cv.text(String(queueScroll + idx + 1), 958, qy + 27, 15, t.dim, { align: 'center', font: 'num' });
-                cv.text(trunc(trk.title, 24), 982, qy + 27, 17, t.text, { font: 'bold' });
-                cv.text(trunc(trk.artist, 20), 1260, qy + 27, 15, t.dim);
-                cv.text(fmtTime(trk.durationMs), 1530, qy + 27, 14, t.dim, { align: 'right', font: 'num' });
+                cv.text(fitText(cv, trk.title, 1250 - 982, 17, { font: 'bold' }), 982, qy + 27, 17, t.text, { font: 'bold' });
+                cv.text(fitText(cv, trk.artist, 1478 - 1260, 15), 1260, qy + 27, 15, t.dim);
+                const startKey = 'q:' + trk.id;
+                if (busyOn('start', startKey)) drawSpinner(cv, 1520, qy + 22, 8, t.accent);
+                else cv.text(fmtTime(trk.durationMs), 1530, qy + 27, 14, t.dim, { align: 'right', font: 'num' });
 
                 cv.target(938, qy, 620, 44, () => {
-                    if (spotify.currentPlaylist) {
-                        const pIdx = spotify.currentPlaylist.tracks.findIndex((x) => x.id === trk.id);
-                        if (pIdx >= 0) spotify.playTrack(spotify.currentPlaylist, pIdx);
-                    }
+                    // what plays now, from this song on (a song queued by hand: that song alone)
+                    const pl = spotify.currentPlaylist;
+                    const pIdx = !spotify.contextUri && pl && pl.tracks ? pl.tracks.findIndex((x) => x.id === trk.id) : -1;
+                    if (pIdx >= 0) runBusy('start', () => spotify.playTrack(pl, pIdx), startKey);
+                    else runBusy('start', () => spotify.playQueued(trk), startKey);
                 }, 'q_trk_' + (queueScroll + idx), 8);
             });
         }
@@ -837,22 +1019,47 @@ mgu.run({
 
             if (spotify.isAuthenticated()) {
                 // Connected Card
+                const GREEN = '#1ed760';
                 cv.roundRect(48, 98, 532, 284, 14, '#0a1612');
-                cv.strokeRoundRect(48, 98, 532, 284, 14, 1.5, '#1ed760');
+                cv.strokeRoundRect(48, 98, 532, 284, 14, 1.5, withAlpha(GREEN, 0.55));
 
-                const cx = 314;
-                cv.circle(cx, 154, 28, '#1ed760');
-                cv.text('[OK]', cx, 162, 16, '#000000', { align: 'center', font: 'bold' });
+                // badge: a check in a green disc, a soft ring around it
+                const cx = 314, by = 140;
+                cv.circle(cx, by, 36, withAlpha(GREEN, 0.12));
+                cv.arc(cx, by, 30, 32, 0, 360, withAlpha(GREEN, 0.45));
+                cv.circle(cx, by, 25, GREEN);
+                cv.polyline([[cx - 11, by + 1], [cx - 4, by + 8], [cx + 11, by - 8]], 4.5, '#04140b');
+                cv.circle(cx - 4, by + 8, 2.2, '#04140b');       // round the check's corner
 
-                cv.text('SPOTIFY CONNECTED', cx, 212, 20, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
-                cv.text('Active Target: ' + spotify.activeDevice, cx, 238, 15, '#cbd5e1', { align: 'center' });
-                cv.text('Personal library & playlists active', cx, 260, 13, '#64748b', { align: 'center' });
+                cv.text('CONNECTED TO SPOTIFY', cx, 202, 20, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+                const prof = spotify.profile;
+                const plan = prof && prof.product ? prof.product.charAt(0).toUpperCase() + prof.product.slice(1) : '';
+                cv.text(prof ? fitText(cv, prof.name + (plan ? '  -  ' + plan : ''), 480, 16) : 'Signed in', cx, 226, 16, '#cbd5e1', { align: 'center' });
 
-                // Disconnect Button
-                const dcX = 134, dcY = 298, dcW = 360, dcH = 46;
-                cv.roundRect(dcX, dcY, dcW, dcH, 10, '#1f1418');
-                cv.strokeRoundRect(dcX, dcY, dcW, dcH, 10, 1.5, '#e1001a');
-                cv.text('DISCONNECT / SWITCH ACCOUNT', dcX + dcW / 2, dcY + 29, 14, '#e1001a', { align: 'center', font: 'bold', spacing: 1 });
+                // where the music plays: a pill with a live dot, or how to start
+                const pillW = 380, pillX = cx - pillW / 2, pillY = 240, pillH = 32;
+                if (spotify.activeDevice) {
+                    cv.roundRect(pillX, pillY, pillW, pillH, 16, withAlpha(GREEN, 0.14));
+                    const label = fitText(cv, 'Playing on ' + spotify.activeDevice, pillW - 50, 15, { font: 'bold' });
+                    const lw = cv.textWidth(label, 15, { font: 'bold' });
+                    const lx = cx - (lw + 18) / 2;
+                    cv.circle(lx + 5, pillY + pillH / 2, 5, spotify.isPlaying ? GREEN : withAlpha(GREEN, 0.5));
+                    cv.text(label, lx + 18, pillY + 21, 15, GREEN, { font: 'bold' });
+                } else {
+                    cv.roundRect(pillX, pillY, pillW, pillH, 16, withAlpha('#ffffff', 0.06));
+                    cv.text('No device playing - open Spotify on your phone', cx, pillY + 21, 14, '#94a3b8', { align: 'center' });
+                }
+
+                // the library at a glance
+                const nPl = (spotify.playlists || []).length;
+                const nLiked = spotify.likedTotal || (spotify.likedSongs || []).length;
+                cv.text(nPl + ' playlist' + (nPl === 1 ? '' : 's') + '   |   ' + nLiked + ' liked song' + (nLiked === 1 ? '' : 's'), cx, 294, 14, '#64748b', { align: 'center' });
+
+                // Disconnect Button: quiet until needed
+                const dcX = 164, dcY = 316, dcW = 300, dcH = 42;
+                cv.roundRect(dcX, dcY, dcW, dcH, 10, '#1a1215');
+                cv.strokeRoundRect(dcX, dcY, dcW, dcH, 10, 1, withAlpha('#e1001a', 0.7));
+                cv.text('DISCONNECT / SWITCH ACCOUNT', dcX + dcW / 2, dcY + 26, 13, '#ff5c6c', { align: 'center', font: 'bold', spacing: 1 });
 
                 cv.target(dcX, dcY, dcW, dcH, () => {
                     cloudPair.notifyUnpair();
@@ -906,28 +1113,54 @@ mgu.run({
 
                 // Refresh Button
                 const rfW = 220, rfH = 42, rfX = 770, rfY = 240;
-                cv.roundRect(rfX, rfY, rfW, rfH, 8, withAlpha(t.accent, 0.22));
-                cv.strokeRoundRect(rfX, rfY, rfW, rfH, 8, 1.5, t.accent);
-                cv.text('REFRESH DEVICES', rfX + rfW / 2, rfY + 26, 14, t.accent, { align: 'center', font: 'bold', spacing: 1 });
+                const devBusy = isBusy('devices');
+                cv.roundRect(rfX, rfY, rfW, rfH, 8, withAlpha(t.accent, devBusy ? 0.1 : 0.22));
+                cv.strokeRoundRect(rfX, rfY, rfW, rfH, 8, 1.5, withAlpha(t.accent, devBusy ? 0.5 : 1));
+                if (devBusy) {
+                    drawSpinner(cv, rfX + 44, rfY + rfH / 2, 9, t.accent);
+                    cv.text('SEARCHING...', rfX + rfW / 2 + 12, rfY + 26, 14, withAlpha(t.accent, 0.8), { align: 'center', font: 'bold', spacing: 1 });
+                } else {
+                    cv.text('REFRESH DEVICES', rfX + rfW / 2, rfY + 26, 14, t.accent, { align: 'center', font: 'bold', spacing: 1 });
+                }
                 cv.target(rfX, rfY, rfW, rfH, () => {
-                    spotify.fetchDevices().then(() => render());
+                    runBusy('devices', () => spotify.fetchDevices());
                 }, 'btn_refresh_devs', 12);
             } else {
-                devices.slice(0, 3).forEach((dev, idx) => {
+                // as many as the panel holds; the one that plays first
+                const DEV_ROWS = Math.max(3, Math.floor((330 + cEx) / 78));
+                const shown = devices.slice().sort((x, y) => (y.isActive ? 1 : 0) - (x.isActive ? 1 : 0)).slice(0, DEV_ROWS);
+                shown.forEach((dev, idx) => {
                     const dy = 102 + idx * 78;
-                    const isCur = dev.isActive || dev.name === spotify.activeDevice;
-                    cv.roundRect(644, dy, 908, 68, 12, isCur ? withAlpha(t.accent, 0.22) : t.track);
-                    if (isCur) cv.strokeRoundRect(644, dy, 908, 68, 12, 2, t.accent);
+                    const isCur = !!dev.isActive;
+                    const moving = busyOn('transfer', dev.id);
+                    cv.roundRect(644, dy, 908, 68, 12, isCur ? withAlpha(t.accent, 0.16) : t.track);
+                    if (isCur || moving) cv.strokeRoundRect(644, dy, 908, 68, 12, 1.5, withAlpha(t.accent, isCur ? 0.8 : 0.4));
 
-                    cv.circle(674, dy + 34, 10, isCur ? '#1db954' : t.tick);
-                    cv.text(dev.name, 704, dy + 32, 22, isCur ? t.text : '#dddddd', { font: 'bold' });
-                    cv.text(dev.type + (isCur ? '  -  CURRENT ACTIVE TARGET' : '  -  Available'), 704, dy + 52, 16, isCur ? t.accent : t.dim);
+                    // the device's kind, in a round tile
+                    cv.circle(686, dy + 34, 22, isCur ? withAlpha(t.accent, 0.2) : withAlpha('#ffffff', 0.06));
+                    drawDeviceIcon(cv, 686, dy + 34, dev.type, isCur ? t.accent : '#aeb4bd');
 
-                    cv.roundRect(1420, dy + 16, 106, 36, 8, isCur ? t.accent : withAlpha(t.tick, 0.5));
-                    cv.text(isCur ? 'ACTIVE' : 'TRANSFER', 1473, dy + 39, 15, '#ffffff', { align: 'center', font: 'bold' });
+                    cv.text(fitText(cv, dev.name, 1390 - 724, 21, { font: 'bold' }), 724, dy + 31, 21, isCur ? t.text : '#dddddd', { font: 'bold' });
+                    const vol = typeof dev.volume === 'number' ? '  |  Volume ' + dev.volume + '%' : '';
+                    cv.text((isCur ? (spotify.isPlaying ? 'Playing now' : 'Paused here') : dev.type) + vol, 724, dy + 53, 15, isCur ? t.accent : t.dim);
+
+                    // the action: where it plays, or "play here"
+                    const bx = 1400, bw = 128, by = dy + 16, bh = 36;
+                    if (isCur) {
+                        cv.roundRect(bx, by, bw, bh, 18, withAlpha(t.accent, 0.22));
+                        cv.circle(bx + 22, by + bh / 2, 4, t.accent);
+                        cv.text('ACTIVE', bx + bw / 2 + 8, by + 23, 13, t.accent, { align: 'center', font: 'bold', spacing: 1 });
+                    } else if (moving) {
+                        cv.roundRect(bx, by, bw, bh, 18, withAlpha('#ffffff', 0.06));
+                        drawSpinner(cv, bx + bw / 2, by + bh / 2, 9, t.accent);
+                    } else {
+                        const dim = isBusy('transfer');
+                        cv.strokeRoundRect(bx, by, bw, bh, 18, 1.5, withAlpha('#ffffff', dim ? 0.15 : 0.45));
+                        cv.text('PLAY HERE', bx + bw / 2, by + 23, 13, dim ? '#64748b' : '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+                    }
 
                     cv.target(644, dy, 908, 68, () => {
-                        spotify.transferToDevice(dev.id);
+                        if (!isCur) runBusy('transfer', () => spotify.transferToDevice(dev.id), dev.id);
                     }, 'dev_' + idx, 12);
                 });
             }
@@ -986,7 +1219,7 @@ mgu.run({
 
             // G20 Live Cockpit frame tabs along the top: keep badges compact so tabs & Settings are never crowded out
             G.frame(cv, t, PAGES, page, [
-                { text: spotify.activeDevice ? trunc(spotify.activeDevice, 16) : 'SPOTIFY' },
+                { text: spotify.activeDevice ? trunc(spotify.activeDevice, 28) : 'SPOTIFY' },
                 { text: spotify.isPlaying ? 'PLAYING' : 'PAUSED', color: spotify.isPlaying ? '#1ed760' : t.dim }
             ]);
 

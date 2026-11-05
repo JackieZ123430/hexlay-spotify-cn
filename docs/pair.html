@@ -656,7 +656,9 @@
                 transmissionPayload = await encryptPayload(JSON.stringify(tokenData), secretKey);
             }
             if (!transmissionPayload) {
-                showStatus('This pairing link has no valid car key (or the browser lacks WebCrypto). Scan the QR code on the car again.', true);
+                showStatus(!(secretKey && secretKey.length === 64)
+                    ? 'Your car\'s key was not found in this browser tab. Close the other pairing tabs, scan the QR code on the car screen again, and tap Connect in the page that opens.'
+                    : 'This browser cannot encrypt the token for your car (no WebCrypto). Open the QR link in Safari or Chrome.', true);
                 return;
             }
 
@@ -746,6 +748,12 @@
 
             if (!customChannel) {
                 showStatus('No vehicle connected. Please scan the QR code on your car display.', true);
+                return;
+            }
+
+            // without the car's key the token could not be sent: stop before the Spotify login
+            if (customChannel === channel && !(secretKey && secretKey.length === 64)) {
+                showStatus('This page was opened without your car\'s key. Close this tab, scan the QR code on the car screen again, and tap Connect in the page that opens.', true);
                 return;
             }
 

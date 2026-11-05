@@ -2,7 +2,7 @@
   "id": "quick_code",
   "title": "QuickCode",
   "description": "BMW G-Series BDC (0x40) coding viewer. Read-only: coding writes are disabled until the coding map is verified",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "vendor": "custom",
   "loggingId": "OAQC",
   "iconGlyph": "code",

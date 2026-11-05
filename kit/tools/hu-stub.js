@@ -90,7 +90,7 @@ function headUnit(stage, o) {
         onScroll(fn) { display.onScroll = fn; },
         onLayout(fn) { display.onLayout(fn); },
         controller: { grab(on) { display.grab(on); }, onInput(fn) { display.onCcu = fn; } },
-        signals: live ? liveSignals(hu) : { watch: async (iface) => ({ iface, error: 'preview' }), proxy: async () => { throw new Error('preview'); } },
+        signals: live ? liveSignals(hu) : process.env.MGU_PREVIEW_BDC ? previewBdcSignals() : { watch: async (iface) => ({ iface, error: 'preview' }), proxy: async () => { throw new Error('preview'); } },
         theme: themeFn,
         loop: live ? liveLoop(hu) : (n, fps, fn) => { loops[n] = fn; return { stop() {}, kick() {} }; },
         // home-screen widget (app.json "startWidget"): preview places one small and one big ("render" draws them);
@@ -122,6 +122,27 @@ function headUnit(stage, o) {
 }
 
 /** mgu.js's wireSettings (the Settings button: the drawn sheet, else the HMI's screen), taken from the app's kit. */
+/**
+ * Preview only (MGU_PREVIEW_BDC=1): a TASU link with a BDC (0x40) that answers session control and
+ * refuses everything else (NRC 0x31), so QuickCode's read-only pages can be drawn without made-up data.
+ */
+function previewBdcSignals() {
+    let onResp = null;
+    return {
+        watch: async (iface) => ({ iface, error: 'preview' }),
+        proxy: async (iface) => { if (!/InternalTasu/.test(iface)) throw new Error('preview'); return { iface }; },
+        on: async (p, ev, fn) => { if (ev === 'sendTasuResponse') onResp = fn; },
+        onAvailable: async (p, fn) => { setTimeout(() => fn(true), 50); },
+        call: async (p, m, req) => {
+            const sid = req.serviceID, data = Array.from(req.udsData || []);
+            const uds = sid === 0x10 ? [0x50, data[0], 0x00, 0x32, 0x01, 0xF4] : [0x7F, sid, 0x31];
+            setTimeout(() => onResp && onResp({ udsResponse: Buffer.from([0, 0, 0, 0, 0, 0, req.targetAddress, 0, 0].concat(uds)), errorCode: 'NO_ERROR' }), 20);
+            return { TasuErrorEnum: 'NO_ERROR' };
+        },
+        hasNative: () => false,
+    };
+}
+
 function wireSettings(src, kitDir, spec) {
     const m = src.match(/function wireSettings[\s\S]*?\n}\n/);
     if (!m) return () => {};

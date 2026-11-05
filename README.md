@@ -1,7 +1,7 @@
 # BMW iDrive 7 (MGU) — Custom Apps Suite
 
 <p align="center">
-  <b>A curated collection of custom applications for BMW iDrive 7 (MGU High / Intel Atom A3960), rendered at 60 fps directly on the vehicle's GPU.</b>
+  <b>Custom applications for BMW iDrive 7 (MGU High / Intel Atom A3960), rendered at 60 fps on the head unit's GPU and installed through the MGU Store.</b>
 </p>
 
 <p align="center">
@@ -15,143 +15,141 @@
 
 ## Credits & Acknowledgements
 
-This repository is forked and built upon the foundational open-source BMW iDrive 7 platform:
+This repository is built on the open-source BMW iDrive 7 platform:
 
-* [**cauliflowermossgrape/idrive7-apps**](https://github.com/cauliflowermossgrape/idrive7-apps) — The foundational runtime, native OpenGL ES GPU rendering daemon, SOME/IP vehicle telemetry bridges, and TASU UDS diagnostic engine for BMW iDrive 7.
-* [**mgu-store**](https://github.com/robertnisipeanu/mgu-store) — The in-car app store and package manager for BMW iDrive 7 by Robert Nisipeanu.
+* [**cauliflowermossgrape/idrive7-apps**](https://github.com/cauliflowermossgrape/idrive7-apps) — the app runtime, the native OpenGL ES renderer, SOME/IP vehicle signals and the TASU UDS diagnostic transport.
+* [**mgu-store**](https://github.com/robertnisipeanu/mgu-store) — the in-car app store, package manager and internet uplink by Robert Nisipeanu.
 
 > [!NOTE]
-> For core SDK extraction, toolchain documentation, low-level SOME/IP signal catalogs, and C/OpenGL renderer internals, please refer directly to the source repository at [**cauliflowermossgrape/idrive7-apps**](https://github.com/cauliflowermossgrape/idrive7-apps).
+> For SDK extraction, toolchain documentation, SOME/IP signal catalogs and renderer internals, see [**cauliflowermossgrape/idrive7-apps**](https://github.com/cauliflowermossgrape/idrive7-apps).
 
 ---
 
 ## Included Applications
 
+| App | Version | Needs internet | Touches vehicle ECUs |
+| :--- | :---: | :---: | :--- |
+| [QuickCode](#1-quickcode-quick_code) | 1.0.2 | No | Reads the BDC only (no writes) |
+| [Spotify](#2-spotify-spotify) | 1.0.7 | Yes | No |
+| [M-Cinema](#3-m-cinema-m_cinema) | 1.0.9 | Yes | No (reads vehicle speed) |
+| [M-Copilot](#4-m-copilot-m_copilot) | 1.0.1 | Yes | No (reads driving signals) |
+
 ### 1. QuickCode (`quick_code`)
-**One-tap cockpit coding with automated backups for all BMW G-Series vehicles.**
+**BMW G-Series BDC (`0x40`) coding viewer. Currently read-only.**
 
 ![QuickCode Comfort](docs/screenshots/quick_code_comfort.png)
 
-![QuickCode Ambient](docs/screenshots/quick_code.png)
+| Ambient RGB preview | Backups (read-only build) |
+| :---: | :---: |
+| ![QuickCode Ambient](docs/screenshots/quick_code.png) | ![QuickCode Backups](docs/screenshots/quick_code_backups.png) |
 
-* **Strict Low-Risk BDC Architecture (`0x40`)**:
-  - Restricts all coding writes exclusively to the **Body Domain Controller (BDC_BODY3, `0x40`)**.
-  - High-risk modules (**HU_MGU `0x63`**, **DME `0x12`**, **DSC `0x29`**) are completely excluded from coding writes, physically eliminating any risk of head unit black-screen, crash, or bootloop failures.
-* **Safe Comfort & Lighting Options**:
-  - **Auto Start/Stop Memory (`TC_MSA_MEMORY`)**: Permanently remembers the last button state across ignition cycles (stays OFF).
-  - **Instant Mirror Fold on Lock (`KOMFORT_SCHLIESSEN`)**: Folds side mirrors immediately (`0.0s` delay vs factory `1.5s` hold delay).
-  - **Continuous Window Roll-Up (`FH_TUERAUF_STOP_MAUT`)**: Windows continue rolling up uninterrupted when a door opens.
-  - **One-Touch Tailgate Close (`HK_TASTE_TIPP_SCHLIESSEN`)**: One-touch close tailgate from key fob and driver door button without holding.
-  - **5-Flash Comfort Turn Signals (`PIA_DEFAULT_TIPPBLINKEN`)**: One-touch indicator flashes 5 times instead of factory 3 flashes.
-  - **Curb Monitor Mirror Tilt 70% (`ASP_BORDSTEIN_AUTOMATIK`)**: Passenger mirror dips 70% in reverse to show the curb and rim instead of pointing straight at the ground.
-  - **Acoustic Lock/Unlock Chirp (`DEF_GLOBAL_LOCK_CLO`)**: Audible horn chirp confirmation on lock/unlock.
-  - **Emergency Flashing Brake Lights (`BFD_ON`)**: Brake Force Display pulses outer brake lamps under heavy deceleration.
-  - **Ambient RGB Color Palettes**: Presets for BMW Bronze (OEM), M Neon Cyan, Miami Violet, Acid Lime, BMW Blue (OEM), and M Crimson Red with live interior light tube preview.
-* **Automated Pre-Coding Backups & 1-Tap Rollback**:
-  - Automatically captures a timestamped snapshot of all parameters before every modification.
-  - Dedicated **"Backups & Rollback"** tab with 1-tap `[RESTORE]` rollback and `[RESTORE ALL FACTORY OEM DEFAULTS]`.
-* **Vehicle Safety Interlocks**:
-  - Strictly locks coding if engine is running (RPM > 0) or vehicle is in motion (Speed > 0 km/h).
-  - Enforces Terminal 15 Diagnostic Mode (3-press Start/Stop, engine off) matching BimmerCode and ISTA safety protocols.
+> [!WARNING]
+> **Coding writes are disabled.** The DIDs and byte layouts QuickCode would write (`0x2001` comfort block, `0x2002` ambient RGB) have not been verified against BMW coding data (CAFD) for any real BDC. Writing them could change unrelated settings on the car's central gateway. Every write path — apply, restore defaults and rollback — is blocked by one hard switch in `apps/quick_code/safety.js`, and no `0x2E` (WriteDataByIdentifier) request is ever sent. Until the coding map is verified, use E-Sys or BimmerCode for coding.
+
+What it does today:
+* **Bus check**: confirms the BDC (`0x40`) answers over the head unit's own diagnostic transport (TASU). Without an answer, the app shows a lockout screen; it never assumes the module is there.
+* **READ BDC**: reads DIDs `0x2001` / `0x2002` and shows and logs the raw bytes the BDC returns. The bytes are not decoded into option states, because the map is unverified.
+* **Planned options** (shown, locked): Auto Start/Stop memory, instant mirror fold, continuous window roll-up, one-touch tailgate, 5-flash comfort signals, curb mirror tilt, acoustic lock chirp, flashing brake force display and ambient RGB presets.
+* **Safety layer, ready for when writes are enabled**, fail-closed by default:
+  - requires live engine-speed and vehicle-speed data (demo data never counts), engine at 0 rpm and the car standing still;
+  - requires BMW's own vehicle state to report Diagnostic Mode (`VehicleCondition` = `PRUEFEN_ANALYSE_DIAGNOSE`), not a guess from 0 rpm;
+  - matches every UDS reply to its request (service and DID echo), one request at a time per ECU, then verifies writes by read-back;
+  - snapshots the state before every write for rollback.
 
 ---
 
 ### 2. Spotify (`spotify`)
-**Native Spotify Connect controller and library browser directly on the iDrive 7 central display.**
+**Spotify Connect controller and library browser on the iDrive 7 central display.**
 
 ![Spotify Playlists](docs/screenshots/spotify.png)
 
-* **Online Mode by Default**:
-  - Automatically launches in **Online Mode** (`demo: "off"`) for live personal library browsing and playback control.
-  - Requires authenticated personal account before showing demo tracks; launches directly to the **Connect** tab on fresh installations.
-* **Real Cloud QR Code Pairing (Zero 127.0.0.1 / Works over 4G/5G)**:
-  - Generates a unique pairing session and displays a crisp QR code pointing to `https://hexlay.github.io/idrive7-custom-apps/pair.html`.
-  - Works on **any smartphone over cellular data (4G/5G) or car Wi-Fi** — completely eliminating failed `127.0.0.1` / localhost URLs.
-  - Tap **"Connect with Spotify"** or paste your access token; tokens sync directly to the car via a secure ephemeral channel.
-  - **Zero terminal, zero SSH, and zero Node commands required.**
-* **Active Internet Connectivity Safeguard**:
-  - Actively monitors connectivity to `api.spotify.com:443`.
-  - If the vehicle loses internet, the player safely locks with a high-contrast **"NO INTERNET CONNECTION"** screen with `[RETRY CONNECTION]` and `[SWITCH TO DEMO MODE]` options.
-* **Cockpit UI & Features**:
-  - 60 fps animated mini equalizers on active tracks.
-  - Browse personal playlists, saved library, and playback queue.
-  - Instant target device switching across Spotify Connect speakers, phones, and vehicle audio.
-  - Persistent token storage across ignition cycles.
+* **Cloud QR pairing over any network**: the Connect tab shows a QR code for [`pair.html`](https://hexlay.github.io/idrive7-custom-apps/pair.html). Sign in on your phone (cellular data or Wi-Fi) and the tokens reach the car **end-to-end encrypted** (AES-256-GCM, a key that only exists in this car's QR code). The car ignores anything on the pairing channel that is not encrypted with its key, including unpair requests.
+* **Library & playback**: playlists, liked songs, now playing with the queue, and switching between Spotify Connect devices.
+* **Internet through the MGU Store uplink**: looks up names through the uplink's DNS (see [Internet access](#internet-access)) and checks connectivity with a real HTTPS request. Without internet the player locks with **NO INTERNET CONNECTION**, **Retry** and **Switch to Demo Mode**.
+* **Robust sessions**: tokens refresh once even when several requests expire together, the pairing survives restarts, and TLS certificates are always verified (a head-unit clock that is days off at boot is tolerated, as in the MGU Store's own updater).
 
-| Phone QR Pairing Screen | Offline Connectivity Lock |
+| Phone QR Pairing | No Internet |
 | :---: | :---: |
 | ![Spotify Pairing](docs/screenshots/spotify_connect.png) | ![Spotify Offline](docs/screenshots/spotify_offline.png) |
 
 ---
 
 ### 3. M-Cinema (`m_cinema`)
-**Ultrawide 21:9 Cockpit Theater & Seamless YouTube Video Cast for BMW iDrive 7.**
+**21:9 cockpit video player with in-car YouTube search and casting from the YouTube app.**
 
-| YouTube Cockpit Player (21:9) | In-Car YouTube Search & Speller | Official YouTube TV Code Link |
+| Player | In-Car Search | Link with TV Code |
 | :---: | :---: | :---: |
 | ![M-Cinema](docs/screenshots/m_cinema.png) | ![M-Cinema Search](docs/screenshots/m_cinema_search.png) | ![M-Cinema Cast](docs/screenshots/m_cinema_cast.png) |
 
-* **Direct YouTube Search in iDrive 7**:
-  - Search any video directly from the central display using touch or the iDrive rotary controller.
-  - Interactive on-screen BMW speller keyboard, 1-touch category chips (`BMW M3`, `Nürburgring`, `Car Reviews`, `Drag Race`), and live video results with instant playback.
-* **Official YouTube App Casting ("Link with TV Code")**:
-  - Connects with the official YouTube mobile app on iPhone and Android via Google's official **Lounge on TV** protocol.
-  - In YouTube mobile app: **Settings > Watch on TV > Link with TV code** — enter the 12-digit code displayed on your cockpit screen. The vehicle permanently appears as a Cast target (`BMW iDrive 7`) in the official YouTube app!
-  - Any video tapped on iPhone or Android routes directly to the iDrive cockpit display.
-* **Decoded Video Thumbnail Artwork & 21:9 Ultrawide**:
-  - Downloads and decodes official high-resolution YouTube video thumbnail art into the cockpit screen with ambient edge accents and rotary scrubbing.
-* **Intel Atom A3960 Hardware Thermal Safe Cap**:
-  - Clamped strictly to thermal-safe **720p 60 HD** (cool, responsive, and efficient), protecting the head unit processor from overheating.
+* **Search in the car**: on-screen keyboard (touch or the iDrive controller), quick category chips and thumbnail results.
+* **Cast from the YouTube app**: in the YouTube app, **Settings > Watch on TV > Link with TV code**, then enter the 12-digit code on the Connect tab. Videos tapped on the phone then play on the central display. The receiver recovers by itself after connection loss.
+* **Motion lockout** (Settings > Motion safety lockout): *Auto* pauses the video while the car moves faster than 3 km/h; *Strict* also locks while the speed is unknown; *Always Allow* turns the lock off.
+* **Reliable playback**: the video downloads to a RAM cache (up to 300 MB, limited by free space) and plays once it is complete, with a buffering progress screen; stalled downloads resume where they stopped. Streams are capped at 720p to keep the Intel Atom cool.
 
 ---
 
 ### 4. M-Copilot (`m_copilot`)
-**Performance telemetry, track metrics, and telemetry logging for BMW M & G-Series vehicles.**
+**AI co-driver and assistant for BMW G-Series vehicles.**
 
 ![M-Copilot](docs/screenshots/m_copilot.png)
 
-* Real-time readouts of engine RPM, vehicle speed, coolant and oil temperatures, g-force vectors, and live tire pressures.
-* High-contrast M-Performance cockpit aesthetics with dark-theme styling.
+* **Ask about your car**: topic chips across Dynamics, Thermal, Chassis and Care (launch, drift and xDrive modes, turbo cooling, tire grip, oil specs and more), or type your own question with the on-screen keyboard. Answers take live driving signals (speed, temperatures) into account.
+* **Your choice of AI provider**: Google Gemini, Anthropic Claude, OpenAI, Groq or OpenRouter.
+* **Pair from your phone**: scan the QR code and enter the provider and API key on [`copilot.html`](https://hexlay.github.io/idrive7-custom-apps/copilot.html). The key reaches the car end-to-end encrypted, as with Spotify.
+* **Read-only**: M-Copilot only reads driving signals and never writes to any ECU.
 
 ---
 
 ## How to Install via MGU Store
 
-The recommended way to install and update these applications is through [**MGU Store**](https://github.com/robertnisipeanu/mgu-store):
+The recommended way to install and update these apps is the [**MGU Store**](https://github.com/robertnisipeanu/mgu-store):
 
-1. On your iDrive central display, open **MGU Store > Sources > Add source**.
-2. Enter this repository directly:
+1. On the central display, open **MGU Store > Sources > Add source**.
+2. Enter this repository:
    ```text
    hexlay/idrive7-custom-apps
    ```
-3. Tap **OK**. MGU Store fetches `mgu-repo.json` and immediately displays all apps.
-4. Tap any app to install!
+3. Tap **OK**. The MGU Store reads `mgu-repo.json` and lists the apps.
+4. Tap an app to install it. Updates appear in the store when a new version is pushed.
+
+### Internet access
+
+Spotify, M-Cinema and M-Copilot need the MGU Store's **internet uplink** (`mgu-uplink`): Wi-Fi such as a phone hotspot, a USB-tethered phone, an LTE stick or a USB Ethernet adapter. The store routes only apps that declare `"mguInternet": true`, and the head unit's own resolver cannot reach the internet, so these apps resolve names through the DNS servers of the uplink's lease (`kit/runtime/uplink.js`).
+
+If an app says it is offline while the store shows **Online**, look for the `uplink:` line at the start of the app's log (`<app>.log` in its data folder):
+* `lease <ip> via <interface>` — the app is routed; the problem is elsewhere.
+* `no lease ... uplink is online but this app is not routed` — reinstall the app from the store so it is added to the uplink's app list.
+* `no lease ... uplink offline or not installed` — connect the store to a network first.
 
 ---
 
 ## Platform & Developer Documentation
 
 For everything else, including:
-* **SDK Extraction & Setup** (`kit/tools/extract_sdk.js`)
-* **Vehicle SOME/IP Signal Catalogs**
-* **Native C / Wayland / OpenGL ES GPU Renderer** (`mgu-render`)
-* **Controller Input Hooks** (`mgu-inputgate`)
-* **OBD-ENET / SSH Deployment Scripts**
-* **Creating New Applications**
+* **SDK extraction & setup** (`kit/tools/extract_sdk.js`)
+* **Vehicle SOME/IP signal catalogs**
+* **The native C / Wayland / OpenGL ES GPU renderer** (`mgu-render`)
+* **Controller input hooks** (`mgu-inputgate`)
+* **OBD-ENET / SSH deployment scripts**
+* **Creating new apps**
 
-👉 **Please visit the source repository: [cauliflowermossgrape/idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps)** and the [**MGU Store Guide**](https://github.com/robertnisipeanu/mgu-store).
+👉 **See the source repository: [cauliflowermossgrape/idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps)** and the [**MGU Store guide**](https://github.com/robertnisipeanu/mgu-store).
+
+To build locally: `python3 kit/tools/build.py <app_id>` writes `dist/<app_id>@<version>.tgz`. `node kit/tools/emu.js <app_id>` runs an app in the browser emulator, and `node kit/tools/preview.js dist/<app_id> <outDir>` renders it to PNGs (with `MGU_PREVIEW_BDC=1`, a stub BDC lets QuickCode's pages render).
 
 ---
 
 ## Privacy & Security
 
-* **Zero Hardcoded Secrets**: This repository contains no private API keys, client secrets, tokens, or personal identifiers.
-* **Local Data Isolation**: Authentication tokens (`spotify_auth.json`), coding states (`quick_code_state.json`), and pre-coding snapshots (`quick_code_backups.json`) are stored strictly on the local vehicle head unit partition (`dataDir`).
-* **Git Protection**: Sensitive file extensions (`*_auth.json`, `*_state.json`, `*_backups.json`, `*.key`, `*.pem`) are strictly excluded in `.gitignore`.
+* **No hardcoded secrets**: this repository contains no API keys, client secrets, tokens or personal identifiers.
+* **End-to-end encrypted pairing**: Spotify tokens and AI provider keys travel from the phone to the car through a public relay (`ntfy.sh`), encrypted with AES-256-GCM using a key that only exists in the car's QR code. The car accepts only messages that decrypt and authenticate with that key.
+* **Verified TLS**: all requests that carry tokens or keys verify the server's certificate chain and hostname; only the head unit's possibly wrong clock is tolerated.
+* **Local data**: tokens (`spotify_auth.json`), app state and QuickCode snapshots stay in each app's data folder on the head unit.
+* **Git protection**: `*_auth.json`, `*_state.json`, `*_backups.json`, `*.key` and `*.pem` are excluded in `.gitignore`, and the build never packages them.
 
 ---
 
 ## License
 
-This project is released under the GNU General Public License v3.0 or later.  
+This project is released under the GNU General Public License v3.0 or later.
 Not affiliated with or endorsed by Bayerische Motoren Werke (BMW) AG.

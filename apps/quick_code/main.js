@@ -533,10 +533,12 @@ mgu.run({
                 // Interlocked / Locked State (e.g. Engine Running)
                 cv.roundRect(x, y, w, h, r, '#0a0e14');
                 cv.strokeRoundRect(x, y, w, h, r, 1.5, withAlpha(lockColor || '#ffb703', 0.65));
-                cv.text('LOCKED', x + w / 2, y + 28, 12, lockColor || '#ffb703', { align: 'center', font: 'bold', spacing: 1 });
                 const tx = x + (active ? w - r : r), ty = y + r;
                 cv.circle(tx, ty, thumbR, '#080c12');
                 cv.circle(tx, ty, thumbR - 1.5, '#1e293b');
+                // label in the free half, beside the knob
+                const lx = active ? x + (w - 2 * r) / 2 + 2 : x + 2 * r + (w - 2 * r) / 2 - 2;
+                cv.text('LOCK', lx, y + 28, 11, lockColor || '#ffb703', { align: 'center', font: 'bold', spacing: 0.5 });
                 return;
             }
 
@@ -667,7 +669,7 @@ mgu.run({
                 const pillBg = canCode ? (item.active ? '#0a2e1d' : '#141c26') : '#241215';
                 const pillBorder = canCode ? (item.active ? '#10b981' : '#283548') : safeCheck.badgeColor;
                 const pillTextCol = canCode ? (item.active ? '#2af575' : '#8a99ad') : safeCheck.badgeColor;
-                const pillLabel = canCode ? item.stateLabel : ('[LOCKED] ' + safeCheck.status);
+                const pillLabel = canCode ? item.stateLabel : ('[LOCKED] ' + safeCheck.badgeText);
 
                 cv.roundRect(tx + 28, ty + 92, 250, 32, 6, pillBg);
                 cv.strokeRoundRect(tx + 28, ty + 92, 250, 32, 6, 1, pillBorder);
@@ -780,7 +782,7 @@ mgu.run({
                 const pillBg = canCode ? (item.active ? '#0a2e1d' : '#141c26') : '#241215';
                 const pillBorder = canCode ? (item.active ? '#10b981' : '#283548') : safeCheck.badgeColor;
                 const pillTextCol = canCode ? (item.active ? '#2af575' : '#8a99ad') : safeCheck.badgeColor;
-                const pillLabel = canCode ? item.stateLabel : ('[LOCKED] ' + safeCheck.status);
+                const pillLabel = canCode ? item.stateLabel : ('[LOCKED] ' + safeCheck.badgeText);
 
                 cv.roundRect(tx + 28, ty + 92, 250, 32, 6, pillBg);
                 cv.strokeRoundRect(tx + 28, ty + 92, 250, 32, 6, 1, pillBorder);
@@ -817,8 +819,8 @@ mgu.run({
                 cv.text('i', listX + listW / 2, listY + 132, 34, '#00a3e0', { align: 'center', font: 'bold' });
 
                 cv.text('NO CODING BACKUPS YET', listX + listW / 2, listY + 195, 22, '#ffffff', { align: 'center', font: 'bold' });
-                cv.text('An automated safety snapshot will be recorded here immediately before your first coding change.', listX + listW / 2, listY + 230, 16, '#94a3b8', { align: 'center' });
-                cv.text('All historical snapshots can be rolled back anytime with a single tap.', listX + listW / 2, listY + 258, 15, '#64748b', { align: 'center' });
+                cv.text('A snapshot is recorded here before every coding write.', listX + listW / 2, listY + 230, 16, '#94a3b8', { align: 'center' });
+                cv.text('This read-only build writes nothing, so none are made.', listX + listW / 2, listY + 258, 15, '#64748b', { align: 'center' });
             } else {
                 // Render up to 3 most recent backups
                 const displayBackups = backups.slice(0, 3);

@@ -2,7 +2,7 @@
   "id": "m_cinema",
   "title": "M-Cinema",
   "description": "Ultrawide 21:9 Cockpit Theater & YouTube Player with In-Car Search and Official TV Cast for BMW iDrive 7",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "vendor": "custom",
   "loggingId": "OACN",
   "iconGlyph": "cinema",
@@ -34,8 +34,8 @@
      "options": [["on", "Enabled (Edge Glow)"], ["off", "Disabled"]]},
     {"key": "interlock", "label": "Motion safety lockout", "type": "choice", "default": "auto",
      "options": [
-       ["auto", "Auto (Unlocked if VIM active)"],
-       ["strict", "Parked Only (Strict Safety)"],
+       ["auto", "Auto (Locked while moving)"],
+       ["strict", "Strict (also locked if speed unknown)"],
        ["bypass", "Always Allow"]
      ]},
     {"key": "theme", "label": "Colour theme", "type": "choice", "default": "m_tricolour",

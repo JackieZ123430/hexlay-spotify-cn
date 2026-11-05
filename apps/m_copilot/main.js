@@ -359,7 +359,7 @@ mgu.run({
 
         cloudPair.onPaired = () => {
             showPairing = false;
-            notify('AI Paired via Cloud! Gemini Ready.');
+            notify('AI paired from your phone: ' + providerName() + ' ready.');
             render(true).catch(() => {});
         };
 
@@ -384,6 +384,13 @@ mgu.run({
             const d = car ? car.data() : null, demo = !!(d && d.demo);
             const oil = demo ? d.oil : telemetry.oilTemp, coolant = demo ? d.coolant : telemetry.coolantTemp;
             return 'OIL ' + fmtNum(oil, '°C') + '  ·  COOLANT ' + fmtNum(coolant, '°C') + '  ·  BATTERY ' + fmtNum(demo ? null : telemetry.batteryPct, '%') + (demo ? '  ·  DEMO' : '');
+        }
+
+        /** The paired AI provider's name, for the status pill and messages. */
+        const PROVIDERS = { gemini: 'Gemini', claude: 'Claude', openai: 'OpenAI', groq: 'Groq', openrouter: 'OpenRouter' };
+        function providerName() {
+            const p = ai.config.provider || (ai.config.mode === 'gemini' ? 'gemini' : ai.config.mode === 'claude' ? 'claude' : null);
+            return PROVIDERS[p] || 'AI';
         }
 
         function notify(msg) {
@@ -713,8 +720,8 @@ mgu.run({
 
             // Right Instructions
             const ix = 390;
-            cv.text('GOOGLE GEMINI AI SETUP', ix, 170, 24, '#00a3e0', { font: 'bold', spacing: 1 });
-            cv.text('M-Copilot connects directly to Google Gemini Flash (Free Tier @ $0.00).', ix, 206, 17, '#ffffff');
+            cv.text('AI PROVIDER SETUP', ix, 170, 24, '#00a3e0', { font: 'bold', spacing: 1 });
+            cv.text('Pair Google Gemini (free tier), Claude, OpenAI, Groq or OpenRouter from your phone.', ix, 206, 17, '#ffffff');
             cv.text('Scan the QR code with your phone. Zero-Knowledge E2EE ensures 100% privacy.', ix, 234, 16, '#94a3b8');
             cv.text('Each car has an isolated encryption key and an independent pairing session.', ix, 258, 16, '#94a3b8');
 
@@ -1050,7 +1057,7 @@ mgu.run({
             }
 
             // G-Series Live Cockpit frame tabs along the top: clean single title + live status badges
-            const provName = (ai.config.provider || (ai.config.mode === 'gemini' ? 'gemini' : 'custom')).toUpperCase();
+            const provName = providerName().toUpperCase();
             G.frame(cv, t, PAGES, 0, [
                 { text: 'READ-ONLY SAFE', color: '#2af575' },
                 { text: ai.isConfigured() ? `${provName} ONLINE` : 'SETUP REQUIRED', color: ai.isConfigured() ? '#00a3e0' : '#ffb703' }

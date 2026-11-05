@@ -48,7 +48,12 @@ function checkInternetConnection() {
         });
     };
 
-    return probe('www.youtube.com').then((ok) => {
+    // Direct-IP probe first (no DNS needed), then hostnames through the uplink resolver
+    let uplink = null;
+    try { uplink = require('./kit/uplink'); } catch (e) {}
+    const first = uplink ? uplink.checkInternet({ timeout: 3500 }).catch(() => false) : Promise.resolve(false);
+
+    return first.then((ok) => ok || probe('www.youtube.com')).then((ok) => {
         if (ok) return true;
         return probe('yt.chocolatemoo53.com', '/api/v1/trending');
     }).catch(() => false);

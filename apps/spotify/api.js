@@ -184,31 +184,39 @@ class SpotifyClient {
             return false;
         }
 
-        const probe = (host) => {
-            return new Promise((resolve) => {
-                const req = https.request({
-                    hostname: host,
-                    port: 443,
-                    path: '/',
-                    method: 'HEAD',
-                    timeout: 6000,
-                    rejectUnauthorized: false
-                }, (res) => {
-                    res.resume();
-                    resolve(true);
-                });
-                req.on('error', () => resolve(false));
-                req.on('timeout', () => {
-                    req.destroy();
-                    resolve(false);
-                });
-                req.end();
-            });
-        };
+        let ok = false;
+        if (this.ctx.uplink && typeof this.ctx.uplink.checkInternet === 'function') {
+            try {
+                ok = await this.ctx.uplink.checkInternet({ timeout: 3500 });
+            } catch (e) {}
+        }
 
-        let ok = await probe('api.spotify.com');
         if (!ok) {
-            ok = await probe('ntfy.sh');
+            const probe = (host) => {
+                return new Promise((resolve) => {
+                    const req = https.request({
+                        hostname: host,
+                        port: 443,
+                        path: '/',
+                        method: 'HEAD',
+                        timeout: 3500,
+                        rejectUnauthorized: false
+                    }, (res) => {
+                        res.resume();
+                        resolve(true);
+                    });
+                    req.on('error', () => resolve(false));
+                    req.on('timeout', () => {
+                        req.destroy();
+                        resolve(false);
+                    });
+                    req.end();
+                });
+            };
+
+            ok = await probe('1.1.1.1');
+            if (!ok) ok = await probe('api.spotify.com');
+            if (!ok) ok = await probe('ntfy.sh');
         }
 
         const wasOffline = !this.hasInternet;

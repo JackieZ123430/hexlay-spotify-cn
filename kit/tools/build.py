@@ -464,6 +464,7 @@ def build(app_id, language='en'):
         with open(entry, 'wb') as file:
             file.write(credit.encode('utf-8') + body)
     rt_spec = {k: spec.get(k) for k in ('id', 'title', 'version', 'screens', 'settings', 'config', 'startWidget')}
+    rt_spec['mguInternet'] = bool(spec.get('mguInternet') or spec.get('internet'))
     rt_spec['stateIds'] = state_ids
     json.dump(rt_spec, open(os.path.join(src, 'javascript', 'kit', 'app-spec.json'), 'w', encoding='utf-8', newline='\n'), indent=1)
     locale = {'language': language, 'strings': load_locale(language)}

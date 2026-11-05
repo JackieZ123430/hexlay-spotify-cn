@@ -45,6 +45,10 @@ const APP_ROOT = path.resolve(__dirname, '..', '..', '..');
 const DATA_DIR = fs.existsSync(path.join(APP_ROOT, 'data')) ? path.join(APP_ROOT, 'data') : process.cwd();
 const RHMI_RES = path.join(APP_ROOT, 'rhmiData', 'resources');
 
+// Uplink & DNS resolver hook for BMW iDrive 7 (MGU) internet access
+const uplink = require('./uplink');
+if (SPEC.mguInternet) { try { uplink.init(DATA_DIR); } catch (e) {} }
+
 /* ---------------- logging: SDK logger (DLT) + small rotating file ---------------- */
 const LOG_FILE = path.join(DATA_DIR, SPEC.id + '.log');
 const RUN_TAG = Date.now().toString(36);
@@ -530,8 +534,9 @@ async function runInner(impl) {
     const settings = new Settings(SPEC.settings);
     const display = new Display(ui, log, SPEC, settings, () => themes.theme(settings.get('theme')));
     ui.display = display;
+    if (SPEC.mguInternet) { try { log.info('uplink: ' + uplink.describe()); } catch (e) {} }
     const ctx = {
-        app, ui, settings, log, spec: SPEC, dataDir: DATA_DIR, display, widget,
+        app, ui, settings, log, spec: SPEC, dataDir: DATA_DIR, display, widget, uplink,
         signals: require('./signals'),
         theme: () => themes.theme(settings.get('theme')),
         /**

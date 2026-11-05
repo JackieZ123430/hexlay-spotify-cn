@@ -33,8 +33,10 @@ class AiBridge {
         this.isCheckingInternet = false;
 
         this.checkInternetConnection().catch(() => {});
+        // re-checked only while the app is on screen (main.js sets isOnScreen)
+        if (!this.isOnScreen) this.isOnScreen = () => true;
         setInterval(() => {
-            this.checkInternetConnection().catch(() => {});
+            if (this.isOnScreen()) this.checkInternetConnection().catch(() => {});
         }, 15000);
     }
 

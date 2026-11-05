@@ -94,6 +94,10 @@ mgu.run({
 
         const ai = new AiBridge(ctx);
         const cloudPair = new CloudPairManager(ctx, ai);
+        // background: no internet checks, slow pairing polls
+        const onScreen = () => !ctx.ui.isVisible || ctx.ui.isVisible('MAIN');
+        ai.isOnScreen = onScreen;
+        cloudPair.isOnScreen = onScreen;
         cloudPair.startPolling();
 
         let showPairing = false;
@@ -747,7 +751,7 @@ mgu.run({
         });
 
         // Run low-frequency idle loop (4 fps) to minimize CPU/GPU load by >85%
-        ctx.loop('MAIN', 4, render);
+        ctx.loop('MAIN', 4, render, { maxFps: 10 });
         render(true).then(() => log.info('M-Copilot ready')).catch((e) => log.warn('M-Copilot render error: ' + e));
     }
 });

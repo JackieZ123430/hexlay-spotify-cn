@@ -348,6 +348,7 @@ class SpotifyClient {
                     this.expiresAt = data.expiresAt || 0;
                     this.clientId = data.clientId;
                     this.clientSecret = data.clientSecret;
+                    this._lastDeviceId = data.lastDeviceId || null;
                     this.isOnline = true;
                     this.log.info('Loaded Spotify auth token from ' + configPath);
                 }
@@ -376,6 +377,7 @@ class SpotifyClient {
         this.likedTotal = 0;
         this._userId = null;
         this.profile = null;
+        this._lastDeviceId = null;
         this.devices = this.isDemoMode ? DEMO_DEVICES : [];
         this.currentPlaylist = this.playlists[0] || null;
         this.currentTrack = this.isDemoMode && this.currentPlaylist ? this.currentPlaylist.tracks[0] : null;
@@ -396,6 +398,8 @@ class SpotifyClient {
     clearPlayback(reason) {
         const had = !!(this.currentTrack || this.isPlaying || this.activeDevice);
         this.isPlaying = false;
+        this.stalled = false;
+        this._stall = null;
         this.currentTrack = null;
         this.contextUri = null;
         this.progressMs = 0;
@@ -429,6 +433,7 @@ class SpotifyClient {
                         delete existing.token;
                         delete existing.refreshToken;
                         delete existing.expiresAt;
+                        delete existing.lastDeviceId;      // the account's device: gone with it
                         return existing;
                     });
                 }
@@ -594,7 +599,12 @@ class SpotifyClient {
                     try {
                         const json = data ? JSON.parse(data) : {};
                         if (res.statusCode >= 200 && res.statusCode < 300) resolve(json);
-                        else reject(new Error('Spotify API ' + res.statusCode + ': ' + (json.error ? json.error.message : data)));
+                        else {
+                            const err = new Error('Spotify API ' + res.statusCode + ': ' + (json.error ? json.error.message : data));
+                            err.status = res.statusCode;
+                            err.reason = (json.error && json.error.reason) || '';     // NO_ACTIVE_DEVICE, PREMIUM_REQUIRED...
+                            reject(err);
+                        }
                     } catch (err) {
                         reject(err);
                     }
@@ -641,11 +651,31 @@ class SpotifyClient {
         if (ex && ex.playing !== undefined && playing !== ex.playing) return;   // not applied yet
         if (staleTrack) return;
         this._expect = null;
-        this.isPlaying = playing;
-        this.progressMs = data.progress_ms || 0;
-        this.lastTickTime = Date.now();
-        // a shuffle / repeat just tapped holds until Spotify reports it (it lags a second or two)
         const now = Date.now();
+        const pos = data.progress_ms || 0;
+        /*
+         * Spotify can report "playing" for a phone that stopped (iOS suspends Spotify in the
+         * background, the phone went out of range): its position then stands still, or runs on
+         * past the song's end. Shown as paused, so the progress bar does not run on alone.
+         */
+        let stalled = false;
+        const item = data.item;
+        if (playing && item) {
+            const st = this._stall;
+            if (st && st.id === item.id && Math.abs(pos - st.pos) < 300) stalled = now - st.since >= 4000;
+            else this._stall = { id: item.id, pos, since: now };
+            if (item.duration_ms && pos > item.duration_ms + 3000) stalled = true;
+        } else {
+            this._stall = null;
+        }
+        if (stalled && !this.stalled) this.log.info('Spotify: playback stands still on ' + data.device.name + ', shown as paused');
+        this.stalled = stalled;
+        this.isPlaying = playing && !stalled;
+        this.progressMs = item && item.duration_ms ? Math.min(pos, item.duration_ms) : pos;
+        this.lastTickTime = now;
+        // the device that plays: play commands go to it again when none is active
+        if (data.device.id && data.device.id !== this._lastDeviceId) this._rememberDevice(data.device.id);
+        // a shuffle / repeat just tapped holds until Spotify reports it (it lags a second or two)
         const hS = this._holdShuffle, hR = this._holdRepeat;
         if (hS && now < hS.until && data.shuffle_state !== hS.v) { /* keep the tapped state */ }
         else { this._holdShuffle = null; this.shuffle = data.shuffle_state; }
@@ -912,27 +942,25 @@ class SpotifyClient {
         this.progressMs = 0;
         this.lastTickTime = Date.now();
         if (this.isOnline) {
-            const targetDev = this.devices.find((d) => d.isActive) || this.devices[0];
-            const deviceParam = (targetDev && targetDev.id) ? `?device_id=${targetDev.id}` : '';
-            const path = `/v1/me/player/play${deviceParam}`;
             const fallback = () => {
                 // a bare track list: the phone (iOS) drops this one as often as not
                 const uris = this.likedSongs.slice(index, index + 30).map((t) => t.uri);
-                return this._request('PUT', path, { uris });
+                return this._play({ uris });
             };
             this._cmd();
             // Liked Songs as a real context, as Spotify's own apps play it: the phone keeps it
             // (a list of URIs made the iPhone stop and drop "now playing") and it plays on
             // past the 50 songs loaded here
             return this._likedContextUri().then((ctx) => ctx
-                ? this._request('PUT', path, { context_uri: ctx, offset: { uri: trk.uri } }).catch((e) => {
+                ? this._play({ context_uri: ctx, offset: { uri: trk.uri } }).catch((e) => {
+                    if (this._isNoDevice(e) || e.status === 403 || e.status === 429) throw e;   // a track list would fail too
                     this.log.warn('Liked Songs context refused (' + e.message + '), playing as a track list');
                     return fallback();
                 })
                 : fallback()
             ).then(() => this._pollSoon(400), (e) => {
-                this.log.warn('Liked Songs play failed: ' + e.message);
-                this._pollSoon(100);     // show what really plays, not the song that was tapped
+                this.isPlaying = false;
+                this._fail('Playing the song', e);      // and the poll shows what really plays
             });
         }
     }
@@ -1010,7 +1038,79 @@ class SpotifyClient {
             this.progressMs += dt;
             if (this.progressMs >= this.currentTrack.durationMs) {
                 if (!this.isOnline) this.nextTrack();
+                else this.progressMs = this.currentTrack.durationMs;    // the poll brings the next song
             }
+        }
+    }
+
+    /* ---------- What the screen tells the driver ---------- */
+
+    /** A short message for the screen (shown a few seconds): what went wrong, in plain words. */
+    notify(text) {
+        this.notice = { text, at: Date.now() };
+        this.log.info('Spotify notice: ' + text);
+    }
+
+    /** A failed command: logged, explained on the screen, and the real state polled at once. */
+    _fail(what, e) {
+        this.log.warn(what + ' failed: ' + (e && e.message));
+        this.notify(this._explain(what, e));
+        this._pollSoon(100);
+    }
+
+    /** Spotify's error as a sentence for the driver. */
+    _explain(what, e) {
+        const msg = String((e && e.message) || ''), st = (e && e.status) || 0, why = (e && e.reason) || '';
+        if (why === 'NO_ACTIVE_DEVICE' || (st === 404 && /no active device/i.test(msg))) return 'No device to play on - open Spotify on your phone';
+        if (st === 404 && /device/i.test(msg)) return 'That device is not available any more';
+        if (why === 'PREMIUM_REQUIRED' || /premium/i.test(msg)) return 'Spotify Premium is needed to control playback';
+        if (st === 403) return what + ' is not possible here (Spotify said no)';
+        if (st === 429) return 'Spotify is busy - try again in a moment';
+        if (st >= 500) return 'Spotify had a problem - try again';
+        if (/session expired|re-authenticate/i.test(msg)) return 'Spotify session expired - pair again on the Connect page';
+        if (/timeout|ECONN|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|socket hang up/i.test(msg + ' ' + ((e && e.code) || ''))) {
+            return 'No connection to Spotify - ' + what.toLowerCase() + ' did not go through';
+        }
+        return what + ' failed';
+    }
+
+    _isNoDevice(e) {
+        return !!e && (e.reason === 'NO_ACTIVE_DEVICE' || (e.status === 404 && /device/i.test(String(e.message))));
+    }
+
+    /** The device that played last, kept with the pairing (not the tokens), for after a restart. */
+    _rememberDevice(id) {
+        this._lastDeviceId = id;
+        const p = this.ctx && this.ctx.dataDir ? path.join(this.ctx.dataDir, 'spotify_auth.json') : null;
+        if (!p || !fs.existsSync(p)) return;
+        try { updateAuthFile(p, (ex) => { ex.lastDeviceId = id; return ex; }); } catch (e) {}
+    }
+
+    /** Where a play command goes: the active device, else the one that played last, else the first listed. */
+    _targetDeviceId() {
+        const d = this.devices.find((x) => x.isActive)
+            || (this._lastDeviceId && this.devices.find((x) => x.id === this._lastDeviceId))
+            || this.devices[0];
+        return d && d.id ? d.id : null;
+    }
+
+    /**
+     * PUT /v1/me/player/play (body: what to play, none to resume). With no active device Spotify
+     * answers 404: the device list is read again and the command sent once more to a listed device
+     * (the phone's Spotify open but idle). Rejects when there is none: the caller explains it.
+     */
+    async _play(body) {
+        const send = (id) => this._request('PUT', '/v1/me/player/play' + (id ? '?device_id=' + encodeURIComponent(id) : ''), body);
+        const first = this._targetDeviceId();
+        try {
+            return await send(first);
+        } catch (e) {
+            if (!this._isNoDevice(e)) throw e;
+            await this.fetchDevices();
+            const id = this._targetDeviceId();
+            if (!id || (id === first && this.devices.some((d) => d.id === id && d.isActive))) throw e;
+            this.log.info('Spotify: no active device, starting on ' + ((this.devices.find((d) => d.id === id) || {}).name || id));
+            return send(id);
         }
     }
 
@@ -1020,7 +1120,8 @@ class SpotifyClient {
         this.lastTickTime = Date.now();
         if (this.isOnline) {
             this._cmd({ playing: true });
-            return this._request('PUT', '/v1/me/player/play').then(() => this._pollSoon(), () => this._pollSoon(100));
+            this._stall = null;
+            return this._play().then(() => this._pollSoon(), (e) => { this.isPlaying = false; this._fail('Play', e); });
         }
         return Promise.resolve();
     }
@@ -1029,7 +1130,7 @@ class SpotifyClient {
         this.isPlaying = false;
         if (this.isOnline) {
             this._cmd({ playing: false });
-            return this._request('PUT', '/v1/me/player/pause').then(() => this._pollSoon(), () => this._pollSoon(100));
+            return this._request('PUT', '/v1/me/player/pause').then(() => this._pollSoon(), (e) => this._fail('Pause', e));
         }
         return Promise.resolve();
     }
@@ -1049,7 +1150,7 @@ class SpotifyClient {
                 this.progressMs = 0;
                 this.lastTickTime = Date.now();
             }
-            return this._request('POST', '/v1/me/player/next').then(() => this._pollSoon(), () => this._pollSoon(100));
+            return this._request('POST', '/v1/me/player/next').then(() => this._pollSoon(), (e) => this._fail('Skip', e));
         }
         const pl = this.currentPlaylist;
         if (!pl || !pl.tracks.length) return;
@@ -1064,7 +1165,7 @@ class SpotifyClient {
             this._cmd();
             this.progressMs = 0;
             this.lastTickTime = Date.now();
-            return this._request('POST', '/v1/me/player/previous').then(() => this._pollSoon(), () => this._pollSoon(100));
+            return this._request('POST', '/v1/me/player/previous').then(() => this._pollSoon(), (e) => this._fail('Previous', e));
         }
         if (this.progressMs > 3000) {
             this.progressMs = 0;
@@ -1078,17 +1179,6 @@ class SpotifyClient {
         this.lastTickTime = Date.now();
     }
 
-    seek(fraction) {
-        if (!this.currentTrack) return;
-        const pos = Math.round(Math.max(0, Math.min(1, fraction)) * this.currentTrack.durationMs);
-        this.progressMs = pos;
-        this.lastTickTime = Date.now();
-        if (this.isOnline) {
-            this._cmd();
-            this._request('PUT', '/v1/me/player/seek?position_ms=' + pos).then(() => this._pollSoon(400), () => {});
-        }
-    }
-
     /*
      * Shuffle and repeat show the new state at once and keep it (4 s) against polls
      * that still bring the old one: without that a tap seemed to miss, the button flipping back.
@@ -1099,9 +1189,8 @@ class SpotifyClient {
         if (this.isOnline) {
             this._holdShuffle = { v: this.shuffle, until: Date.now() + 4000 };
             return this._request('PUT', '/v1/me/player/shuffle?state=' + this.shuffle).then(() => this._pollSoon(600), (e) => {
-                this.log.warn('Shuffle refused: ' + e.message);
                 this._holdShuffle = null;
-                this._pollSoon(100);
+                this._fail('Shuffle', e);
             });
         }
     }
@@ -1113,9 +1202,8 @@ class SpotifyClient {
         if (this.isOnline) {
             this._holdRepeat = { v: next, until: Date.now() + 4000 };
             return this._request('PUT', '/v1/me/player/repeat?state=' + next).then(() => this._pollSoon(600), (e) => {
-                this.log.warn('Repeat refused: ' + e.message);
                 this._holdRepeat = null;
-                this._pollSoon(100);
+                this._fail('Repeat', e);
             });
         }
     }
@@ -1151,8 +1239,9 @@ class SpotifyClient {
             });
             this.fetchLikedSongs().catch(() => {});
         } catch (e) {
-            this.log.warn((like ? 'Like' : 'Unlike') + ' failed: ' + e.message);
             if (this.currentTrack && this.currentTrack.id === id) this.isCurrentLiked = !like;   // show the truth
+            this.log.warn((like ? 'Like' : 'Unlike') + ' failed: ' + e.message);
+            this.notify(this._explain(like ? 'Saving to Liked Songs' : 'Removing from Liked Songs', e));
         }
     }
 
@@ -1175,10 +1264,11 @@ class SpotifyClient {
                 const body = playlist.uri && !playlist.uri.startsWith('spotify:playlist:demo')
                     ? { context_uri: playlist.uri, offset: { position: index } }
                     : { uris: [this.currentTrack.uri] };
-                const targetDev = this.devices.find((d) => d.isActive) || this.devices[0];
-                const deviceParam = (targetDev && targetDev.id) ? `?device_id=${targetDev.id}` : '';
                 this._cmd();
-                return this._request('PUT', `/v1/me/player/play${deviceParam}`, body).then(() => this._pollSoon(400), () => this._pollSoon(100));
+                return this._play(body).then(() => this._pollSoon(400), (e) => {
+                    this.isPlaying = false;
+                    this._fail('Playing the song', e);
+                });
             }
         }
     }
@@ -1193,7 +1283,7 @@ class SpotifyClient {
         if (!this.isOnline) return Promise.resolve();
         this._cmd();
         return this._request('PUT', '/v1/me/player/seek?position_ms=' + pos)
-            .then(() => this._pollSoon(400), (e) => { this.log.warn('Seek failed: ' + e.message); this._pollSoon(100); });
+            .then(() => this._pollSoon(400), (e) => this._fail('Seeking', e));
     }
 
     /**
@@ -1207,13 +1297,14 @@ class SpotifyClient {
         this.progressMs = 0;
         this.lastTickTime = Date.now();
         if (!this.isOnline) return Promise.resolve();
-        const targetDev = this.devices.find((d) => d.isActive) || this.devices[0];
-        const path = '/v1/me/player/play' + ((targetDev && targetDev.id) ? '?device_id=' + targetDev.id : '');
         const ctx = this.contextUri;
-        const alone = () => this._request('PUT', path, { uris: [trk.uri] });
+        const alone = () => this._play({ uris: [trk.uri] });
         this._cmd();
-        return (ctx ? this._request('PUT', path, { context_uri: ctx, offset: { uri: trk.uri } }).catch(alone) : alone())
-            .then(() => this._pollSoon(400), (e) => { this.log.warn('Play from Up Next failed: ' + e.message); this._pollSoon(100); });
+        return (ctx ? this._play({ context_uri: ctx, offset: { uri: trk.uri } }).catch((e) => {
+            if (this._isNoDevice(e) || e.status === 403 || e.status === 429) throw e;
+            return alone();
+        }) : alone())
+            .then(() => this._pollSoon(400), (e) => { this.isPlaying = false; this._fail('Playing the song', e); });
     }
 
     /* Settles once the device list shows where the music went (busy until then on the screen). */
@@ -1222,7 +1313,7 @@ class SpotifyClient {
         return this._request('PUT', '/v1/me/player', { device_ids: [deviceId], play: true })
             .then(() => new Promise((r) => setTimeout(r, 500)))
             .then(() => Promise.all([this.fetchDevices(), this.pollPlayer()]))
-            .catch((e) => this.log.warn('Transfer failed: ' + e.message));
+            .catch((e) => this._fail('Switching the device', e));
     }
 
     getPlaylists() {

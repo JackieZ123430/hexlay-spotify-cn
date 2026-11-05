@@ -858,7 +858,11 @@ mgu.run({
 
                 // where it plays: a pill as wide as its text, a live dot when music plays
                 const devOpts = { font: 'bold', spacing: 1 };
-                const devText = fitText(cv, spotify.activeDevice ? 'PLAYING ON  ' + spotify.activeDevice.toUpperCase() : 'SPOTIFY CONNECT', metaW - 44, 12, devOpts);
+                const devName = spotify.activeDevice ? spotify.activeDevice.toUpperCase() : '';
+                const devLabel = !devName ? 'SPOTIFY CONNECT'
+                    : spotify.stalled ? devName + '  -  NOT RESPONDING'
+                    : (isPlaying ? 'PLAYING ON  ' : 'PAUSED ON  ') + devName;
+                const devText = fitText(cv, devLabel, metaW - 44, 12, devOpts);
                 const devW = cv.textWidth(devText, 12, devOpts) + 42;
                 cv.roundRect(metaX, 106, devW, 28, 14, withAlpha(t.accent, 0.16));
                 cv.circle(metaX + 16, 120, 4.5, isPlaying ? t.accent : withAlpha(t.accent, 0.45));
@@ -1220,10 +1224,35 @@ mgu.run({
             // G20 Live Cockpit frame tabs along the top: keep badges compact so tabs & Settings are never crowded out
             G.frame(cv, t, PAGES, page, [
                 { text: spotify.activeDevice ? trunc(spotify.activeDevice, 28) : 'SPOTIFY' },
-                { text: spotify.isPlaying ? 'PLAYING' : 'PAUSED', color: spotify.isPlaying ? '#1ed760' : t.dim }
+                spotify.stalled
+                    ? { text: 'NOT RESPONDING', color: '#ffb703' }
+                    : { text: spotify.isPlaying ? 'PLAYING' : 'PAUSED', color: spotify.isPlaying ? '#1ed760' : t.dim }
             ]);
 
+            drawNotice(cv, t);
             await ui.image('MAIN_GFX', cv);
+        }
+
+        /* What went wrong, for NOTICE_MS over the dock: a tap closes it sooner. */
+        const NOTICE_MS = 5000;
+        function drawNotice(cv, t) {
+            const n = spotify.notice;
+            if (!n || Date.now() - n.at > NOTICE_MS) return;
+            const size = 16, opts = { font: 'bold' };
+            // over the dock's top edge; on Now Playing (no dock, the controls at the bottom) over Up Next
+            const onNp = page === 2;
+            const cx = onNp ? 1248 : 800, maxW = onNp ? 540 : 1100;
+            const text = fitText(cv, n.text, maxW, size, opts);
+            const w = cv.textWidth(text, size, opts) + 76, h = 46;
+            const x = Math.round(cx - w / 2), y = 446 + (cv.extra || 0) - h - (onNp ? -40 : 12);
+            cv.roundRect(x, y, w, h, h / 2, '#2a1d10');
+            cv.strokeRoundRect(x, y, w, h, h / 2, 1.5, withAlpha('#ffb703', 0.8));
+            cv.circle(x + 26, y + h / 2, 9, '#ffb703');
+            cv.text('!', x + 26, y + h / 2 + 5, 14, '#2a1d10', { align: 'center', font: 'bold' });
+            cv.text(text, x + 46, y + h / 2 + 6, size, '#ffe2a8', opts);
+            cv.target(x, y, w, h, () => { spotify.notice = null; render(); }, 'notice', 23);
+            // over the list rows: a tap on it is its own (the first target under a finger wins)
+            if (Array.isArray(cv.targets)) cv.targets.unshift(cv.targets.pop());
         }
 
         /* ---------- HMI Button & Touch Interactions ---------- */

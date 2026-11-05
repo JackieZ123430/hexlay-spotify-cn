@@ -190,7 +190,6 @@ server.on('upgrade', (req, sock, head) => {
     ws.send({ t: 'log', lines: App.log.slice(-300) });
     ws.send({ t: 'sigmode', mode: Sig.mode, v: Sig.v });
     if (App.soft) ws.send({ t: 'soft', png: App.soft });
-    if (App.video) ws.send(App.video);
     replay(ws);
 });
 
@@ -506,9 +505,6 @@ function onPage(ws, m) {
         }
         toChild({ t: 'hmi', a: m.a, screen: m.screen && String(m.screen) });
         break;
-    case 'video-fullscreen': toChild({ t: 'video-fullscreen', on: !!m.on }); break;
-    case 'video-state': toChild({ t: 'video-state', playing: !!m.playing }); break;
-    case 'video-progress': toChild({ t: 'video-progress', time: m.time, duration: m.duration, playing: !!m.playing }); break;
     case 'click': toChild({ t: 'click', id: String(m.id) }); break;
     case 'set': toChild({ t: 'set', k: String(m.k), v: m.v }); break;
     case 'sig':
@@ -541,7 +537,7 @@ function onPage(ws, m) {
 }
 
 /* ---------------- the app: build, child process, live reload ---------------- */
-const App = { lock: null, waiting: null, closed: false, opened: false, openNext: false, child: null, childId: null, gen: 0, exiting: null, deferred: null, loading: false, status: { t: 'status', s: 'starting' }, log: [], spec: null, values: null, stack: [], soft: null, video: null, building: null, again: false };
+const App = { lock: null, waiting: null, closed: false, opened: false, openNext: false, child: null, childId: null, gen: 0, exiting: null, deferred: null, loading: false, status: { t: 'status', s: 'starting' }, log: [], spec: null, values: null, stack: [], soft: null, building: null, again: false };
 function appLog(l, s) {
     const lines = String(s).replace(/\s+$/, '').split('\n').map((x) => [l, x]);
     App.log.push.apply(App.log, lines);
@@ -613,8 +609,6 @@ function build() {
 
 /** The running app goes; cb once it has exited (an app on its way out is waited for, whoever asked first). */
 function stop(cb) {
-    App.video = null;
-    toPages({ t: 'video', action: 'stop' });
     const ch = App.child;
     App.child = null;
     if (ch && ch.exitCode === null && ch.signalCode === null) {
@@ -636,9 +630,8 @@ function start(id) {
         if (App.building) { App.deferred = id; return; }
         App.deferred = null;
         setStatus('starting', '', id);
-        App.stack = []; App.soft = null; App.video = null;
+        App.stack = []; App.soft = null;
         toPages({ t: 'soft', png: null });              // (the old app's picture in the HMI goes)
-        toPages({ t: 'video', action: 'stop' });
         const data = path.join(ROOT, 'preview', 'emu', id);
         fs.mkdirSync(data, { recursive: true });
         // the user left the app (the page shows the HMI's app picker): a rebuilt app starts without opening, as one
@@ -672,14 +665,6 @@ function start(id) {
             }
             else if (m.t === 'soft') { App.soft = m.png; toPages({ t: 'soft', png: m.png }); }
             else if (m.t === 'focus' || m.t === 'note') toPages(m);
-            else if (m.t === 'video') {
-                if (m.action === 'stop') App.video = null;
-                else if (m.action === 'place' && App.video) Object.assign(App.video, m);
-                else if (m.action === 'fullscreen' && App.video) Object.assign(App.video, m);
-                else App.video = m;
-                appLog('info', 'emu: video ' + m.action + (m.ytId ? ' [' + m.ytId + ']' : ''));
-                toPages(m);
-            }
         });
         ch.on('exit', (code, sig) => {
             if (App.child === ch || !App.child) loaded();

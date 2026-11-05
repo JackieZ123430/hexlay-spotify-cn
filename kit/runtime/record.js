@@ -17,7 +17,7 @@ const { t } = require('./i18n');
 
 const OP = {
     CLEAR: 1, RECT: 2, GRAD: 3, RRECT: 4, RSTROKE: 5, CARD: 6, RAMPRECT: 7, ARC: 8, LINE: 9,
-    TRIS: 10, GLYPHS: 11, LAYER: 12, CLIP: 13, NOCLIP: 14, QUAD: 15, ALPHA: 16, XF: 17, IMAGE: 18, VIDEO: 19,
+    TRIS: 10, GLYPHS: 11, LAYER: 12, CLIP: 13, NOCLIP: 14, QUAD: 15, ALPHA: 16, XF: 17, IMAGE: 18,
 };
 
 /* ---------- colours: 0xRRGGBBAA ---------- */
@@ -89,7 +89,6 @@ class Recorder {
         this.atlases = new Set();    // glyph atlases and colour ramps it uses (uploaded once by the transport)
         this.ramps = new Set();
         this.images = new Set();     // pixel images it draws (setImage)
-        this.videos = new Set();     // video streams it draws (Protocol 4 OP_VIDEO)
         this.targets = [];           // what a tap or the controller can press on the page: { x, y, w, h, run, key } (target)
         this._extra = 0;
         this.extraUsed = false;      // the drawing read extra (it reaches below the page: display.js places it so)
@@ -98,7 +97,7 @@ class Recorder {
     /** logical px the screen has below the app's page (display.js), 0 if none */
     get extra() { if (this._extra) this.extraUsed = true; return this._extra; }
     set extra(v) { this._extra = v || 0; }
-    reset() { this.n = 0; this._cnStamped = false; this.targets = []; this.scroll = false; this.extraUsed = false; if (this.layersUsed) this.layersUsed.clear(); this.atlases.clear(); this.ramps.clear(); this.images.clear(); this.videos.clear(); return this; }
+    reset() { this.n = 0; this._cnStamped = false; this.targets = []; this.scroll = false; this.extraUsed = false; if (this.layersUsed) this.layersUsed.clear(); this.atlases.clear(); this.ramps.clear(); this.images.clear(); return this; }
     _grow(k) {
         if (this.n + k <= this.u.length) return;
         let len = this.u.length * 2;
@@ -124,14 +123,6 @@ class Recorder {
         this._grow(7); const f = this.f, u = this.u, i = this.n;
         u[i] = OP.IMAGE; f[i + 1] = x; f[i + 2] = y; f[i + 3] = w; f[i + 4] = h; f[i + 5] = r || 0; u[i + 6] = id >>> 0;
         this.images.add(id >>> 0);
-        this.n += 7; return this;
-    }
-    /** Draw video `id` (see gpu.video) fitted into x, y, w, h with corner radius r (Protocol 4 OP_VIDEO 19). */
-    video(id, x, y, w, h, r) {
-        if (!(w > 0 && h > 0)) return this;
-        this._grow(7); const f = this.f, u = this.u, i = this.n;
-        u[i] = OP.VIDEO; f[i + 1] = x; f[i + 2] = y; f[i + 3] = w; f[i + 4] = h; f[i + 5] = r || 0; u[i + 6] = id >>> 0;
-        this.videos.add(id >>> 0);
         this.n += 7; return this;
     }
     clear(c) { this._grow(2); this.u[this.n++] = OP.CLEAR; this.u[this.n++] = pack(c || [0, 0, 0, 0]); return this; }
@@ -363,7 +354,6 @@ function play(words, real) {
         }
         case OP.LAYER: { const L = layerById.get(u[i]); if (L) cv.blit(softLayer(L), f[i + 1], f[i + 2]); i += 3; break; }
         case OP.IMAGE: { const im = imageById.get(u[i + 5]); if (im && cv.drawImage) cv.drawImage(im.data, im.w, im.h, f[i], f[i + 1], f[i + 2], f[i + 3]); i += 6; break; }
-        case OP.VIDEO: { if (cv.video) cv.video(u[i + 5], f[i], f[i + 1], f[i + 2], f[i + 3], f[i + 4]); i += 6; break; }
         case OP.CLIP: clip = [f[i], f[i + 1], f[i + 2], f[i + 3]]; i += 4; break;     // (software path: ignored)
         case OP.NOCLIP: clip = null; break;
         case OP.ALPHA: alpha = f[i]; i += 1; break;

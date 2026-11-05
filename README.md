@@ -30,8 +30,7 @@ This repository is built on the open-source BMW iDrive 7 platform:
 | App | Version | Needs internet | Touches vehicle ECUs |
 | :--- | :---: | :---: | :--- |
 | [Spotify](#1-spotify-spotify) | 1.0.10 | Yes | No |
-| [M-Cinema](#2-m-cinema-m_cinema) | 1.0.13 | Yes | No (reads speed and gear selector) |
-| [M-Copilot](#3-m-copilot-m_copilot) | 1.0.5 | Yes | No (reads driving signals) |
+| [M-Copilot](#2-m-copilot-m_copilot) | 1.0.5 | Yes | No (reads driving signals) |
 
 > [!NOTE]
 > **QuickCode (BMW BDC coding) is a work in progress** and is not available in the MGU Store. It is not offered until its coding writes are verified against real BMW coding data. Its source is in `wip/quick_code/`.
@@ -52,24 +51,7 @@ This repository is built on the open-source BMW iDrive 7 platform:
 
 ---
 
-### 2. M-Cinema (`m_cinema`)
-**21:9 cockpit video player with in-car YouTube search and casting from the YouTube app.**
-
-| Player | In-Car Search | Link with TV Code |
-| :---: | :---: | :---: |
-| ![M-Cinema](docs/screenshots/m_cinema.png) | ![M-Cinema Search](docs/screenshots/m_cinema_search.png) | ![M-Cinema Cast](docs/screenshots/m_cinema_cast.png) |
-
-* **Search in the car**: on-screen QWERTY keyboard (touch or the iDrive controller), quick category chips and thumbnail results.
-* **Cast from the YouTube app**: in the YouTube app, **Settings > Watch on TV > Link with TV code**, then enter the 12-digit code on the Connect tab. Videos tapped on the phone then play on the central display. The receiver recovers by itself after connection loss.
-* **Parked only**, always on: the picture pauses while the car moves (over 3 km/h), while the selector is in D or R (also when stopped at a light), and while the speed is unknown on a real car. There is no setting to turn it off.
-* **Foreground only, nothing left behind**: leaving M-Cinema stops the video and frees its memory, and the video engine, its RAM cache and frame file are removed (also when the app is killed: the engine exits with it and cleans up); a cast or a "play" from the phone never starts playback while M-Cinema is not on screen (a cast received in the background waits for you).
-* **Head-unit protection**: the video engine runs at a lower CPU priority than BMW's HMI and is capped at 720p. Playback pauses when the head unit reaches 85 °C or has less than 150 MB of free memory, and the engine is stopped at 92 °C or under 80 MB. An engine that stops responding is stopped after 20 s.
-* **Browser-style buffering**: the video is fetched in 1 MB pieces just ahead of the playback position and kept in a small RAM window (4–16 MB ahead, never more than about 22 MB in total, whatever the video's length); nothing is written to disk. Playback starts within a couple of seconds, a seek fetches the piece it needs first, and a slow network shows a buffering indicator and continues by itself. An expired YouTube link is renewed automatically.
-* **No sound yet**: M-Cinema shows the picture only. Playing audio through the car is still being worked on.
-
----
-
-### 3. M-Copilot (`m_copilot`)
+### 2. M-Copilot (`m_copilot`)
 **AI co-driver and assistant for BMW G-Series vehicles.**
 
 ![M-Copilot](docs/screenshots/m_copilot.png)
@@ -96,7 +78,7 @@ The recommended way to install and update these apps is the [**MGU Store**](http
 
 ### Internet access
 
-Spotify, M-Cinema and M-Copilot need the MGU Store's **internet uplink** (`mgu-uplink`): Wi-Fi such as a phone hotspot, a USB-tethered phone, an LTE stick or a USB Ethernet adapter. The store routes only apps that declare `"mguInternet": true`, and the head unit's own resolver cannot reach the internet, so these apps resolve names through the DNS servers of the uplink's lease (`kit/runtime/uplink.js`).
+Spotify and M-Copilot need the MGU Store's **internet uplink** (`mgu-uplink`): Wi-Fi such as a phone hotspot, a USB-tethered phone, an LTE stick or a USB Ethernet adapter. The store routes only apps that declare `"mguInternet": true`, and the head unit's own resolver cannot reach the internet, so these apps resolve names through the DNS servers of the uplink's lease (`kit/runtime/uplink.js`).
 
 If an app says it is offline while the store shows **Online**, look for the `uplink:` line at the start of the app's log (`<app>.log` in its data folder):
 * `lease <ip> via <interface>` — the app is routed; the problem is elsewhere.

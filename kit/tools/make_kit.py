@@ -167,11 +167,6 @@ def main():
     gate = rd and os.path.isfile(gate_of(rd))
     if rd: shutil.copyfile(rd, os.path.join(OUT, 'mgu-renderd'))
     if gate: shutil.copyfile(gate_of(rd), os.path.join(OUT, 'mgu-inputgate.so'))
-    vidplay = os.path.join(ROOT, 'apps', 'm_cinema', 'bin', 'mgu-vidplay')
-    has_vidplay = os.path.isfile(vidplay)
-    if has_vidplay:
-        shutil.copyfile(vidplay, os.path.join(OUT, 'mgu-vidplay'))
-        os.chmod(os.path.join(OUT, 'mgu-vidplay'), 0o755)
     if not rd: print('note: no mgu-renderd in the kit - the apps install with software rendering only')
     if rd:
         renderd_files(OUT)
@@ -179,7 +174,6 @@ def main():
 
     names = ['deploy-car.sh', 'mgu-app-install.sh', 'mainapp-patch.js'] + \
             ['apps/' + n for n in sorted(os.listdir(os.path.join(OUT, 'apps')))] + (['mgu-renderd'] if rd else []) + (['mgu-inputgate.so'] if gate else []) + \
-            (['mgu-vidplay'] if has_vidplay else []) + \
             ([d for _, d in RENDERD_FILES] if rd else [])
     with open(os.path.join(OUT, 'KIT_SUMS'), 'w', encoding='utf-8', newline='\n') as f:
         for n in names: f.write('%s  %s\n' % (md5(os.path.join(OUT, n)), n))
@@ -187,12 +181,12 @@ def main():
     # the archive carries Unix modes (scripts and the renderer executable), also when made on Windows
     def mode(ti):
         ti.uid = ti.gid = 0; ti.uname = ti.gname = 'root'
-        ti.mode = 0o755 if ti.isdir() or ti.name.endswith(('.sh', '/mgu-renderd', '/mgu-vidplay', '.so')) else 0o644
+        ti.mode = 0o755 if ti.isdir() or ti.name.endswith(('.sh', '/mgu-renderd', '.so')) else 0o644
         return ti
     with tarfile.open(archive, 'w:gz') as tf:
         tf.add(OUT, arcname='mgu-custom-apps', filter=mode)
     if hasattr(os, 'chmod'):
-        for n in ('deploy-car.sh', 'mgu-app-install.sh') + (('mgu-renderd',) if rd else ()) + (('mgu-vidplay',) if has_vidplay else ()):
+        for n in ('deploy-car.sh', 'mgu-app-install.sh') + (('mgu-renderd',) if rd else ()):
             os.chmod(os.path.join(OUT, n), 0o755)
     shutil.copyfile(os.path.join(DEPLOY, 'push-to-car.ps1'), os.path.join(DIST, 'push-to-car.ps1'))  # Windows: next to the .tar.gz
     print('kit: %s  (%s)' % (OUT, ' '.join(sorted(os.listdir(os.path.join(OUT, 'apps'))))))

@@ -185,31 +185,12 @@ class Display {
                 this._lost();                       // (shows the HMI's bar again)
             }, 1500);
         });
-        gpu.on('ccu', (v) => {
-            if (this.gpu !== gpu) return;
-            if (this.onCcu && (this.grabbing || !this.own())) {
-                const k = Number(v.frontRotaryEncoderOperation), pb = Number(v.frontRotaryEncoderPushButton), df = Number(v.frontRotaryEncoderDeflection);
-                const L = this.ccuLast;
-                this.ccuLast = { k, pb, df };
-                if (pb === 15 && df === 15) return;
-                let d = L ? ((k - L.k + 32768) & 0xffff) - 32768 : 0;
-                if (Math.abs(d) > 64) d = 0;
-                const down = (x) => x === 1 || x === 2;
-                const press = down(pb) && !(L && down(L.pb));
-                const tilt = TILT[df] && !(L && TILT[L.df] === TILT[df]) ? TILT[df] : null;
-                try {
-                    this.onCcu({ knobTicks: d, press, tilt, k, pb, df, raw: v });
-                } catch (e) { this.log.error('onCcu', e); }
-            } else {
-                this._ccu(v);
-            }
-        });
+        gpu.on('ccu', (v) => { if (this.gpu !== gpu) return; if (this.onCcu && !this.own()) this.onCcu(v); else this._ccu(v); });
         gpu.on('touch', (phase, x, y) => { if (this.gpu === gpu) this._touch(phase, x, y); });
         // the HMI was touched outside the tabs: shown again unless that left the screen
         gpu.on('closed', () => setTimeout(() => { if (this.gpu === gpu) this._syncVisible(); }, 700));
         G.onLayerDrop((id) => { if (this.gpu) this.gpu.dropLayer(id); });
         gpu.connect();
-        if (this._videos) this._videos.forEach((f, i) => gpu.video(i, f));
         if (this.grabbing) gpu.grab(true);
     }
 
@@ -217,13 +198,6 @@ class Display {
     grab(on) {
         this.grabbing = !!on;
         this._grab();
-    }
-    /** Register video id decoded from shared file (/dev/shm/mgu-video-<name>) */
-    video(id, file) {
-        if (!this._videos) this._videos = new Map();
-        if (!file) this._videos.delete(id);
-        else this._videos.set(id, file);
-        if (this.gpu) this.gpu.video(id, file);
     }
     /** held: the app asked (grab), or the kit runs the screen (own) and the HMI has the controller gate */
     _grab() {
@@ -458,7 +432,7 @@ class Display {
                 else {
                     this.pressed = key; this.pressedT = Date.now(); this._repaint();
                     setTimeout(() => this._repaint(), 320);
-                    try { Promise.resolve(tgt.run(this.downAt ? this.downAt.x : x, this.downAt ? this.downAt.y : y)).catch((e) => this.log.error('target', e)); } catch (e) { this.log.error('target', e); }
+                    try { Promise.resolve(tgt.run()).catch((e) => this.log.error('target', e)); } catch (e) { this.log.error('target', e); }
                 }
                 return;
             }

@@ -191,6 +191,7 @@ mgu.run({
                 if (stateName === 'MAIN') mainVisible = !!isVisible;
                 if (stateName === 'MAIN' && !isVisible) {
                     log.info('[M-Cinema] App left foreground -> stopping video immediately');
+                    try { thumbManager.cache.clear(); } catch (e) {}      // thumbnails are fetched again on return
                     isPlaying = false;
                     isFullscreen = false;
                     player.stop();

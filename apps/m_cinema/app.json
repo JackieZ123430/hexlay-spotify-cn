@@ -2,7 +2,7 @@
   "id": "m_cinema",
   "title": "M-Cinema",
   "description": "21:9 YouTube player for parked cars: in-car search, cast from the YouTube app, browser-style buffering. Picture only (no sound yet)",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "vendor": "custom",
   "loggingId": "OACN",
   "iconGlyph": "cinema",

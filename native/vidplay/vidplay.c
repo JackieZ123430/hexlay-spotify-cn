@@ -757,5 +757,13 @@ int main(int argc, char *argv[]) {
     // the frame file stays: the app drops it from the renderer first, then removes it
     close(shm_fd);
 
+    // The app died (killed, crashed): nobody else will clean up. Its renderer connection is gone,
+    // so the frame file is free; remove it with the FIFOs, the socket and a downloaded video.
+    if (getppid() != parent) {
+        const char *left[] = { shm_path, ctrl_path, status_path, sock_path, grow_done ? input_url : NULL, grow_done };
+        for (size_t k = 0; k < sizeof(left) / sizeof(left[0]); k++) if (left[k]) unlink(left[k]);
+        fprintf(stderr, "[vidplay] App gone: cleaned up its files\n");
+    }
+
     return 0;
 }

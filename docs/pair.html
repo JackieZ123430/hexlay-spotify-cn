@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>BMW iDrive 7 - Spotify Connect</title>
+    <title>Spotify pairing - iDrive 7 Custom Apps (unofficial)</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -325,10 +325,10 @@
                 <span class="m-dark"></span>
                 <span class="m-red"></span>
             </span>
-            BMW iDrive 7 Cockpit
+            iDrive 7 Custom Apps &middot; Unofficial
         </div>
-        <h1>Spotify Connect</h1>
-        <p class="subtitle">Connect your personal Spotify library to your vehicle</p>
+        <h1>Pair Spotify with your car</h1>
+        <p class="subtitle">Lets the Spotify app on your car's screen use your Spotify account</p>
     </div>
 
     <div class="card alert-box" id="statusAlert"></div>
@@ -381,7 +381,7 @@
         </div>
 
         <p style="font-size: 13px; color: #8a95a6; text-align: center; margin-bottom: 14px; line-height: 1.5;">
-            Authenticate with Spotify on this phone to sync your personal playlists, saved tracks, and playback directly with your BMW display.
+            You sign in on Spotify's own page (accounts.spotify.com). This page never sees your Spotify password; only an access token is sent to your car, encrypted with your car's key.
         </p>
 
         <button class="btn-spotify" id="btnConnect" onclick="startAuth()">Connect with Spotify</button>
@@ -398,9 +398,6 @@
                 <label>Car Pairing Channel</label>
                 <input type="text" id="inputChannel" placeholder="e.g. bmw_spot_xyz">
 
-                <label>Manual Token Fallback (Optional)</label>
-                <input type="password" id="inputManualToken" placeholder="Paste access token if OAuth blocked...">
-                <button class="btn-secondary" onclick="sendManualToken()">Send Manual Token</button>
             </div>
         </details>
     </div>
@@ -415,13 +412,13 @@
         </div>
 
         <div class="icon-check">&#10003;</div>
-        <h2 style="font-size: 20px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">CONNECTED TO BMW iDRIVE 7</h2>
+        <h2 style="font-size: 20px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">CONNECTED TO YOUR CAR</h2>
         <div class="status-pill">
-            ● Paired With Vehicle <span class="car-badge" id="successCarId">BMW</span>
+            ● Paired With Vehicle <span class="car-badge" id="successCarId">car</span>
         </div>
         <p style="font-size: 13px; color: #8a95a6; line-height: 1.5; margin-bottom: 16px;">
-            Your Spotify credentials have been transmitted securely to your car.<br>
-            Your personal playlists, saved songs, and active playback are now live on your iDrive 7 display.
+            Your car received Spotify access (encrypted for this car only).<br>
+            Your playlists, saved songs and playback now show on the car's screen.
         </p>
         <p style="font-size: 12px; color: #64748b; margin-bottom: 18px;">
             You can safely close this browser window.
@@ -430,12 +427,13 @@
     </div>
 
     <div class="footer-nav">
-        <span>BMW iDrive 7 Custom Apps</span>
+        <span>iDrive 7 Custom Apps</span>
         &middot;
         <a href="index.html">Apps Hub</a>
         &middot;
         <a href="copilot.html">M-Copilot AI</a>
     </div>
+    <p class="disclaimer" style="max-width: 440px; margin: 10px auto 0; font-size: 11px; color: #64748b; line-height: 1.5; text-align: center;">Unofficial open-source hobby project. Not affiliated with or endorsed by BMW AG, Spotify AB or Google. Source code: <a href="https://github.com/hexlay/idrive7-custom-apps" style="color: #8a95a6;">github.com/hexlay/idrive7-custom-apps</a></p>
 
     <script>
         const DEFAULT_CLIENT_ID = 'e7a0225d57b243b8a3e7587d605c30fb';
@@ -449,19 +447,31 @@
         ].join(' ');
 
         const urlParams = new URLSearchParams(window.location.search);
-        let channel = urlParams.get('channel') || '';
+        // Spotify's OAuth redirect comes back as ?code=...&state=<channel> without ?channel=
+        const CHANNEL_RE = /^bmw_spot_[A-Za-z0-9]+$/;
+        const stateParam = urlParams.get('state') || '';
+        let channel = urlParams.get('channel') || (CHANNEL_RE.test(stateParam) ? stateParam : '');
         let clientId = urlParams.get('client_id') || localStorage.getItem('bmw_spot_client_id') || DEFAULT_CLIENT_ID;
         let secretKey = '';
         let evtSource = null;
 
-        // Extract secret key from URL hash (#k=<key>)
+        // The car's key arrives in the QR link's hash (#k=<key>), which the OAuth round trip drops.
+        // It is kept in localStorage (per channel): on iOS the Spotify app can hand the login back
+        // in a new tab, where sessionStorage is empty.
+        function keyStoreName(ch) { return 'bmw_spot_k_' + ch; }
+        function loadKey(ch) {
+            if (!ch) return '';
+            try {
+                return localStorage.getItem(keyStoreName(ch)) || sessionStorage.getItem(keyStoreName(ch)) || '';
+            } catch (e) { return ''; }
+        }
         if (window.location.hash && window.location.hash.startsWith('#k=')) {
             secretKey = window.location.hash.substring(3).trim();
             if (channel && secretKey) {
-                sessionStorage.setItem('bmw_spot_k_' + channel, secretKey);
+                try { localStorage.setItem(keyStoreName(channel), secretKey); } catch (e) {}
             }
-        } else if (channel) {
-            secretKey = sessionStorage.getItem('bmw_spot_k_' + channel) || '';
+        } else {
+            secretKey = loadKey(channel);
         }
 
         function formatDisplayCode(ch) {
@@ -515,6 +525,7 @@
             if (!code) return;
             code = code.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
             channel = 'bmw_spot_' + code;
+            secretKey = loadKey(channel);
             initVehicleContext();
         }
 
@@ -770,26 +781,6 @@
             window.location.href = 'https://accounts.spotify.com/authorize?' + authParams.toString();
         }
 
-        async function sendManualToken() {
-            const token = document.getElementById('inputManualToken').value.trim();
-            const targetChannel = document.getElementById('inputChannel').value.trim() || channel;
-            if (!token) {
-                alert('Please enter or paste a valid Spotify token.');
-                return;
-            }
-            if (!targetChannel) {
-                alert('Missing car pairing channel. Please scan the QR code from the car screen.');
-                return;
-            }
-
-            const tokenData = {
-                token: token,
-                expiresAt: Date.now() + 3600000,
-                time: Date.now()
-            };
-
-            await sendTokensToCar(tokenData, targetChannel);
-        }
 
         checkOAuthReturn();
     </script>

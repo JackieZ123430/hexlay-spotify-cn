@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>BMW iDrive 7 - M-Copilot AI Setup</title>
+    <title>M-Copilot setup - iDrive 7 Custom Apps (unofficial)</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -326,10 +326,10 @@
                 <span class="m-dark"></span>
                 <span class="m-red"></span>
             </span>
-            BMW iDrive 7 Cockpit
+            iDrive 7 Custom Apps &middot; Unofficial
         </div>
         <h1>M-Copilot AI Setup</h1>
-        <p class="subtitle">Universal AI Performance Co-Driver for BMW G-Series</p>
+        <p class="subtitle">Connect an AI provider key to the M-Copilot app on your car</p>
     </div>
 
     <!-- Disconnect / Unpair Notification Banner -->
@@ -392,7 +392,7 @@
         <!-- Google Gemini Form -->
         <div id="sectionGemini">
             <label for="inputGeminiKey">Google Gemini API Key</label>
-            <input type="password" id="inputGeminiKey" placeholder="AIzaSy..." autocomplete="off">
+            <input type="text" id="inputGeminiKey" placeholder="AIzaSy..." autocomplete="off" autocapitalize="off" spellcheck="false">
             <p class="helper-text">
                 Free personal tier with high rate limits. Get your key in <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio ↗</a>.
             </p>
@@ -409,10 +409,10 @@
             </select>
 
             <label for="inputCustomKey">API Key</label>
-            <input type="password" id="inputCustomKey" placeholder="sk-..." autocomplete="off">
+            <input type="text" id="inputCustomKey" placeholder="sk-..." autocomplete="off" autocapitalize="off" spellcheck="false">
         </div>
 
-        <button class="btn-connect" onclick="connectCopilot()">CONNECT TO BMW iDRIVE</button>
+        <button class="btn-connect" onclick="connectCopilot()">SEND KEY TO MY CAR</button>
         <p id="errorMsg" style="color: #ff4d4d; font-size: 13px; text-align: center; margin-top: 12px; display: none;"></p>
     </div>
 
@@ -426,9 +426,9 @@
         </div>
 
         <div class="icon-check">✓</div>
-        <h2 style="font-size: 20px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">CONNECTED TO BMW iDRIVE 7</h2>
+        <h2 style="font-size: 20px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">CONNECTED TO YOUR CAR</h2>
         <div class="status-pill">
-            ● Paired With Vehicle <span class="car-badge" id="successCarId">BMW</span>
+            ● Paired With Vehicle <span class="car-badge" id="successCarId">car</span>
         </div>
         <p style="font-size: 13px; color: #8a95a6; line-height: 1.5; margin-bottom: 12px;">
             AI credentials paired securely and isolated to this vehicle.<br>
@@ -441,12 +441,13 @@
     </div>
 
     <div class="footer-nav">
-        <span>BMW iDrive 7 Custom Apps</span>
+        <span>iDrive 7 Custom Apps</span>
         &middot;
         <a href="index.html">Apps Hub</a>
         &middot;
         <a href="pair.html">Spotify Connect</a>
     </div>
+    <p class="disclaimer" style="max-width: 440px; margin: 10px auto 0; font-size: 11px; color: #64748b; line-height: 1.5; text-align: center;">Unofficial open-source hobby project. Not affiliated with or endorsed by BMW AG, Spotify AB or Google. Source code: <a href="https://github.com/hexlay/idrive7-custom-apps" style="color: #8a95a6;">github.com/hexlay/idrive7-custom-apps</a></p>
 
     <script>
         // Clean up legacy keys

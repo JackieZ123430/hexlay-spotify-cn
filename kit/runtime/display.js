@@ -237,7 +237,7 @@ class Display {
     /** own() but for the placement, which depends on it (the bar's height): the renderer and layout allow it. */
     ownable() {
         const g = this.gpu;
-        return !!(g && g.ready && g.native && g.touch && this.layout() === 'full' && g.screen.w === HMI.screen.w && g.screen.h === HMI.screen.h);
+        return !!(g && g.ready && g.native && g.touch && this.layout() === 'full');
     }
     /** Settings is the header's last tab where the kit runs the screen (the app has a Settings button). */
     hasSettings() { return !!(this.screen && (this.screen.buttons || []).some((b) => b[0] === 'BTN_SETTINGS')); }
@@ -388,10 +388,14 @@ class Display {
             else if (p.bar) this._click(p.bar);
         }
     }
-    /** A scrolling page (ctx.onScroll) moved by dy logical px; false when it was at its end already. */
-    _scrollBy(dy) {
+    /**
+     * A scrolling page (ctx.onScroll) moved by dy logical px; false when it was at its end already.
+     * at: where the finger went down (logical px), so a page with two lists scrolls the one under it;
+     * null from the controller.
+     */
+    _scrollBy(dy, at) {
         let moved = false;
-        try { moved = !!this.onScroll(dy); } catch (e) { this.log.error('scroll', e); }
+        try { moved = !!this.onScroll(dy, at || null); } catch (e) { this.log.error('scroll', e); }
         if (moved) this.tickHandlers.forEach((fn) => fn());
         return moved;
     }
@@ -401,7 +405,7 @@ class Display {
         if (p.tab != null) return ((this.chromeRec && this.chromeRec.tabRects) || []).find((q) => q.i === p.tab) || null;
         if (p.tgt) return { x: p.tgt.x * k + pl.ox, y: p.tgt.y * k + pl.oy, w: p.tgt.w * k, h: p.tgt.h * k };
         if (p.bar) { const b = this.buttons().find((q) => q.id === p.bar); return b ? { x: b.x - this.barOff - pl.x, y: pl.h - this.barH(), w: b.w, h: this.barH() } : null; }
-        if (p.scroll) { const hx = HMI.left - pl.x; return { x: hx, y: this.headH(), w: pl.w - hx, h: pl.h - this.barH() - this.headH() }; }
+        if (p.scroll) { const hx = this.geo().left - pl.x; return { x: hx, y: this.headH(), w: pl.w - hx, h: pl.h - this.barH() - this.headH() }; }
         return null;
     }
     /**
@@ -462,7 +466,7 @@ class Display {
             if (phase === 1) { this.ownDown = key; this.downAt = { x, y }; this.lastY = y; this.dragging = false; } else if (phase === 2) {
                 if (!this.sheet && this.pageScroll && this.onScroll && !bar && !tab && this.downAt) {
                     if (!this.dragging && Math.abs(y - this.downAt.y) > 14) this.dragging = true;
-                    if (this.dragging) this._scrollBy(this.lastY - y);
+                    if (this.dragging) this._scrollBy(this.lastY - y, this.downAt);
                 }
                 if (this.sheet && this.sheet.scroll && !bar && this.downAt) {
                     if (!this.dragging && Math.abs(y - this.downAt.y) > 14) this.dragging = true;
@@ -500,7 +504,7 @@ class Display {
         const pl = this.place;
         const logical = (q) => (r ? q : { i: q.i, x: (q.x - pl.ox) / pl.scale, y: (q.y - pl.oy) / pl.scale, w: q.w / pl.scale, h: q.h / pl.scale });
         this.tabs = (rects || []).map(logical);
-        const W = pl.w, hx = HMI.left - pl.x, by = pl.h - this.barH();
+        const W = pl.w, hx = this.geo().left - pl.x, by = pl.h - this.barH();
         if (this.own()) {
             // header (tabs), page and the slim bar: the back column and the status corner stay the HMI's
             this.gpu.claim([{ x: hx, y: 0, w: this.headEnd - hx, h: this.headH() }, { x: hx, y: this.headH(), w: W - hx, h: pl.h - this.headH() }].map(logical));
@@ -541,6 +545,27 @@ class Display {
         (this.screen.buttons || []).forEach((b) => { if (this.ui.visible) this.ui.visible(b[0], !hide); });
     }
 
+    /**
+     * The HMI's geometry on the renderer's screen. Measured on the 1920 x 720 centre display; another
+     * size (a larger LCI display) is taken as the same HMI scaled by its height, the status corner at
+     * its right edge. On 1920 x 720 every value is the measured one (k = 1).
+     */
+    geo() {
+        const scr = (this.gpu && this.gpu.ready && this.gpu.screen) || HMI.screen;
+        const key = scr.w + 'x' + scr.h;
+        if (this._geo && this._geo.key === key) return this._geo;
+        const k = scr.h / HMI.screen.h, R = (v) => Math.round(v * k);
+        this._geo = {
+            key, k, w: scr.w, h: scr.h,
+            left: R(HMI.left), colEnd: R(HMI.colEnd),
+            statusX: scr.w - R(HMI.screen.w - HMI.status.x), statusH: R(HMI.status.h),
+            headH: R(FULL.headH), barH: R(FULL.barH),
+            btnX: R(HMI.btn.x), btnPad: R(HMI.btn.pad), btnSize: HMI.btn.size * k,
+        };
+        if (k !== 1) this.log.info('display: ' + key + ' screen: HMI geometry scaled by ' + k.toFixed(3) + ' ' + JSON.stringify(this._geo));
+        return this._geo;
+    }
+
     layout() {
         const v = this.settings.get('layout') || 'full';
         return LAYOUTS.indexOf(v) >= 0 ? v : 'full';
@@ -551,18 +576,19 @@ class Display {
         if (!this.gpu || !this.gpu.ready) return;
         const scr = this.gpu.screen, v = this.layout();
         let pl;
-        if (v === 'standard' || scr.w !== HMI.screen.w || scr.h !== HMI.screen.h) {
+        const geo = this.geo();
+        if (v === 'standard') {
             pl = { x: HMI.img.x, y: HMI.img.y, w: HMI.img.w, h: HMI.img.h, scale: 1, ox: 0, oy: 0, full: false };
         } else {
             // the surface covers the whole screen, so the HMI's own bar can't show under the back
             // arrow column; the page content goes right of that column
-            const w = scr.w - HMI.left, h = scr.h, src = FULL.src;
+            const w = scr.w - geo.left, h = scr.h, src = FULL.src;
             const ah = h - this.headH() - this.barH();
             const s = Math.floor(Math.min(w / src.w, ah / src.h) * 1000) / 1000;
             pl = {
                 x: 0, y: 0, w: scr.w, h, full: true,
                 scale: s,
-                ox: HMI.left + Math.round((w - src.w * s) / 2 - src.x * s),
+                ox: geo.left + Math.round((w - src.w * s) / 2 - src.x * s),
                 oy: Math.round(this.headH() + (ah - src.h * s) / 2 - src.y * s),
             };
             // no bar under the page (the kit's, emptied): a page that reaches down (its panels, a sheet: it reads
@@ -577,7 +603,7 @@ class Display {
                     pl.extra = Math.floor(spare / s);
                 } else {
                     pl.oyMid = pl.oy;
-                    pl.oyTop = Math.max(top, Math.round(this.headH() + (ah - FULL.barH - src.h * s) / 2 - src.y * s));
+                    pl.oyTop = Math.max(top, Math.round(this.headH() + (ah - geo.barH - src.h * s) / 2 - src.y * s));
                     pl.extra = Math.floor((h - PAGE_GAP - pl.oyTop) / s - PAGE.h);
                     if (this.reaches) pl.oy = pl.oyTop;     // as the last frame was (it may draw in screen pixels, r.place)
                 }
@@ -812,14 +838,14 @@ class Display {
         const tb = this.own() ? this._tabList() : r.chrome.tabs || { tabs: [], sel: -1, badges: [] };
         // compact header in the HMI strip's own black, only as wide as its name, tabs and badges:
         // right of it the HMI's strip shows through (radio station, phone signal, status icons)
-        const hx = HMI.left - pl.x;
-        const end = G.header(c, Object.assign({}, t, { bg: HMI.headBg }), hx, 0, HMI.status.x - pl.x - hx, FULL.headH,
+        const geo = this.geo(), hx = geo.left - pl.x;
+        const end = G.header(c, Object.assign({}, t, { bg: HMI.headBg }), hx, 0, geo.statusX - pl.x - hx, geo.headH,
             this.screen.title || this.spec.title, tb.tabs, tb.sel, tb.badges, true, true);
         // the HMI's own title is in the strip under the header: a narrower header (a sheet: no tabs) stays
         // as wide as the app's widest, so none of that title shows beside it
         if (!this.sheet) this.headMax = Math.max(this.headMax || 0, end);
-        const sx = this.headEnd = Math.min(HMI.status.x - pl.x, Math.ceil(Math.max(end, this.headMax || 0)));
-        if (sx > end) { c.fillRect(end, 0, sx - end, FULL.headH - 2, HMI.headBg); c.fillRect(end, FULL.headH - 2, sx - end, 2, G.withAlpha('#ffffff', 0.22)); }
+        const sx = this.headEnd = Math.min(geo.statusX - pl.x, Math.ceil(Math.max(end, this.headMax || 0)));
+        if (sx > end) { c.fillRect(end, 0, sx - end, geo.headH - 2, HMI.headBg); c.fillRect(end, geo.headH - 2, sx - end, 2, G.withAlpha('#ffffff', 0.22)); }
         // the tab the controller is on (the kit holds it: Display._ccu)
         const ft = this.focusTab != null && (!this.sheet || this.sheetHead) && (c.tabRects || []).find((q) => q.i === this.focusTab);
         if (ft) c.strokeRoundRect(ft.x + 4, ft.y + 10, ft.w - 8, ft.h - 20, 10, 2, t.sel || t.accent);
@@ -830,24 +856,24 @@ class Display {
         // the controller on a page that scrolls: a frame round the page; on a list (cv.scroll = { y, bar }) its
         // scroll bar in the colour of the selection (bar: where the page drew it, so it moves with the list)
         const sb = this.focusKey === 'scroll' && !this.sheet && this.pageScroll;
-        if (sb === true) c.strokeRoundRect(hx + 6, FULL.headH + 6, W - hx - 12, H - this.barH() - FULL.headH - 12, 14, 3, G.withAlpha(t.sel || t.accent, 0.8));
+        if (sb === true) c.strokeRoundRect(hx + 6, geo.headH + 6, W - hx - 12, H - this.barH() - geo.headH - 12, 14, 3, G.withAlpha(t.sel || t.accent, 0.8));
         else if (sb && sb.bar) c.roundRect((sb.bar.x - 2) * k + pl.ox, sb.bar.y * k + pl.oy, (sb.bar.w + 4) * k, sb.bar.h * k, (sb.bar.w / 2 + 2) * k, t.sel || t.accent);
         if (pt) c.strokeRoundRect(pt.x * k + pl.ox - 5, pt.y * k + pl.oy - 5, pt.w * k + 10, pt.h * k + 10, (pt.r != null ? pt.r : pt.h / 2) * k + 5, 3, t.sel || t.accent);
         // the strip's bottom edge continues under the see-through part
-        c.fillRect(sx, 0, W - sx, FULL.headH, HMI.headBg);
-        c.fillRect(sx, FULL.headH - 2, W - sx, 2, G.withAlpha('#ffffff', 0.22));
+        c.fillRect(sx, 0, W - sx, geo.headH, HMI.headBg);
+        c.fillRect(sx, geo.headH - 2, W - sx, 2, G.withAlpha('#ffffff', 0.22));
         // slim bar: each label over its HMI button
         const by = H - this.barH();
         const btns = this.buttons().map((b) => ({ id: b.id, label: b.label, x: b.x - this.barOff - pl.x, w: b.w }));
         const flash = this.pressed && Date.now() - this.pressedT < 300 ? btns.findIndex((b) => b.id === this.pressed) : -1;
         const focus = btns.findIndex((b) => b.id === this.focused);
-        if (btns.length && this.barH()) G.menuBar(c, t, 0, by, W, FULL.barH, btns, focus, 'slim', flash);
+        if (btns.length && this.barH()) G.menuBar(c, t, 0, by, W, geo.barH, btns, focus, 'slim', flash);
         // the HMI's status icons and its back arrow column (home button, back arrow) show through;
         // the column under them is covered, so the HMI's own bar doesn't show at the bottom left, nor the
         // mark the HMI draws above it when its bar is wider than the screen (eDrive's "Reset drive totals")
-        c.clip(sx, 0, W - sx, HMI.status.h).clear(0).noclip();
-        if (hx > 0) c.clip(0, 0, hx, HMI.colEnd - pl.y).clear(0).noclip();
-        drawCredit(c, W - 18, FULL.headH + 17);
+        c.clip(sx, 0, W - sx, geo.statusH).clear(0).noclip();
+        if (hx > 0) c.clip(0, 0, hx, geo.colEnd - pl.y).clear(0).noclip();
+        drawCredit(c, W - 18, geo.headH + 17);
         r.xf(1, 0, 0).append(c).xf();
     }
 
@@ -870,9 +896,9 @@ class Display {
     _scroll() {
         const f = this.buttons().find((b) => b.id === this.focused);
         if (!f) return;
-        const right = HMI.screen.w;
+        const geo = this.geo(), right = geo.w;
         if (f.x + f.w - this.barOff > right) this.barOff = f.x + f.w - right;
-        if (f.x - this.barOff < HMI.btn.x) this.barOff = f.x - HMI.btn.x;
+        if (f.x - this.barOff < geo.btnX) this.barOff = f.x - geo.btnX;
         if (this.barOff < 0) this.barOff = 0;
     }
 
@@ -883,7 +909,7 @@ class Display {
     barH() {
         if (this.screen && (this.screen.bar === false || this.screen.chrome === false)) return 0;
         // the kit's bar with nothing left on it (its buttons on the page, Settings a tab): no bar
-        return this.ownable() && !this.buttons().length ? 0 : FULL.barH;
+        return this.ownable() && !this.buttons().length ? 0 : this.geo().barH;
     }
     /** Leave bar button id out where the kit runs the screen (the app draws it on the page there). */
     hideButton(id) {
@@ -891,7 +917,7 @@ class Display {
         if (this.place) this._place();
     }
     /** Header height: 0 for "chrome": false (the app draws the whole screen itself, e.g. a game). */
-    headH() { return this.screen && this.screen.chrome === false ? 0 : FULL.headH; }
+    headH() { return this.screen && this.screen.chrome === false ? 0 : this.geo().headH; }
 
     /**
      * The HMI's bar buttons in screen pixels, unscrolled: [{ id, label, x, w }]. Where the kit runs
@@ -903,10 +929,11 @@ class Display {
         if (this._btns && this._btnsOwn === own) return this._btns;
         this._btnsOwn = own;
         const m = new Recorder(1, 1);
-        let x = HMI.btn.x;
+        const geo = this.geo();
+        let x = geo.btnX;
         this._btns = (this.screen.buttons || []).filter((b) => !own || (PAGER.indexOf(b[0]) < 0 && b[0] !== 'BTN_SETTINGS' && !this.ownHidden.has(b[0]))).map((b) => {
             const label = this.labels[b[0]] != null ? this.labels[b[0]] : String(b[1] || b[0]);
-            const w = Math.round(m.textWidth(label, HMI.btn.size, { font: 'label' }) * HMI.btn.k) + HMI.btn.pad;
+            const w = Math.round(m.textWidth(label, geo.btnSize, { font: 'label' }) * HMI.btn.k) + geo.btnPad;
             const r = { id: b[0], label, x, w };
             x += w;
             return r;

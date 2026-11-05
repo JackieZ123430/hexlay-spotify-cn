@@ -245,6 +245,10 @@ class RenderClient extends EventEmitter {
         b.writeInt32LE(p.x | 0, 0); b.writeInt32LE(p.y | 0, 4); b.writeInt32LE(p.w | 0, 8); b.writeInt32LE(p.h | 0, 12);
         b.writeFloatLE(p.scale, 16); b.writeFloatLE(p.ox || 0, 20); b.writeFloatLE(p.oy || 0, 24);
         this._write(msg(M.PLACE, b));
+        // A PLACE with a new size (also the first one after connecting) drops all of the app's
+        // resources in the renderer, its videos too (PROTOCOL.md "Video"). Name them again after
+        // every PLACE: the same id simply replaces the video (the renderer reopens its file).
+        if (this.ready && this.native) this._sendVideos();
     }
     show(on) {
         on = !!on;

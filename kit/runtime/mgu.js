@@ -570,8 +570,9 @@ async function runInner(impl) {
         /** hideButton(id): leave bar button id out where the kit runs the screen (its job is on the page there). */
         hideButton(id) { display.hideButton(id); },
         /**
-         * onScroll(fn): fn(dy) scrolls a page drawn with cv.scroll = true by dy px (+ = further down), from a
+         * onScroll(fn): fn(dy, at) scrolls a page drawn with cv.scroll = true by dy px (+ = further down), from a
          * finger dragged on it or the controller turned while on it; returns false when already at that end.
+         * at: where the finger went down ({ x, y }, logical px: which of two lists), null from the controller.
          * cv.scroll = { y, bar: { x, y, w, h } } for a list on the page (from y down) with its scroll bar: the
          * controller goes through the page's targets over y (its buttons) before the list, and shows it is on
          * the list with the bar in the colour of the selection (no frame round the page).

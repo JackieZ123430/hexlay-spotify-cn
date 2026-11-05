@@ -201,7 +201,8 @@ const X = { MODE: 0x4d520001, GRAB: 0x4d520002, PIXMAP: 0x4d520003, PIXELS: 0x4d
 // shortest payload per type (bytes), as kit/renderd/src/main.c checks them; shorter: "bad message"
 const MIN = { 2: 28, 3: 4, 4: 12, 5: 8, 6: 12, 8: 4, 9: 4, 10: 4, 11: 4, 12: 4, 13: 8, 14: 4 };
 MIN[X.MODE] = 4; MIN[X.GRAB] = 4; MIN[X.PIXMAP] = 20; MIN[X.PIXELS] = 4; MIN[X.PALETTE] = 4 + 768;
-const SCREEN = { w: 1920, h: 720 };
+// MGU_EMU_SCREEN=2560x960: the size the renderer reports (another display: the kit's layout for it)
+const SCREEN = (() => { const m = /^(\d+)x(\d+)$/.exec(process.env.MGU_EMU_SCREEN || ''); return m ? { w: +m[1], h: +m[2] } : { w: 1920, h: 720 }; })();
 const BACK_COL = { w: 84, h: 530, head: 76 };   // the HMI's home (in its strip) and back arrow column: must match display.js HMI.left / colEnd / status.h
 const T0 = Date.now();
 let R = null;                                   // the app's connection

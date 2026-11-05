@@ -857,7 +857,7 @@ function stripes(cv, t, x, y, w) {
 }
 
 module.exports = {
-    BAR_H, TOP, BOTTOM, pageBottom, MARGIN, toMargin, frame, header, layer, onLayerDrop, panel, segBar, radial, needle, ring, bar, stat, readout,
+    BAR_H, TOP, BOTTOM, pageBottom, MARGIN, toMargin, frame, header, layer, onLayerDrop, panel, panelExact: box, segBar, radial, needle, ring, bar, stat, readout,
     shiftLights, gear, chart, table, pill, tyres, gmeter, menuBar, stripes, button, onConfirm, smooth, hold, niceStep,
     fmt, isNum, clamp, mix, zoneColor, withAlpha, ramp,
 };

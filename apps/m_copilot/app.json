@@ -2,7 +2,7 @@
   "id": "m_copilot",
   "title": "M-Copilot",
   "description": "Universal AI Performance Co-Driver & Assistant for BMW G-Series (iDrive 7)",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "vendor": "custom",
   "loggingId": "OAMC",
   "iconGlyph": "copilot",

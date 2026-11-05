@@ -29,6 +29,8 @@ class AiBridge {
             this.log = ctxOrLog || console;
         }
         this.config = this.loadConfig();
+        // the credentials live in the data folder only: move an older copy next to the code there
+        if (this.ctx && this.ctx.dataDir && fs.existsSync(CONFIG_PATH)) this.saveConfig();
         this.hasInternet = true;
         this.isCheckingInternet = false;
 
@@ -81,9 +83,10 @@ class AiBridge {
     saveConfig() {
         const target = (this.ctx && this.ctx.dataDir) ? path.join(this.ctx.dataDir, 'copilot_auth.json') : CONFIG_PATH;
         try {
-            fs.writeFileSync(target, JSON.stringify(this.config, null, 2), 'utf8');
+            fs.writeFileSync(target, JSON.stringify(this.config, null, 2), { encoding: 'utf8', mode: 0o600 });
+            // no second copy of the keys next to the code
             if (target !== CONFIG_PATH) {
-                try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(this.config, null, 2), 'utf8'); } catch (e) {}
+                try { fs.unlinkSync(CONFIG_PATH); } catch (e) {}
             }
         } catch (e) {
             this.log.error('Failed to save copilot_auth.json: ' + e.message);

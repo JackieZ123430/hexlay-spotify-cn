@@ -27,7 +27,6 @@
 const mgu = require('./kit/mgu');
 const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
-const { Diag } = require('./kit/diag');
 const { AiBridge } = require('./ai');
 const { CloudPairManager } = require('./cloud_pair');
 const qrcodegen = require('./qrcodegen');
@@ -89,16 +88,14 @@ const TOPIC_CATEGORIES = [
 mgu.run({
     async start(ctx) {
         const { ui, settings, log, signals } = ctx;
-        const diag = new Diag(signals, log);
-        diag.init().catch(() => {});
-
         const ai = new AiBridge(ctx);
         const cloudPair = new CloudPairManager(ctx, ai);
-        // background: no internet checks, slow pairing polls
+        // Foreground only: vehicle data, pairing polls, internet checks and the thinking animation
+        // run while the screen is shown. The pairing itself (keys, channel) is kept; messages the
+        // phone sends meanwhile wait on the channel and are read when the app is opened again.
         const onScreen = () => !ctx.ui.isVisible || ctx.ui.isVisible('MAIN');
         ai.isOnScreen = onScreen;
         cloudPair.isOnScreen = onScreen;
-        cloudPair.startPolling();
 
         let showPairing = false;
         let isThinking = false;
@@ -141,11 +138,24 @@ mgu.run({
             dtcs: []
         };
 
-        // Wire real car driving signals
-        try {
-            const Car = require('./kit/car');
-            const car = new Car(ctx, ['rpm', 'speed', 'accel', 'temps', 'gear', 'torque']);
-            car.onSample((data) => {
+        // Real car driving signals, subscribed only while the screen is shown (startCar / stopCar)
+        let car = null;
+        function stopCar() {
+            if (car) { car.stop(); car = null; }
+        }
+        function startCar() {
+            if (car) return;
+            try {
+                const Car = require('./kit/car');
+                car = new Car(ctx, ['rpm', 'speed', 'accel', 'temps', 'gear', 'torque']);
+                car.onSample(onCarSample);
+            } catch (e) {
+                car = null;
+                log.warn('M-Copilot: Car telemetry init fallback: ' + e.message);
+            }
+        }
+        function onCarSample(data) {
+            {
                 let changed = false;
                 if (data.speed !== undefined && Math.round(data.speed) !== telemetry.speed) {
                     telemetry.speed = Math.round(data.speed);
@@ -170,12 +180,10 @@ mgu.run({
                 if (data.torque !== undefined) telemetry.torque = Math.round(data.torque);
 
                 // When idle and data changed, gently refresh without pegging CPU
-                if (changed && !isThinking && (Date.now() - lastRenderTime > 400)) {
+                if (changed && !isThinking && onScreen() && (Date.now() - lastRenderTime > 400)) {
                     render().catch(() => {});
                 }
-            });
-        } catch (e) {
-            log.warn('M-Copilot: Car telemetry init fallback: ' + e.message);
+            }
         }
 
         cloudPair.onPaired = () => {
@@ -211,8 +219,8 @@ mgu.run({
             if (isThinking) {
                 if (!thinkTimer) {
                     thinkTimer = setInterval(() => {
-                        render(true).catch(() => {});
-                    }, 40); // 25 fps during thinking for buttery neural orb
+                        if (onScreen()) render(true).catch(() => {});
+                    }, 40); // 25 fps while thinking, on screen only
                 }
             } else {
                 if (thinkTimer) {
@@ -751,6 +759,34 @@ mgu.run({
         });
 
         // Run low-frequency idle loop (4 fps) to minimize CPU/GPU load by >85%
+        // ---- lifecycle: nothing runs while M-Copilot is not on screen; everything stops on exit
+        function foreground() {
+            startCar();
+            cloudPair.startPolling();
+            ai.checkInternetConnection().catch(() => {});
+            render(true).catch(() => {});
+        }
+        function background() {
+            stopCar();
+            cloudPair.stopPolling();
+            if (thinkTimer) { clearInterval(thinkTimer); thinkTimer = null; }   // an answer still lands
+        }
+        ui.onVisible((name, visible) => {
+            if (name !== 'MAIN') return;
+            log.info('M-Copilot: ' + (visible ? 'on screen' : 'left the screen: background work stopped'));
+            if (visible) foreground(); else background();
+        });
+        if (onScreen()) foreground();
+        let exiting = false;
+        const exitNow = () => {
+            if (exiting) return;
+            exiting = true;
+            try { background(); } catch (e) {}
+            process.exit(0);
+        };
+        process.on('SIGTERM', exitNow);
+        process.on('SIGINT', exitNow);
+
         ctx.loop('MAIN', 4, render, { maxFps: 10 });
         render(true).then(() => log.info('M-Copilot ready')).catch((e) => log.warn('M-Copilot render error: ' + e));
     }

@@ -336,7 +336,7 @@ ${focusedAnalysis}
 STRICT SAFETY DIRECTIVE (READ-ONLY MONITORING):
 - M-Copilot operates in 100% PASSIVE READ-ONLY OBSERVATION MODE.
 - You have ZERO execution or write authority. You CANNOT code, alter, or flash vehicle ECUs, ambient lighting, start/stop memories, or modules.
-- If asked to code or modify settings, refuse politely and refer the user to the QuickCode app.
+- If asked to code or modify settings, refuse politely: vehicle coding is not available in these apps; the user can use E-Sys or BimmerCode.
 
 FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
 - Keep answers ultra-concise, structured, and legible at a glance on the vehicle's ultrawide display.
@@ -372,7 +372,7 @@ FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
         if (codingTriggers.some((t) => lower.includes(t))) {
             return `[SAFETY INTERLOCK: READ-ONLY OBSERVATION]\n\n` +
                    `M-Copilot operates strictly in passive read-only monitoring mode to safeguard vehicle ECUs.\n\n` +
-                   `To safely code vehicle parameters (such as Start/Stop memory, ambient lighting, or acoustic chimes), please switch to the dedicated QuickCode app.`;
+                   `Vehicle coding (such as Start/Stop memory, ambient lighting, or acoustic chimes) is not available in these apps. Use E-Sys or BimmerCode.`;
         }
 
         const provider = this.config.provider || (this.config.geminiApiKey ? 'gemini' : 'openai');

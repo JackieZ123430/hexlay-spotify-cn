@@ -212,15 +212,21 @@ function liveUi(hu, displayOf, softImage) {
 /** mgu.js ctx.loop: once per renderer tick while the GPU renderer shows the screen, else about fps a second. */
 // (a copy: must match ctx.loop in kit/runtime/mgu.js runInner, minus its gc and timing details)
 function liveLoop(hu) {
-    return (stateName, fps, fn) => {
+    return (stateName, fps, fn, opts) => {
         const { ui, display, log } = hu;
-        let timer = null, on = false, running = false, frames = 0, spent = 0;
+        let timer = null, on = false, running = false, frames = 0, spent = 0, lastStart = 0;
         const gpuOn = () => display.active(stateName);
+        const minGap = () => {
+            const v = opts && opts.maxFps;
+            const n = typeof v === 'function' ? v() : v;
+            return n > 0 ? 1000 / n : 0;
+        };
         const tick = async () => {
             timer = null;
             if (!on || running) return;
             running = true;
             const t0 = Date.now();
+            lastStart = t0;
             try { await fn(); } catch (e) { log.error('loop ' + stateName, e); }
             running = false;
             const dt = Date.now() - t0;
@@ -234,13 +240,15 @@ function liveLoop(hu) {
         const schedule = (dt) => {
             if (!on || timer !== null || running) return;
             // the renderer ticks when it can take the next frame; 250 ms is the safety net if none comes
-            if (gpuOn()) timer = setTimeout(tick, display.gpu.waiting ? 250 : 16);
+            if (gpuOn()) timer = setTimeout(tick, Math.max(display.gpu.waiting ? 250 : 16, minGap() - (Date.now() - lastStart)));
             else timer = setTimeout(tick, Math.max(15, 1000 / fps - (dt || 0)));
         };
         display.onTick(() => {
             if (!on || running) return;
             if (timer !== null) { clearTimeout(timer); timer = null; }
-            if (gpuOn()) tick(); else schedule(0);
+            if (!gpuOn()) { schedule(0); return; }
+            const early = minGap() - (Date.now() - lastStart);
+            if (early > 0) timer = setTimeout(tick, early); else tick();
         });
         const set = (v) => {
             on = v;

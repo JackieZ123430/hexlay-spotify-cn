@@ -1,28 +1,24 @@
 'use strict';
 /**
- * M-Copilot - AI Performance Co-Driver & Intelligent Assistant for BMW iDrive 7.
+ * M-Copilot - an AI co-driver for BMW iDrive 7 that answers with this car's own data.
  *
- * Streamlined Architecture:
- *   1. Zero Duplicate Tabs:
- *      Single unified screen ('M-Copilot'). When unconfigured, it seamlessly displays the
- *      Setup & Pairing QR code. Once paired, it unlocks the full AI Co-Driver interface.
- *   2. Cloud Pairing (Zero 127.0.0.1 / localhost):
- *      QR Code points to https://hexlay.github.io/idrive7-custom-apps/copilot.html?channel=...
- *      Allows pairing from any smartphone over 4G/5G/Wi-Fi with free Google Gemini API Key.
- *   3. 20 Technical Co-Driver Topics across 4 Categories:
- *      - Dynamics & Track (Launch, Drift/xDrive, Mountain Pass, M Brakes, Shift Speed)
- *      - Thermal & DME (Turbo Cooling, Oil Warm-Up, Intercooling, Air Flaps, Cat Warm)
- *      - Chassis & Tires (Tire Grip/PSI, Adaptive EDC Damper, Differential, Steering, Camber)
- *      - Service & Health (BMW Oil Specs, ECU Fault Scan, ZF 8HP, 12V/48V, Fuel Octane)
- *   4. Instant Auto-Prompt & On-Screen Touch Keyboard:
- *      Tapping any topic chip immediately asks M-Copilot. An in-car touch keyboard
- *      allows asking custom vehicle queries with live telemetry synthesis.
- *   5. Ultra-Low CPU/GPU Adaptive Pacing:
- *      Eliminates continuous 66 fps loop in favor of 4 fps idle refresh (~250ms), dynamically
- *      switching to 25 fps (~40ms) ONLY while neural thinking animation is active.
- *   6. Vehicle Context Engine:
- *      Pours rich, safe, read-only CAN & UDS telemetry directly into Google Gemini with
- *      prompt-specific intent analysis (Launch control, Cooling, Grip, DTCs, Brakes).
+ *   - One screen: the phone pairing QR code until an AI key is paired, then the co-driver.
+ *   - Pairing over the internet (ntfy relay, end-to-end encrypted with the car's own key): the phone
+ *     page sends the AI key, and optionally the owner's car profile (model, tune, mods, tyres, fuel).
+ *   - 20 topic chips in 4 categories, worded for a stock daily car as well as a tuned one:
+ *       CHECK     health check, warning lights / fault memory, service due, tyres, 12 V battery
+ *       DRIVE     ready for full power, fuel and range, weather grip, driving modes, cool-down
+ *       PERFORM   launch, track day prep, tune health, heat soak, mods and upgrade path
+ *       KNOW-HOW  oil spec, gearbox care, fuel and octane, known weak points, long trip prep
+ *     plus an on-screen keyboard for any question (follow-up questions keep the context).
+ *   - What the AI is told (ai.js buildVehicleContext): only what the car reported - live driving
+ *     signals, temperatures, tyres, fuel, odometer, the cluster's service list, the fault memory
+ *     when asked about - and who the car is (vehicle.js: make, model year and type from the VIN,
+ *     engine and gearbox unit types, the owner's profile). Anything unknown is said to be unknown.
+ *   - Read-only. Signals are passive subscriptions, only while the screen is shown. Diagnostic reads
+ *     (fault memory, VIN / unit types once) run only when a question needs them and only while the car
+ *     is in a steady state: never while the engine is starting or the car is shutting down.
+ *   - Foreground only: signals, pairing polls and timers stop when the screen is left.
  */
 const mgu = require('./kit/mgu');
 const { withAlpha } = require('./kit/canvas');
@@ -34,55 +30,58 @@ const qrcodegen = require('./qrcodegen');
 const W = 1600, H = 520;
 const PAGES = ['M-Copilot'];
 
+// Topic chips. Each question leans on what the car reports (the AI gets it with every question) and
+// on the car profile, so the same chip fits a stock daily car and a tuned one. faults: read the
+// fault memory first (a few seconds).
 const TOPIC_CATEGORIES = [
     {
-        id: 'dynamics',
-        name: 'DYNAMICS',
-        label: 'Performance & Track',
+        id: 'check',
+        name: 'CHECK',
+        label: 'Health & Service',
         topics: [
-            { title: 'Launch Protocol', query: 'What are the launch control prerequisites and sequence for BMW G-Series ZF 8HP?' },
-            { title: 'Drift & xDrive Modes', query: 'Explain 4WD Sport, 2WD rear-wheel-drive mode, DSC OFF, and MDM (M Dynamic Mode) handling characteristics.' },
-            { title: 'Mountain Pass', query: 'Analyze vehicle handling, chassis balance, and sport differential for aggressive mountain twisties.' },
-            { title: 'M Brakes & Fade', query: 'Analyze M Sport brake temperatures, pad bite, brake fluid boiling threshold, and thermal fade resistance.' },
-            { title: 'Gearbox & Shift Speed', query: 'Explain D1-D3 and S1-S3 Drivelogic shift speeds, torque converter lockup, and manual paddle response.' }
-        ]
+            { title: 'Quick Health Check', faults: true, query: 'Do a health check of my car from every reading you have, the warning messages in the cluster, the service list and the fault memory. Start with anything that needs attention and how urgent it is; if all is fine, say so in one line.' },
+            { title: 'Warning Lights & Faults', faults: true, query: 'Which warning messages is my car showing and what is stored in its fault memory, in which units? How serious is it, and can I keep driving normally?' },
+            { title: 'Service Due', query: 'From my car\'s service list: what is due next and when, what does each item involve for my engine, and what can I check or do myself?' },
+            { title: 'Tyres & Pressures', query: 'Compare my tyre pressures and temperatures with the targets set in the car, taking the outside temperature and my tyre type into account. Should I adjust anything, cold or hot?' },
+            { title: '12V Battery & Start-Stop', query: 'How is my 12 V battery from its charge level, and what does that mean for auto start-stop, short trips and the car standing for a few days?' },
+        ],
     },
     {
-        id: 'thermal',
-        name: 'THERMAL',
-        label: 'Thermal & DME',
+        id: 'drive',
+        name: 'DRIVE',
+        label: 'Right Now',
         topics: [
-            { title: 'Turbo Cooling', query: 'What are the turbo cooling and post-drive heat management guidelines for BMW turbocharged engines?' },
-            { title: 'Oil Warm-Up & Boost', query: 'What are the exact engine oil temperature thresholds before full DME turbo boost is unlocked?' },
-            { title: 'Charge Air & Cooling', query: 'Explain indirect charge air intercooling, low-temp coolant loop, and heat-soak management on hard runs.' },
-            { title: 'Radiator & Air Flaps', query: 'How do the active kidney grille air flaps and auxiliary engine oil coolers manage high ambient heat?' },
-            { title: 'Cold Start & Cat Warm', query: 'What occurs during BMW catalytic converter heating cycle, cold start high idle, and exhaust flap operation?' }
-        ]
+            { title: 'Ready for Full Power?', query: 'Is my engine warm enough for full throttle and high revs right now? Use the oil and coolant temperatures, and say what threshold you use for my engine and tune.' },
+            { title: 'Fuel & Range', query: 'How far can I go on the fuel I have, how does my consumption look, and what would make the biggest difference to it on this trip?' },
+            { title: 'Weather & Grip', query: 'With the outside temperature and my tyres as they are now, how much grip should I expect, is there a risk of ice or cold tyres, and what should I change in how I drive?' },
+            { title: 'Driving Modes Explained', query: 'What does my current driving mode change on my car (throttle, gearbox, steering, dampers, stability control), and which mode suits city, motorway, wet roads and a fun back road?' },
+            { title: 'Cool-Down & Parking', query: 'After how I have been driving, should I let the engine idle or drive gently before switching off? Use the oil and coolant temperatures and say why it matters for my engine and tune.' },
+        ],
     },
     {
-        id: 'chassis',
-        name: 'CHASSIS',
-        label: 'Chassis & Tires',
+        id: 'perform',
+        name: 'PERFORM',
+        label: 'Spirited, Track & Tuned',
         topics: [
-            { title: 'Tire Grip & PSI', query: 'Analyze current tire pressures, cold vs hot delta, and rubber temperature grip window.' },
-            { title: 'Adaptive M Damper', query: 'Compare COMFORT, SPORT, and SPORT+ adaptive EDC damper stiffness, body roll, and rebound damping.' },
-            { title: 'Sport Differential', query: 'How does the electronically controlled M rear axle limited-slip differential (GHAS) manage torque vectoring?' },
-            { title: 'Steering & Agility', query: 'Analyze Servotronic variable sport steering ratio, high-speed on-center stability, and turn-in sharpness.' },
-            { title: 'Wheel Alignment & Wear', query: 'What are factory negative camber and toe alignment recommendations for high-speed stability and track wear?' }
-        ]
+            { title: 'Launch & 0-100', query: 'How do I use launch control on my car (gearbox and drivetrain), what must be met for it to work, are my temperatures ready for it now, and how hard is it on the drivetrain with my tune?' },
+            { title: 'Track Day Prep', query: 'Get my car ready for a track day: tyre pressures cold and hot for my tyres, brake fluid and pads from the service list, oil level and cooling, and the settings to use. Use my readings.' },
+            { title: 'Tune Health Check', query: 'Look at my boost, torque and temperatures for signs of heat soak, an engine running too hard or a weak point of my tune. For a stock car, say what is normal for it and what headroom it has.' },
+            { title: 'Heat Soak & Cooling', query: 'Are my oil and coolant temperatures OK for hard driving right now? At what temperatures does my engine pull power, and how do I manage heat on back-to-back pulls or laps?' },
+            { title: 'Mods & Upgrade Path', query: 'For my car and its current modifications, what is the most sensible next upgrade, what supporting parts does it need, and what does it risk (reliability, warranty, inspection)?' },
+        ],
     },
     {
-        id: 'care',
-        name: 'CARE',
-        label: 'Service & Health',
+        id: 'knowhow',
+        name: 'KNOW-HOW',
+        label: 'Ownership',
         topics: [
-            { title: 'BMW Specs & Oil', query: 'What are the factory oil specifications, change intervals, and Longlife (LL-01 / LL-04 / LL-17FE+) service guidelines for BMW G-Series engines?' },
-            { title: 'ECU Fault & Health', query: 'Run an OBD-II UDS diagnostic health check across DME, EGS transmission, DSC, and electrical sensors.' },
-            { title: 'ZF 8HP Service', query: 'What are the transmission fluid service intervals, pan filter replacement, and adaptation resets for ZF 8HP?' },
-            { title: '12V & 48V Hybrid', query: 'Analyze 12V AGM battery state of health, charging voltage, and 48V mild-hybrid regenerative braking.' },
-            { title: 'Fuel Octane & Knock', query: 'Explain 98 RON / 93 AKI minimum octane requirements, ignition timing pull, and ethanol (E10/E25) compatibility.' }
-        ]
-    }
+            { title: 'Oil Spec & Level', query: 'Which BMW oil approval and viscosity does my engine need (and with my tune and use), how much does it hold, what does my oil level reading say, and how do I top up correctly?' },
+            { title: 'Gearbox Care', query: 'What gearbox does my car have, when should its fluid be changed (BMW says lifetime; what is realistic for my use and tune), and what is an adaptation reset for?' },
+            { title: 'Fuel & Octane', query: 'Which fuel should my engine and tune run on, what happens on lower octane (knock, timing pulled, power), and is an ethanol blend an option?' },
+            { title: 'Known Weak Points', query: 'What are the known weak points of my engine and model at my mileage, what are their early signs, and what should I check or replace before it fails?' },
+            { title: 'Long Trip Prep', query: 'I am about to go on a long trip: check my readings (oil level, tyres, fuel, battery, service list, faults if read) and tell me what to sort out before leaving.' },
+        ],
+    },
 ];
 
 mgu.run({
@@ -126,29 +125,177 @@ mgu.run({
         let statusMsg = null;
         let statusTime = 0;
 
-        // Rich Telemetry state (BMW M850i xDrive / G15 / N63TU3)
+        // What the car reported (null = not known: the AI is told so, it never gets a placeholder)
         const telemetry = {
-            speed: 0,
-            rpm: 650,
-            gear: 'P',
-            stage: 'P',
-            torque: 0,
-            oilTemp: 98,
-            coolantTemp: 92,
-            boost: 1.15,
-            driveMode: 'SPORT+',
-            lateralG: 0.05,
-            longitudinalG: 0.02,
-            tireFlPsi: 35.5,
-            tireFrPsi: 35.8,
-            tireRlPsi: 37.2,
-            tireRrPsi: 37.0,
-            tireTemp: 38,
-            ambientTemp: 22,
-            batteryVoltage: 14.2,
-            fuelPercent: 74,
-            rangeKm: 480,
-            dtcs: []
+            speed: null, rpm: null, gear: null, stage: null, torque: null, boost: null, mode: null,
+            oilTemp: null, coolantTemp: null, oilLevel: null, ambient: null, gLat: null, gLong: null,
+            tyres: null, tyreTargets: null, tyreTemps: null, fuelL: null, rangeKm: null, batteryPct: null,
+            engine: null, msa: null, handbrake: null, odoKm: null, avgCons: null, powerPct: null, torquePct: null,
+            awd: null, condition: null, service: null, serviceNext: null, checkControl: null, programme: null, ac: null, hvTemp: null, hvVolt: null,
+            engineSnap: null, dtcScan: null, vehicle: null,
+        };
+        const Vehicle = require('./vehicle');
+        const vehicle = new Vehicle({ dataDir: ctx.dataDir, log });
+        telemetry.vehicle = vehicle;
+        const DRIVE_MODES = { SPORT_DYNAMIC: 'Sport', SPORT_EXPERT: 'Sport plus', ECO_PRO_EFFICIENT: 'Eco pro', 1: 'Sport', 2: 'Sport plus',
+            3: 'Sport individual', 4: 'Comfort', 5: 'Comfort plus', 6: 'Comfort individual', 7: 'Eco pro', 8: 'Eco pro plus', 9: 'Eco pro individual', 10: 'Adaptive' };
+        const OIL_LEVELS = { MOTOROELSTAND_UNTER_MINIMUM: 'below minimum', MOTOROELSTAND_AM_MINIMUM: 'at minimum', MOTOROELSTAND_1_4: '1/4', MOTOROELSTAND_2_4: '2/4',
+            MOTOROELSTAND_3_4: '3/4', MOTOROELSTAND_4_4: 'full', MOTOROELSTAND_5_4: 'above full', MOTOROELSTAND_UEBERFUELLT: 'overfilled', MOTOROELSTAND_OK: 'OK',
+            0: 'below minimum', 1: 'at minimum', 2: '1/4', 3: '2/4', 4: '3/4', 5: 'full', 6: 'above full', 7: 'overfilled', 13: 'OK' };
+        const ENGINE_STATES = { MOTOR_AUS: 'off', MOTOR_STARTET: 'starting', MOTOR_LAEUFT: 'running', 0: 'off', 1: 'starting', 2: 'running' };
+        const HANDBRAKE = { HANDBREMSE_ANGEZOGEN: 'applied', HANDBREMSE_GELOEST: 'released', 1: 'released', 2: 'applied' };
+        const MSA = { MSA_AKTIVIERT: 'on', MSA_DEAKTIVIERT: 'off', 0: 'off', 1: 'on' };
+        const AWD = { _4WD_STANDARD: '4WD', _4WD_ALTERNATIV: '4WD Sport', _2WD: '2WD (rear-wheel drive)', AWDSAND: 'Sand' };
+        const CONS_UNITS = { VERBRAUCH_IN_L_S_100KM: 'l/100 km', VERBRAUCH_IN_MPG_UK: 'mpg (UK)', VERBRAUCH_IN_MPG_US: 'mpg (US)', VERBRAUCH_IN_KM_S_L: 'km/l',
+            1: 'l/100 km', 2: 'mpg (UK)', 3: 'mpg (US)', 4: 'km/l' };
+        // service list (as idrive7-apps Service reads it): ids in English, colours as states
+        const CBS_NAMES = { 1: 'Engine oil', 2: 'Front brake pads', 3: 'Brake fluid', 6: 'Rear brake pads', 7: 'Particulate filter', 10: 'Spark plugs',
+            13: 'NOx additive (AdBlue)', 17: 'Vehicle check', 32: 'Statutory inspection', 33: 'Emissions test', 35: 'Transmission oil', 100: 'Vehicle check' };
+        const CBS_STATES = { RED: 'overdue', YELLOW: 'due soon', ORANGE: 'due soon', GREEN: 'OK', 1: 'overdue', 2: 'due soon', 4: 'due soon', 3: 'OK' };
+        const findKey = (v, key) => {
+            if (!v || typeof v !== 'object') return null;
+            if (key in v) return v;
+            for (const k of Object.keys(v)) { const r = findKey(v[k], key); if (r) return r; }
+            return null;
+        };
+        const carText = (x) => String(x === undefined || x === null ? '' : x).replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 60);
+        const PROGRAMMES = { S_MINUS_PROGRAMM: 'S (sport)', M_MINUS_PROGRAMM: 'M (manual)', 1: 'S (sport)', 2: 'M (manual)' };
+        const AC_ON = { 1: true, KLIMAANLAGE_EIN: true, 0: false, KLIMAANLAGE_AUS: false };
+        const pick = (v, key) => { const o = findKey(v, key); return o ? o[key] : undefined; };
+        // Check Control: active message ids (CheckControlMaster) and their texts (the cluster's lists)
+        const ccActive = new Map(), ccNames = new Map();
+        const ccWalk = (o, fn) => {
+            if (!o || typeof o !== 'object') return;
+            if (Array.isArray(o)) { o.forEach((x) => ccWalk(x, fn)); return; }
+            fn(o);
+            Object.keys(o).forEach((k) => { if (o[k] && typeof o[k] === 'object') ccWalk(o[k], fn); });
+        };
+        const ccUpdate = () => {
+            telemetry.checkControl = Array.from(ccActive.keys()).map((id) => (ccNames.get(id) || 'Check Control message ' + id));
+        };
+        const ccNamesFrom = (v) => {
+            ccWalk(v, (o) => {
+                const id = o.cCIdentifer !== undefined ? o.cCIdentifer : o.cCIdentifier, nm = o.cCShortName || o.cCName;
+                if (id !== undefined && nm) ccNames.set(id, carText(nm));
+            });
+            if (telemetry.checkControl) ccUpdate();
+        };
+        // tyre pressures come as 0.1 x the car's own unit; each unit's plausible range is apart (as M Vitals reads them)
+        let tyreFahrenheit = false;
+        const tyreBar = (raw) => {
+            if (typeof raw !== 'number' || raw >= 65532) return null;
+            const v = raw * 0.1;
+            if (v >= 0.5 && v <= 6) return v;
+            if (v >= 7 && v < 60) { tyreFahrenheit = true; return v / 14.5038; }     // psi (the car then uses deg F too)
+            if (v >= 60 && v <= 600) return v / 100;                                 // kPa
+            return null;
+        };
+        const tyreC = (raw) => {
+            if (typeof raw !== 'number' || raw >= 65535) return null;
+            const v = raw - 40;
+            return tyreFahrenheit ? (v - 32) * 5 / 9 : v;
+        };
+        const corners4 = (v, keys, fn) => {
+            const o = { fl: fn(v[keys[0]]), fr: fn(v[keys[1]]), rl: fn(v[keys[2]]), rr: fn(v[keys[3]]) };
+            return [o.fl, o.fr, o.rl, o.rr].every((x) => x !== null) ? o : null;
+        };
+        // signals beyond kit/car's groups, decoded as in idrive7-apps (Live Data, M Vitals)
+        const EXTRA = {
+            'de.bmw.infotainment.vehicle.TPMS': {
+                statusTyrePressure: (v) => { telemetry.tyres = corners4(v || {}, ['actualValuePressureTyreFLH', 'actualValuePressureTyreFRH', 'actualValuePressureTyreRLH', 'actualValuePressureTyreRRH'], tyreBar); },
+                statusTargetTyrePressure: (v) => { telemetry.tyreTargets = corners4(v || {}, ['targetPressureTyreFLH', 'targetPressureTyreFRH', 'targetPressureTyreRLH', 'targetPressureTyreRRH'], tyreBar); },
+                statusTyreTemperature: (v) => { telemetry.tyreTemps = corners4(v || {}, ['actualValueTemperatureTyreFLH', 'actualValueTemperatureTyreFRH', 'actualValueTemperatureTyreRLH', 'actualValueTemperatureTyreRRH'], tyreC); },
+            },
+            'de.bmw.infrastructure.EnvironmentalInformation': {
+                ExteriorTemperature: (v) => { const r = v && v.temperatureExterior; telemetry.ambient = typeof r === 'number' && r !== 255 ? r * 0.5 - 40 : null; },
+            },
+            'de.bmw.infotainment.KombiIF': {
+                statusRangeTankStatus: (v) => {
+                    v = v || {};
+                    telemetry.fuelL = typeof v.fluidLevelFuelTank === 'number' && v.fluidLevelFuelTank < 255 ? v.fluidLevelFuelTank : null;
+                    telemetry.rangeKm = typeof v.range === 'number' && v.range < 4095 ? v.range : null;
+                    telemetry.odoKm = typeof v.mileageKilometre === 'number' && v.mileageKilometre > 0 && v.mileageKilometre < 16777215 ? v.mileageKilometre : null;
+                },
+                // trip computer 1 (scaling as Live Data reads it: 0.1 a step, in the cluster's unit)
+                statusBordcomputerAverage: (v) => {
+                    const r = v && v.consumptionAverage1BC1, unit = v && CONS_UNITS[v.statusUnitOfMeasurementConsumptionBC];
+                    telemetry.avgCons = typeof r === 'number' && r > 0 && r < 65535 && unit ? { value: r * 0.1, unit } : null;
+                },
+            },
+            'de.bmw.infotainment.vehicle.CDS': {
+                statusBattery2: (v) => { const r = v && v.conditionBatteryChargingCondition; telemetry.batteryPct = typeof r === 'number' && r <= 100 ? r : null; },
+                statusEngineStatus: (v) => { const r = v && v.statusEngineRunDrive; telemetry.engine = (r !== undefined && ENGINE_STATES[r]) || null; },
+                statusHandBrake: (v) => { const r = v && v.statusContactHandBrake; telemetry.handbrake = (r !== undefined && HANDBRAKE[r]) || null; },
+            },
+            'de.bmw.infotainment.vehicle.CDS2': {
+                statusPushButtonMSA2: (v) => { const r = v && v.statusFunctionMSA; telemetry.msa = (r !== undefined && MSA[r]) || null; },
+            },
+            'de.bmw.infotainment.vehicle.Vehicle2': {
+                statusOilDipstick2: (v) => { const r = v && v.fluidLevelEngineOilRelative; telemetry.oilLevel = (r !== undefined && OIL_LEVELS[r]) || null; },
+                statusVehiclePartType: (v) => { const t = Vehicle.engineTypeOf(v && v.typeEngine); if (t) vehicle.engineType = t; },
+            },
+            'de.bmw.infotainment.drivingexcitement.FES': {
+                statusFESVehicleDynamicSwitchHMI: (v) => { const r = v && v.actualValueModeDrivingExperience; telemetry.mode = (r !== undefined && DRIVE_MODES[r]) || null; },
+                statusSwitchDriveDynamicSport2: (v) => { const r = v && v.displayBoostPressure; telemetry.boost = typeof r === 'number' && r !== 255 ? r * 0.01 : null; },
+                // the sport display's share of the engine's maximum power and torque
+                statusVehicleDynamicEngine: (v) => {
+                    v = v || {};
+                    telemetry.powerPct = typeof v.displaySportEnginePower === 'number' && v.displaySportEnginePower <= 100 ? v.displaySportEnginePower : null;
+                    telemetry.torquePct = typeof v.displaySportEngineTorque === 'number' && v.displaySportEngineTorque <= 100 ? v.displaySportEngineTorque : null;
+                },
+            },
+            // M xDrive setting (M models only); the S / M programme the cluster shows next to the gear (M Vitals)
+            'de.bmw.infotainment.misc.MDrive': {
+                statusMSystem: (v) => { const r = v && v.statusAllWheelSetup; telemetry.awd = (r !== undefined && AWD[r]) || null; },
+                dataDisplayGearbox: (v) => { const r = v && v.displayProgramGearbox; telemetry.programme = (r !== undefined && PROGRAMMES[r]) || null; },
+            },
+            // climate and the high-voltage battery, as eDrive reads them
+            'de.bmw.infotainment.climate.Climate2': {
+                statusACFront: (v) => { const r = pick(v, 'statusAircon'); telemetry.ac = r === undefined ? null : AC_ON[r] === undefined ? null : AC_ON[r]; },
+            },
+            'de.bmw.infotainment.drivingexcitement.Efficiencytainment2': {
+                statusBatteryTemperature: (v) => {
+                    const r = pick(v, 'actualValueTemperatureHighVoltageStorage');
+                    telemetry.hvTemp = typeof r === 'number' && r !== 255 && r - 50 > -30 && r - 50 < 70 ? r - 50 : null;
+                },
+            },
+            'de.bmw.infotainment.lsc.LSCDataSink': {
+                statusHighVoltageStorage: (v) => {
+                    const x = pick(v, 'actualValueVoltageHighVoltageStorage'), volts = typeof x === 'number' ? (x > 1500 ? x / 10 : x) : null;
+                    telemetry.hvVolt = volts !== null && volts > 150 && volts < 500 ? volts : null;
+                },
+            },
+            // Check Control: the warning messages active in the cluster now (as idrive7-apps Fault Scanner reads them)
+            'de.bmw.infotainment.checkcontrol.CheckControlMaster': {
+                basicList: (v) => {
+                    ccWalk(v, (o) => {
+                        if (o.ccmId === undefined) return;
+                        if (o.activeState === 'AKTIV' || o.activeState === 0) ccActive.set(o.ccmId, true); else ccActive.delete(o.ccmId);
+                    });
+                    ccUpdate();
+                },
+            },
+            // the cluster's service list: what the iDrive's Service requirements page shows
+            'de.bmw.infotainment.KombiInterface_2': {
+                ccList: (v) => ccNamesFrom(v),
+                // the summary: the next service the car asks for (as idrive7-apps Service reads it)
+                cbsDataSBA: (v) => {
+                    const c = findKey(v, 'cBSDataSBAText') || {};
+                    const text = carText(c.cBSDataSBAText);
+                    telemetry.serviceNext = text ? { text, way: carText(c.cBSDataSBADistance), date: carText(c.cBSDataSBADate) } : null;
+                },
+                newCCMessage: (v) => ccNamesFrom(v),
+                cbsDataServiceList: (v) => {
+                    const arr = Array.isArray(v) ? v : (v && (v.cbsDataServiceList || v.value)) || [];
+                    const items = arr.map((e) => {
+                        const c = findKey(e, 'cBSIdentifier') || {};
+                        const carName = carText(c.cBSServcieName || c.cBSServiceName);
+                        return { name: CBS_NAMES[c.cBSIdentifier] || carName, way: carText(c.cBSServiceWay), date: carText(c.cBSServiceDate),
+                            state: CBS_STATES[c.cBSColor] || null };
+                    }).filter((i) => i.name);
+                    telemetry.service = items.length ? items : null;
+                },
+            },
         };
 
         // Real car driving signals, subscribed only while the screen is shown (startCar / stopCar)
@@ -160,7 +307,7 @@ mgu.run({
             if (car) return;
             try {
                 const Car = require('./kit/car');
-                car = new Car(ctx, ['rpm', 'speed', 'accel', 'temps', 'gear', 'torque']);
+                car = new Car(ctx, ['rpm', 'speed', 'accel', 'temps', 'gear', 'torque', 'condition'], EXTRA);
                 car.onSample(onCarSample);
             } catch (e) {
                 car = null;
@@ -168,6 +315,8 @@ mgu.run({
             }
         }
         function onCarSample(data) {
+            // kit/car feeds a simulator while no car answers: that must never reach the AI as the car's state
+            if (data.demo) return;
             {
                 let changed = false;
                 if (data.speed !== undefined && Math.round(data.speed) !== telemetry.speed) {
@@ -186,11 +335,12 @@ mgu.run({
                     telemetry.coolantTemp = Math.round(data.coolant);
                     changed = true;
                 }
-                if (data.gLat !== undefined) telemetry.lateralG = data.gLat;
-                if (data.gLong !== undefined) telemetry.longitudinalG = data.gLong;
+                if (data.gLat !== undefined) telemetry.gLat = data.gLat;
+                if (data.gLong !== undefined) telemetry.gLong = data.gLong;
                 if (data.gear !== undefined) telemetry.gear = data.gear;
                 if (data.stage !== undefined) telemetry.stage = data.stage;
                 if (data.torque !== undefined) telemetry.torque = Math.round(data.torque);
+                if (data.condition !== undefined) telemetry.condition = data.condition;
 
                 // When idle and data changed, gently refresh without pegging CPU
                 if (changed && !isThinking && onScreen() && (Date.now() - lastRenderTime > 400)) {
@@ -198,6 +348,14 @@ mgu.run({
                 }
             }
         }
+
+        // the owner's car profile from the phone page (model, tune, mods, tyres, fuel, use)
+        cloudPair.onProfile = (profile, time) => {
+            if (!vehicle.setProfile(profile, time)) return;
+            ai.resetHistory();
+            notify(vehicle.profile ? 'Car profile updated from your phone.' : 'Car profile cleared.');
+            render(true).catch(() => {});
+        };
 
         cloudPair.onPaired = () => {
             showPairing = false;
@@ -219,6 +377,14 @@ mgu.run({
             notify('Phone disconnected AI. Scan QR code to re-pair.');
             render(true).catch(() => {});
         };
+
+        const fmtNum = (v, unit) => (typeof v === 'number' && isFinite(v) ? Math.round(v) + unit : '--');
+        function vitalsLine() {
+            // no car (emulator, bench): kit/car's simulator, marked DEMO - shown here only, never sent to the AI
+            const d = car ? car.data() : null, demo = !!(d && d.demo);
+            const oil = demo ? d.oil : telemetry.oilTemp, coolant = demo ? d.coolant : telemetry.coolantTemp;
+            return 'OIL ' + fmtNum(oil, '°C') + '  ·  COOLANT ' + fmtNum(coolant, '°C') + '  ·  BATTERY ' + fmtNum(demo ? null : telemetry.batteryPct, '%') + (demo ? '  ·  DEMO' : '');
+        }
 
         function notify(msg) {
             statusMsg = msg;
@@ -244,7 +410,139 @@ mgu.run({
             }
         }
 
-        async function askCopilot(queryText, title) {
+        /**
+         * Diagnostic reads only in a steady state: not while drive readiness is being made or ended
+         * (vehicle state 8 / 12), not while the engine is starting or cranking. Signals alone (passive)
+         * never need this. Unknown state (the car doesn't send it) counts as steady.
+         */
+        function steady() {
+            // the car's latest state, not the last tick's (the state alone sends no tick)
+            if (car) onCarSample(car.data());
+            if (telemetry.condition === 8 || telemetry.condition === 12) return false;
+            if (telemetry.engine === 'starting') return false;
+            if (typeof telemetry.rpm === 'number' && telemetry.rpm > 0 && telemetry.rpm < 450) return false;   // cranking
+            return true;
+        }
+        /** Up to waitMs for a steady state (an engine start takes a second or two). */
+        async function whenSteady(waitMs) {
+            const until = Date.now() + waitMs;
+            while (!steady() && Date.now() < until) await new Promise((r) => setTimeout(r, 300));
+            return steady();
+        }
+
+        let diag = null;
+        async function diagLink() {
+            const { Diag } = require('./kit/diag');
+            if (!diag) diag = await new Diag(signals, log).init();
+            return diag;
+        }
+
+        /** Once per car: the VIN (if MainApp didn't pass it) and the engine / gearbox unit types. */
+        async function identifyCar() {
+            try {
+                const d = await diagLink();
+                if (d.available) await vehicle.identify(d, steady);
+            } catch (e) {
+                log.warn('M-Copilot: identification skipped: ' + (e.message || e));
+            }
+        }
+
+        /**
+         * The type index (UDS 22 F150) of the units that reported faults, which picks their exact
+         * fault texts: asked once per unit and kept in data/ecu_ids.json (with the VIN: another car,
+         * asked again), only while steady. { 'hex address': 'index' or '' (asked, none) }.
+         */
+        const IDS_FILE = require('path').join(ctx.dataDir, 'ecu_ids.json');
+        let unitIds = null;
+        async function unitTypes(d, addrs, useful) {
+            if (!unitIds) {
+                try { const j = JSON.parse(require('fs').readFileSync(IDS_FILE, 'utf8')); unitIds = j.vin === vehicle.vin ? j.ids || {} : {}; } catch (e) { unitIds = {}; }
+            }
+            const h = (a) => a.toString(16).toUpperCase().padStart(2, '0');
+            const todo = useful ? addrs.filter((a) => unitIds[h(a)] === undefined) : [];
+            for (const a of todo) {
+                if (!steady()) break;                      // the engine started: the rest next time
+                try {
+                    const r = await d.physical(a, 0x22, [0xF1, 0x50], 3000);
+                    if (!r) continue;                      // no answer: asked again next time
+                    unitIds[h(a)] = r[0] === 0x62 && r.length >= 6 ? [r[3], r[4], r[5]].map(h).join('') : '';
+                } catch (e) { break; }
+            }
+            if (todo.length) {
+                try { require('fs').writeFileSync(IDS_FILE, JSON.stringify({ vin: vehicle.vin, ids: unitIds })); } catch (e) { /* next time */ }
+            }
+            return unitIds;
+        }
+
+        /**
+         * The engine snapshot (engine_snapshot.js): read-only values from the engine unit (and a hybrid's
+         * battery unit) at the moment of asking - boost, intake air, load, timing, fuel pressures, misfires,
+         * gearbox oil, 12 V. Only while steady, within a time budget; kept 20 s.
+         */
+        let snapshot = null;
+        async function engineSnapshot() {
+            try {
+                const d = await diagLink();
+                if (!d.available || !steady()) return;
+                if (!snapshot) { const EngineSnapshot = require('./engine_snapshot'); snapshot = new EngineSnapshot(d, ctx.spec && ctx.spec.config, log); }
+                const hybrid = /hybrid|electric/.test(vehicle.engineType || '') || telemetry.hvVolt !== null || telemetry.hvTemp !== null;
+                const r = await snapshot.read({ budgetMs: 3500, steady, hybrid, needOil: telemetry.oilTemp === null });
+                if (r) telemetry.engineSnap = r;
+            } catch (e) {
+                log.warn('M-Copilot: engine snapshot skipped: ' + (e.message || e));
+            }
+        }
+
+        /**
+         * Read the fault memory of every control unit (UDS 0x19 02 0C over TASU, read-only) so the AI
+         * talks about real stored faults. Kept for 5 minutes.
+         */
+        async function scanFaults() {
+            if (telemetry.dtcScan && !telemetry.dtcScan.error && Date.now() - telemetry.dtcScan.at < 5 * 60 * 1000) return;
+            try {
+                const { parseDtcReply } = require('./kit/diag');
+                const { ECU } = require('./kit/ecus');
+                if (!(await whenSteady(8000))) {
+                    // not cached: the next question tries again
+                    telemetry.dtcScan = { at: 0, error: 'the engine was starting or stopping; the fault memory is read once the car is steady' };
+                    return;
+                }
+                const d = await diagLink();
+                if (!d.available) throw new Error('diagnostic link not available');
+                currentResponse = 'Reading the fault memory of all control units...';
+                render(true).catch(() => {});
+                const res = await d.functional(0x19, [0x02, 0x0C]);
+                const found = [];
+                res.forEach((uds, addr) => {
+                    const p = parseDtcReply(uds, [0x02, 0x0C]);
+                    found.push({ addr, codes: p.ok ? p.dtcs.map((x) => x.code) : [] });
+                });
+                // the texts: for the units with faults, their exact type first (once per unit, kept)
+                const T = require('./dtc_text');
+                const ids = await unitTypes(d, found.filter((u) => u.codes.length).map((u) => u.addr), T.hasDb);
+                let total = 0;
+                const units = found.map((u) => {
+                    total += u.codes.length;
+                    return { addr: u.addr, name: T.unitName(u.addr, ids) || ECU[u.addr] || ('ECU 0x' + u.addr.toString(16).toUpperCase()),
+                        codes: u.codes.map((code) => ({ code, text: T.describe(u.addr, code, ids) })) };
+                });
+                telemetry.dtcScan = { at: Date.now(), answered: units.length, total, units };
+                log.info('M-Copilot: fault memory read: ' + units.length + ' units, ' + total + ' faults');
+            } catch (e) {
+                telemetry.dtcScan = { at: Date.now(), error: e.message || String(e) };
+                log.warn('M-Copilot: fault memory read failed: ' + (e.message || e));
+            }
+        }
+
+        const simulated = (d) => {
+            const r = (v) => (typeof v === 'number' && isFinite(v) ? Math.round(v) : null);
+            return Object.assign({}, telemetry, { demo: true, speed: r(d.speed), rpm: r(d.rpm), oilTemp: r(d.oil), coolantTemp: r(d.coolant),
+                torque: r(d.torque), gear: typeof d.gear === 'number' ? d.gear : null, gLat: d.gLat, gLong: d.gLong });
+        };
+
+        let askSeq = 0;
+        async function askCopilot(queryText, title, opts) {
+            if (isThinking) { notify('M-Copilot is still answering...'); return; }
             if (!ai.hasInternet) {
                 notify('No Internet: Please verify phone hotspot or cellular uplink.');
                 return;
@@ -257,18 +555,27 @@ mgu.run({
 
             currentPrompt = title || 'Custom Query';
             dialogueScroll = 0;
+            const seq = ++askSeq;
             setThinking(true);
-            currentResponse = 'Querying AI Co-Driver with live vehicle telemetry...';
-
-            const persona = settings.persona || 'm_engineer';
-
+            currentResponse = 'Asking M-Copilot with your car\'s live data...';
             try {
-                const answer = await ai.ask(queryText, telemetry, { persona });
-                currentResponse = answer;
+                // who the car is (once per car), then the fault memory for the topics and questions about it
+                await identifyCar();
+                if ((opts && opts.faults) || /\b(fault|dtc|error code|check engine|warning light|engine light)/i.test(queryText)) await scanFaults();
+                // the engine unit's own values at the moment of asking (a few hundred ms once known)
+                await engineSnapshot();
+                // the latest live values at the moment of asking (not demo data: onCarSample drops those)
+                if (car) onCarSample(car.data());
+                // demo switched on by hand (emulator, bench): the simulator's readings, labelled as such.
+                // On "auto" (the car's default) simulated values never reach the AI.
+                const d = car ? car.data() : null;
+                const t = d && d.demo && settings.get('demo') === 'on' ? simulated(d) : telemetry;
+                const answer = await ai.ask(queryText, t, { fresh: !!(opts && opts.fresh) });
+                if (seq === askSeq) currentResponse = answer;
             } catch (e) {
-                currentResponse = 'Error: ' + e.message;
+                if (seq === askSeq) currentResponse = 'Error: ' + e.message;
             } finally {
-                setThinking(false);
+                if (seq === askSeq) setThinking(false);
             }
         }
 
@@ -289,11 +596,22 @@ mgu.run({
         }
 
         /* ---------- Helper: Text Formatting & Wrapping ---------- */
+        const wrapCache = { key: null, lines: null };
         function wrapLines(text, maxChars = 62) {
             if (!text) return [];
+            const key = maxChars + '|' + text;
+            if (wrapCache.key === key) return wrapCache.lines;
+            wrapCache.key = key;
+            return (wrapCache.lines = wrapLinesNow(text, maxChars));
+        }
+        function wrapLinesNow(text, maxChars) {
             // Clean markdown syntax & sanitize characters into atlas-supported glyphs
             const cleaned = text
                 .replace(/\*\*(.*?)\*\*/g, '$1')   // bold asterisks removed
+                .replace(/^#{1,6}\s*/gm, '')          // markdown headings
+                .replace(/`([^`]*)`/g, '$1')          // inline code
+                .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, '$1$2')   // *italic*
+                .replace(/^\s*\d+[.)]\s+/gm, (m) => '- ')   // numbered lists as bullets
                 .replace(/^[\*\-]\s+/gm, '- ')     // list bullet prefix to '- '
                 .replace(/[•\u2022]/g, '- ')       // bullet dot to '- '
                 .replace(/[≥]/g, '>=')
@@ -423,7 +741,7 @@ mgu.run({
             G.panelExact(cv, t, 510, 52, 1050, 458 + (cv.extra || 0), 'Ask Custom Question');
 
             // Live Engine Vitals in header
-            cv.text(`${telemetry.oilTemp}°C OIL  ·  ${telemetry.coolantTemp}°C COOLANT  ·  ${telemetry.batteryVoltage}V`, 1530, 80, 13, t.dim, { align: 'right', font: 'num' });
+            cv.text(vitalsLine(), 1530, 80, 13, t.dim, { align: 'right', font: 'num' });
 
             const kx = 540, kw = 990;
 
@@ -592,7 +910,7 @@ mgu.run({
                 cv.target(60, py, 400, 36, () => {
                     selectedTopicIdx = idx;
                     showKeyboard = false;
-                    askCopilot(p.query, p.title);
+                    askCopilot(p.query, p.title, { fresh: true, faults: !!p.faults });
                 }, 'chip_' + idx, 8);
             });
 
@@ -650,7 +968,7 @@ mgu.run({
             G.panelExact(cv, t, 510, 52, 1050, 410 + dEx, 'Dialogue: ' + currentPrompt);
 
             // Live Engine Vitals in header
-            cv.text(`${telemetry.oilTemp}°C OIL  ·  ${telemetry.coolantTemp}°C COOLANT  ·  ${telemetry.batteryVoltage}V`, 1530, 80, 13, t.dim, { align: 'right', font: 'num' });
+            cv.text(vitalsLine(), 1530, 80, 13, t.dim, { align: 'right', font: 'num' });
 
             // Response Box Card
             const rx = 530, ry = 104, rw = 1010, rh = 340 + dEx;
@@ -758,7 +1076,7 @@ mgu.run({
             } else {
                 const currentCat = TOPIC_CATEGORIES[activeCategory] || TOPIC_CATEGORIES[0];
                 const currentTopic = currentCat.topics[selectedTopicIdx] || currentCat.topics[0];
-                askCopilot(currentTopic.query, currentTopic.title);
+                askCopilot(currentTopic.query, currentTopic.title, { fresh: true, faults: !!currentTopic.faults });
             }
             return render(true);
         });

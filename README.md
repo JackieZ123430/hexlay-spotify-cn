@@ -18,6 +18,7 @@
 This repository is built on the open-source BMW iDrive 7 platform:
 
 * [**cauliflowermossgrape/idrive7-apps**](https://github.com/cauliflowermossgrape/idrive7-apps) — the app runtime, the native OpenGL ES renderer, SOME/IP vehicle signals and the TASU UDS diagnostic transport.
+  M-Copilot uses that project's Fault Scanner fault-text database (`dtc_db.pack`) and the engine and battery identifier tables of its M Vitals and eDrive apps (MIT License, Copyright (c) 2026 cauliflowermossgrape).
 * [**mgu-store**](https://github.com/robertnisipeanu/mgu-store) — the in-car app store, package manager and internet uplink by Robert Nisipeanu.
 
 > [!NOTE]
@@ -30,10 +31,13 @@ This repository is built on the open-source BMW iDrive 7 platform:
 | App | Version | Needs internet | Touches vehicle ECUs |
 | :--- | :---: | :---: | :--- |
 | [Spotify](#1-spotify-spotify) | 1.0.12 | Yes | No |
-| [M-Copilot](#2-m-copilot-m_copilot) | 1.0.5 | Yes | No (reads driving signals) |
+| [M-Copilot](#2-m-copilot-m_copilot) | 1.0.6 | Yes | No (reads driving signals, service list and fault memory) |
 
 > [!NOTE]
 > **QuickCode (BMW BDC coding) is a work in progress** and is not available in the MGU Store. It is not offered until its coding writes are verified against real BMW coding data. Its source is in `wip/quick_code/`.
+
+> [!NOTE]
+> **M-Cinema (YouTube player) has been removed.** Playback was unreliable on the head unit (it didn't play on some firmware, such as MainApp 6.5.5) and its sound was poor. CarPlay and Android Auto already have YouTube workarounds that render and play better, so a native player wasn't worth keeping. It is no longer in the MGU Store; uninstall it from the store if you still have it.
 
 ### 1. Spotify (`spotify`)
 **Spotify Connect controller and library browser on the iDrive 7 central display.**
@@ -56,10 +60,16 @@ This repository is built on the open-source BMW iDrive 7 platform:
 
 ![M-Copilot](docs/screenshots/m_copilot.png)
 
-* **Ask about your car**: topic chips across Dynamics, Thermal, Chassis and Care (launch, drift and xDrive modes, turbo cooling, tire grip, oil specs and more), or type your own question with the on-screen keyboard. Answers take live driving signals (speed, temperatures) into account.
-* **Your choice of AI provider**: Google Gemini, Anthropic Claude, OpenAI, Groq or OpenRouter.
+* **Ask about your car**: 20 topic chips in four groups, worded for a stock daily car as well as a tuned one. **Check**: health check, warning lights and faults, service due, tyres, 12 V battery. **Drive**: ready for full power, fuel and range, weather and grip, driving modes, cool-down. **Perform**: launch, track day prep, tune health, heat soak, mods and upgrade path. **Know-how**: oil spec, gearbox care, fuel and octane, known weak points, long trip prep. Or type your own question with the on-screen keyboard; follow-up questions keep the context of the last answers.
+* **Knows which car it is in**: make and model year from the VIN (MainApp hands it to every app it starts), the engine type, and the engine and gearbox control unit types, which name the engine family and gearbox (read once per car and kept). The serial part of the VIN never leaves the car.
+* **Your car profile (optional)**: on the phone page, add the model, tune stage, power, modifications, tyres, fuel and how you use the car. It is sent end-to-end encrypted like the key and can be changed at any time without re-pairing. A tuned car gets advice for its higher load.
+* **Answers from your car's real data**: speed, rpm, gear, torque, boost, driving mode, engine state, auto start-stop, parking brake, oil and coolant temperature, oil level, outside temperature, tyre pressures and temperatures against the car's own targets, fuel, range, trip average, odometer, 12 V battery charge, the M xDrive setting on M models, and the cluster's own service list (oil, brakes, brake fluid, inspections, with distance and date). A value the car hasn't sent is named as unavailable: M-Copilot never fills in a number.
+* **A look into the engine computer**: with each question, a quick read-only snapshot of what M Vitals shows live: boost actual vs target, intake air temperature, air charge (load) actual vs target, ignition timing, high- and low-pressure fuel, misfires per cylinder, gearbox oil temperature and 12 V voltage; on plug-in hybrids also the high-voltage battery's charge and health. It runs only while the car is steady, within a few seconds, and is kept for 20 s.
+* **Warning messages and fault memory**: the Check Control messages active in the cluster are always part of the context. The health check and faults topics (or any question about faults) also read the stored faults of every control unit, with BMW's own fault descriptions (the Fault Scanner's fault-text database), so the AI explains the actual faults instead of hex codes.
+* **Safe with the engine on or off**: driving data are passive subscriptions. Diagnostic reads (fault memory, and the one-time identification) are read-only requests in the default session, made only when a question needs them, and never while the engine is starting or the car is switching off; M-Copilot waits for a steady state instead.
+* **Your choice of AI provider**: Google Gemini, Anthropic Claude (Claude Haiku 5.5 by default), OpenAI, Groq or OpenRouter. Connections are reused, so an answer doesn't wait for a new TLS handshake.
 * **Pair from your phone**: scan the QR code and enter the provider and API key on [`copilot.html`](https://hexlay.github.io/idrive7-custom-apps/copilot.html). The key reaches the car end-to-end encrypted, as with Spotify.
-* **Read-only**: M-Copilot only reads driving signals and never writes to any ECU.
+* **Read-only**: M-Copilot only reads; it never writes, codes or clears anything on any control unit.
 * **Foreground only**: driving signals, pairing checks and the internet check run only while M-Copilot is on screen, and everything stops on exit. The pairing is kept; a phone-side unpair is picked up the next time the app is opened. The API key is stored once, in the app's data folder (readable by the app only).
 
 ---
@@ -75,6 +85,10 @@ The recommended way to install and update these apps is the [**MGU Store**](http
    ```
 3. Tap **OK**. The MGU Store reads `mgu-repo.json` and lists the apps.
 4. Tap an app to install it. Updates appear in the store when a new version is pushed.
+
+### Older firmware (e.g. MainApp 6.5.5)
+
+The head unit's installer refuses an app outright if its SOME/IP manifest names an interface, field or method the firmware's catalog (`/etc/oap/someip/someip-interfaces.json`) doesn't have, and older firmware has fewer. The MGU Store builds these apps on the head unit, and the build fits each app's vehicle signals to that unit's catalog: what the unit lacks is left out, so the app installs and runs without those values. The app's log lists them at start (`this unit has no ... - running without it`).
 
 ### Internet access
 

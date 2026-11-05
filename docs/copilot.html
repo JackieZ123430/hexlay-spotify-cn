@@ -440,6 +440,73 @@
         <button class="btn-unpair" onclick="unpairThisVehicle()">UNPAIR THIS VEHICLE</button>
     </div>
 
+    <!-- Car Profile (optional): who the car is, for better answers. Sent encrypted like the key. -->
+    <div class="card" id="cardProfile" style="display: none;">
+        <div class="card-m-header">
+            <div class="st-light"></div>
+            <div class="st-dark"></div>
+            <div class="st-red"></div>
+            <div class="line"></div>
+        </div>
+        <h2 style="font-size: 16px; font-weight: 800; color: #ffffff; margin-bottom: 6px;">YOUR CAR <span style="color: #64748b; font-weight: 600;">(optional)</span></h2>
+        <p class="helper-text" style="margin-bottom: 14px;">
+            The car already tells M-Copilot its make, year, engine and live readings. Add what it can't know,
+            for answers that fit your car and tune. Change it any time; it is sent encrypted to this car only.
+        </p>
+
+        <label for="pfModel">Model</label>
+        <input type="text" id="pfModel" maxlength="60" placeholder="e.g. 2021 M340i xDrive (G20)">
+
+        <label for="pfTune">Tune</label>
+        <select id="pfTune">
+            <option value="">Not set</option>
+            <option value="stock">Stock</option>
+            <option value="stage1">Stage 1 (software)</option>
+            <option value="stage2">Stage 2 (software + hardware)</option>
+            <option value="stage2plus">Beyond Stage 2 (turbo / fuel upgrades)</option>
+            <option value="custom">Custom tune</option>
+        </select>
+
+        <label for="pfPower">Power (if known)</label>
+        <input type="text" id="pfPower" maxlength="40" placeholder="e.g. 450 hp / 650 Nm">
+
+        <label for="pfMods">Modifications</label>
+        <input type="text" id="pfMods" maxlength="160" placeholder="e.g. downpipe, intake, intercooler, coilovers">
+
+        <label for="pfTyres">Tyres</label>
+        <select id="pfTyres">
+            <option value="">Not set</option>
+            <option value="summer">Summer</option>
+            <option value="allseason">All-season</option>
+            <option value="winter">Winter</option>
+            <option value="semislick">Semi-slick (track)</option>
+            <option value="runflat">Run-flat</option>
+        </select>
+
+        <label for="pfFuel">Fuel</label>
+        <select id="pfFuel">
+            <option value="">Not set</option>
+            <option value="ron95">95 RON / 91 AKI</option>
+            <option value="ron98">98 RON / 93 AKI</option>
+            <option value="ron100">100+ RON</option>
+            <option value="e85">Ethanol blend (E30-E85)</option>
+            <option value="diesel">Diesel</option>
+        </select>
+
+        <label for="pfUse">Mostly used for</label>
+        <select id="pfUse">
+            <option value="">Not set</option>
+            <option value="daily">Daily driving</option>
+            <option value="spirited">Spirited road driving</option>
+            <option value="track">Track days</option>
+            <option value="towing">Towing</option>
+            <option value="touring">Long trips</option>
+        </select>
+
+        <button class="btn-connect" onclick="sendProfile()">SAVE TO MY CAR</button>
+        <p id="profileMsg" style="font-size: 13px; text-align: center; margin-top: 12px; display: none;"></p>
+    </div>
+
     <div class="footer-nav">
         <span>iDrive 7 Custom Apps</span>
         &middot;
@@ -517,6 +584,43 @@
             }
 
             initRelayListener();
+            showProfileCard();
+        }
+
+        const PROFILE_FIELDS = { model: 'pfModel', tune: 'pfTune', power: 'pfPower', mods: 'pfMods', tyres: 'pfTyres', fuel: 'pfFuel', use: 'pfUse' };
+
+        // the profile card needs the car's key (it came with the QR code)
+        function showProfileCard() {
+            const card = document.getElementById('cardProfile');
+            if (!channel || !secretKey || secretKey.length !== 64) { card.style.display = 'none'; return; }
+            card.style.display = 'block';
+            let saved = {};
+            try { saved = JSON.parse(localStorage.getItem('copilot_profile_' + channel) || '{}') || {}; } catch (e) {}
+            Object.keys(PROFILE_FIELDS).forEach((k) => { if (saved[k]) document.getElementById(PROFILE_FIELDS[k]).value = saved[k]; });
+        }
+
+        async function sendProfile() {
+            const msg = document.getElementById('profileMsg');
+            const say = (text, ok) => { msg.innerText = text; msg.style.color = ok ? '#2fd27a' : '#ff4d4d'; msg.style.display = 'block'; };
+            const profile = {};
+            Object.keys(PROFILE_FIELDS).forEach((k) => {
+                const v = document.getElementById(PROFILE_FIELDS[k]).value.trim();
+                if (v) profile[k] = v;
+            });
+            const payload = await encryptCredentials(JSON.stringify({ type: 'copilot_profile', profile: profile, time: Date.now() }), secretKey);
+            if (!payload) { say('This page has no valid car key. Scan the QR code on the car again.', false); return; }
+            try {
+                const res = await fetch('https://ntfy.sh/' + channel, {
+                    method: 'POST',
+                    headers: { 'Title': 'BMW M-Copilot Car Profile' },
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) { say('Transmission error. Check the phone\'s internet connection.', false); return; }
+                try { localStorage.setItem('copilot_profile_' + channel, JSON.stringify(profile)); } catch (e) {}
+                say('Saved. The car picks it up within a minute while M-Copilot is open, or the next time you open it.', true);
+            } catch (e) {
+                say('Network error: ' + e.message, false);
+            }
         }
 
         function applyManualCode() {

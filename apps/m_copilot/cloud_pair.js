@@ -279,6 +279,12 @@ class CloudPairManager {
             return;
         }
 
+        // The owner's car profile (also on a replay: Vehicle.setProfile keeps only the newest)
+        if (parsed.type === 'copilot_profile') {
+            if (this.onProfile) this.onProfile(parsed.profile, parsed.time);
+            return;
+        }
+
         // Credentials Pairing Event
         if (parsed.geminiApiKey || parsed.apiKey || parsed.sessionToken) {
             if (replay) return;

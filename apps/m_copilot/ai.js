@@ -1,14 +1,13 @@
 'use strict';
 /**
- * AI Bridge for M-Copilot - Powered by Google Gemini (with Multi-Provider Fallback).
+ * AI bridge for M-Copilot: Google Gemini, Anthropic Claude, or an OpenAI-compatible API
+ * (OpenAI, Groq, OpenRouter, a relay), with the key paired from the phone.
  *
- * Capabilities:
- *   1. Full Live Vehicle Context Engine: Injects comprehensive, safe, read-only
- *      CAN & UDS telemetry into Gemini prompts tailored to what the driver asks.
- *   2. Google Gemini 1.5/2.0 Flash integration (Free Tier & Advanced).
- *   3. Custom API & Cloud Relay support (OpenAI, Claude, Groq).
- *   4. Active internet uplink monitoring & automated connectivity checks.
- *   5. Strict Read-Only Vehicle Safety Interlock (Zero coding/writing authority).
+ *   - The model gets only what the car reported (buildVehicleContext); a value it doesn't have
+ *     is listed as not available, never filled in.
+ *   - A short memory (the last exchanges) so a follow-up question works.
+ *   - One kept-alive, certificate-checked connection per host (tls_dates.agent).
+ *   - Read-only: nothing is ever written to the car.
  */
 const https = require('https');
 const http = require('http');
@@ -18,6 +17,14 @@ const urlMod = require('url');
 const tlsDates = require('./tls_dates');
 
 const CONFIG_PATH = path.join(__dirname, 'copilot_auth.json');
+
+const REQUEST_TIMEOUT_MS = 30000;           // silence allowed on the connection: a model reasoning sends nothing meanwhile
+const HISTORY_TURNS = 2;                    // exchanges sent along, for follow-up questions
+const HISTORY_MS = 10 * 60 * 1000;          // a conversation older than this starts over
+const ANTHROPIC_VERSION = '2026-10-21';
+const MODEL_TRY_MS = 8000;                  // a model with another one after it: wait this long, then ask the next
+const GEMINI_BUSY_MS = 10 * 60 * 1000;      // an overloaded Gemini model is skipped this long
+const CLAUDE_DEFAULT_MODEL = 'claude-haiku-5-5';   // fast and cheap; the phone page can choose another
 
 class AiBridge {
     constructor(ctxOrLog) {
@@ -33,6 +40,9 @@ class AiBridge {
         if (this.ctx && this.ctx.dataDir && fs.existsSync(CONFIG_PATH)) this.saveConfig();
         this.hasInternet = true;
         this.isCheckingInternet = false;
+        this.agent = tlsDates.agent();      // reused connections: no TLS handshake per question
+        this.history = [];                  // [{ q, a }], the last exchanges (follow-up questions)
+        this.historyAt = 0;
 
         this.checkInternetConnection().catch(() => {});
         // re-checked only while the app is on screen (main.js sets isOnScreen)
@@ -74,8 +84,6 @@ class AiBridge {
             geminiApiKey: null,
             apiKey: null,
             sessionToken: null,
-            relayUrl: 'https://api.openai.com/v1/chat/completions',
-            persona: 'm_engineer',
             paired: false
         };
     }
@@ -125,8 +133,9 @@ class AiBridge {
             }
         }
         if (payload.sessionToken) this.config.sessionToken = payload.sessionToken;
-        if (payload.persona) this.config.persona = payload.persona;
         this.config.paired = true;
+        this.config.geminiModel = null;     // a new key: find the model that works for it again
+        this.config.geminiPlain = null;
         this.saveConfig();
         this.log.info('AiBridge: Saved new credentials (mode=' + this.config.mode + ', provider=' + (this.config.provider || 'gemini') + ')');
     }
@@ -198,435 +207,329 @@ class AiBridge {
     }
 
     /**
-     * Build rich, safe vehicle context synthesized specifically for the driver's question.
+     * The car's state for the model: only values the car reported. Missing ones are named, so the
+     * model says it doesn't have them instead of quoting a number.
      */
-    buildVehicleContext(persona, telemetry, query) {
-        const p = (persona || this.config.persona || 'm_engineer');
-        const q = (query || '').toLowerCase();
+    buildVehicleContext(t) {
+        t = t || {};
+        const known = [], missing = [];
+        const num = (v) => typeof v === 'number' && isFinite(v);
+        // optional: a value many cars never send (M models only, sport display): left out when absent
+        const add = (label, v, fmt, optional) => {
+            if (v === null || v === undefined || (typeof v === 'number' && !isFinite(v))) { if (!optional) missing.push(label); } else known.push(label + ': ' + fmt(v));
+        };
+        const r0 = (v) => String(Math.round(v)), r1 = (v) => (Math.round(v * 10) / 10).toFixed(1), r2 = (v) => v.toFixed(2);
+        const CONDITIONS = { 1: 'parked', 2: 'parked', 3: 'parked, driver away', 5: 'parked, no ignition', 7: 'ignition on, not drive-ready',
+            8: 'getting drive-ready', 10: 'drive-ready', 12: 'switching off' };
+        add('Vehicle state', CONDITIONS[t.condition] || null, (v) => v, true);
+        add('Engine', t.engine, (v) => v);
+        add('Speed', t.speed, (v) => r0(v) + ' km/h');
+        add('Engine speed', t.rpm, (v) => r0(v) + ' rpm');
+        add('Gear selector', t.stage || (num(t.gear) ? (t.gear > 0 ? 'D' : null) : null), (v) => v + (num(t.gear) && t.gear > 0 ? ' (gear ' + t.gear + ')' : ''));
+        add('Engine torque', t.torque, (v) => r0(v) + ' Nm');
+        add('Power / torque, % of the engine maximum (sport display)', num(t.powerPct) && num(t.torquePct) ? [t.powerPct, t.torquePct] : null, (v) => r0(v[0]) + ' % / ' + r0(v[1]) + ' %', true);
+        add('Boost (sport display)', t.boost, (v) => r2(v) + ' bar', true);
+        add('Driving mode', t.mode, (v) => v);
+        add('M xDrive setting', t.awd, (v) => v, true);
+        add('Auto start-stop', t.msa, (v) => v, true);
+        add('Parking brake', t.handbrake, (v) => v, true);
+        add('Engine oil temperature', t.oilTemp, (v) => r0(v) + ' C');
+        add('Coolant temperature', t.coolantTemp, (v) => r0(v) + ' C');
+        add('Engine oil level', t.oilLevel, (v) => v);
+        add('Outside temperature', t.ambient, (v) => r1(v) + ' C');
+        add('Lateral / longitudinal acceleration', num(t.gLat) && num(t.gLong) ? [t.gLat, t.gLong] : null, (v) => r2(v[0]) + ' g / ' + r2(v[1]) + ' g');
+        const corners = (o, fmt) => (o && ['fl', 'fr', 'rl', 'rr'].every((k) => num(o[k])) ? 'FL ' + fmt(o.fl) + ', FR ' + fmt(o.fr) + ', RL ' + fmt(o.rl) + ', RR ' + fmt(o.rr) : null);
+        add('Tyre pressures', corners(t.tyres, r1), (v) => v + ' bar');
+        add('Tyre pressure targets (set in the car)', corners(t.tyreTargets, r1), (v) => v + ' bar');
+        add('Tyre temperatures', corners(t.tyreTemps, r0), (v) => v + ' C', true);
+        add('Fuel in the tank', t.fuelL, (v) => r0(v) + ' l');
+        add('Range', t.rangeKm, (v) => r0(v) + ' km');
+        add('Average consumption (trip computer)', t.avgCons, (v) => r1(v.value) + ' ' + v.unit, true);
+        add('Odometer', t.odoKm, (v) => r0(v) + ' km');
+        add('12 V battery charge', t.batteryPct, (v) => r0(v) + ' %');
+        add('Gearbox programme shown', t.programme, (v) => v, true);
+        add('Air conditioning (A/C)', t.ac === null || t.ac === undefined ? null : t.ac ? 'on' : 'off', (v) => v, true);
+        add('High-voltage battery temperature', t.hvTemp, (v) => r0(v) + ' C', true);
+        add('High-voltage battery voltage', t.hvVolt, (v) => r0(v) + ' V', true);
 
-        // 1. Core Vehicle Information
-        const carModel = 'BMW G-Series (iDrive 7)';
-        const speed = Math.round(telemetry.speed || 0);
-        const speedMph = Math.round(speed * 0.621371);
-        const rpm = Math.round(telemetry.rpm || 650);
-        const oil = Math.round(telemetry.oilTemp || 98);
-        const coolant = Math.round(telemetry.coolantTemp || 92);
-        const mode = telemetry.driveMode || 'SPORT+';
-        const gear = telemetry.gear !== undefined ? (telemetry.gear === 0 ? 'N/P' : telemetry.gear === -1 ? 'R' : telemetry.gear) : (telemetry.stage || 'P');
-        const torque = telemetry.torque ? Math.round(telemetry.torque) : (rpm > 1000 ? 280 : 0);
-        const boost = telemetry.boost ? telemetry.boost.toFixed(2) : '1.15';
-        const latG = (telemetry.lateralG || 0).toFixed(2);
-        const longG = (telemetry.longitudinalG || 0).toFixed(2);
-
-        // Tires & Chassis
-        const fl = (telemetry.tireFlPsi || 35.5).toFixed(1);
-        const fr = (telemetry.tireFrPsi || 35.8).toFixed(1);
-        const rl = (telemetry.tireRlPsi || 37.2).toFixed(1);
-        const rr = (telemetry.tireRrPsi || 37.0).toFixed(1);
-        const tireTemp = Math.round(telemetry.tireTemp || 38);
-        const ambient = Math.round(telemetry.ambientTemp || 22);
-
-        // Diagnostics & Range
-        const battery = (telemetry.batteryVoltage || 14.2).toFixed(1);
-        const fuel = Math.round(telemetry.fuelPercent || 74);
-        const range = Math.round(telemetry.rangeKm || 480);
-        const rangeMiles = Math.round(range * 0.621371);
-        const dtcs = (telemetry.dtcs && telemetry.dtcs.length) ? telemetry.dtcs.join(', ') : 'None (0 DTCs detected, all powertrain modules healthy)';
-
-        // Thermal status evaluation
-        const oilStatus = oil < 70 ? 'COLD (Below 70°C, full DME boost restricted for protection)' : (oil > 115 ? 'HIGH (Cool-down cruising advised)' : 'OPTIMAL (Full boost permissible)');
-        const tireStatus = tireTemp < 25 ? 'COLD (Reduced compound grip, expect wheelspin)' : 'OPTIMAL (Operating grip temperature)';
-
-        // 2. Focused Intent Analysis based on Question
-        let focusedAnalysis = '';
-        if (q.includes('launch') || q.includes('0-100') || q.includes('0-60') || q.includes('sprint') || q.includes('drag') || q.includes('acceleration')) {
-            focusedAnalysis = `
-[FOCUSED ANALYSIS: LAUNCH CONTROL PREREQUISITES & READINESS]
-- Engine Oil Temperature: ${oil}°C -> ${oil >= 70 ? 'PASS (≥70°C met)' : 'FAIL (<70°C, launch blocked by DME)'}
-- Tire Temperature: ${tireTemp}°C -> ${tireTemp >= 25 ? 'PASS (warm rubber)' : 'CAUTION (cold tires, traction limited)'}
-- Transmission Gear/Stage: ${gear} -> Must be pulled LEFT into S/M
-- Drive Dynamic Mode: ${mode} -> Must be SPORT+ or DSC TRACTION (press DSC once)
-- Sequence: Left foot hard on brake -> Floor gas through kickdown switch -> Release brake within 3s when 'Launch Control Active' lights up.`;
-        } else if (q.includes('cool') || q.includes('hot') || q.includes('temp') || q.includes('overheat') || q.includes('warm') || q.includes('radiator') || q.includes('shutdown')) {
-            focusedAnalysis = `
-[FOCUSED ANALYSIS: POWERTRAIN THERMAL DISSIPATION & HEAT SOAK]
-- Engine Oil Temp: ${oil}°C (Norm: 90-110°C, Peak Safe: 120°C) -> Status: ${oilStatus}
-- Coolant Temp: ${coolant}°C (Norm: 85-102°C)
-- Ambient Temperature: ${ambient}°C
-- Guidelines: If oil >110°C after hard driving, idle engine or cruise gently at <2000 RPM for 1-2 mins to circulate coolant through the turbochargers. The auxiliary electric coolant pump will run automatically post-shutdown if thermal dissipation is required.`;
-        } else if (q.includes('tire') || q.includes('psi') || q.includes('pressure') || q.includes('grip') || q.includes('handling') || q.includes('corner') || q.includes('drift')) {
-            focusedAnalysis = `
-[FOCUSED ANALYSIS: CHASSIS & TPMS TIRE GRIP WINDOW]
-- Pressures: Front-Left: ${fl} PSI | Front-Right: ${fr} PSI | Rear-Left: ${rl} PSI | Rear-Right: ${rr} PSI
-- Tread Temperature: ${tireTemp}°C -> ${tireStatus}
-- Live Lateral G-Force: ${latG} G | Longitudinal: ${longG} G
-- Status: All 4 corners balanced. Recommended target cold pressure: 36 PSI Front, 38 PSI Rear.`;
-        } else if (q.includes('error') || q.includes('dtc') || q.includes('fault') || q.includes('check engine') || q.includes('code') || q.includes('warning') || q.includes('health') || q.includes('diagnostic')) {
-            focusedAnalysis = `
-[FOCUSED ANALYSIS: UDS ON-BOARD DIAGNOSTIC (OBD-II) SCAN]
-- Active ECU DTC Fault Codes: ${dtcs}
-- 12V Battery Rail Voltage: ${battery} V (Alternator actively charging)
-- Safety System: Dynamic Stability Control (DSC) fully functional.`;
-        } else if (q.includes('brake') || q.includes('fade') || q.includes('pad') || q.includes('stopping') || q.includes('rotor') || q.includes('caliper')) {
-            focusedAnalysis = `
-[FOCUSED ANALYSIS: M SPORT / COMPOUND BRAKING THERMAL MANAGEMENT]
-- Kinetic Energy & Speed: ${speed} km/h | Longitudinal Decel: ${longG} G
-- Brake Fluid Boiling Window: Typical DOT 4 Low Viscosity dry boiling pt is 265°C, wet 175°C.
-- Guidance: After repeated high-speed stops (above 160 km/h), maintain driving airflow at moderate speeds to cool brake rotors and calipers evenly. Avoid resting on the brake pedal at a standstill immediately after track stops to prevent pad material transfer onto hot rotors.`;
-        } else if (q.includes('trans') || q.includes('gearbox') || q.includes('zf') || q.includes('8hp') || q.includes('shift') || q.includes('drivelogic') || q.includes('clutch')) {
-            focusedAnalysis = `
-[FOCUSED ANALYSIS: ZF 8HP STEPTRONIC & DRIVELOGIC TRANSMISSION]
-- Current Engaged Gear: ${gear} | Output Torque: ${torque} Nm | Engine RPM: ${rpm}
-- Operating Temperature: Normal EGS fluid temp follows engine coolant (${coolant}°C).
-- Sequence & Care: D1-D3 provides smooth progressive torque converter lockup. S1-S3 delivers sharp direct clutch shifts. ZF recommends transmission oil and filter pan replacement every 80,000 to 100,000 km (Lifeguard 8).`;
-        } else if (q.includes('xdrive') || q.includes('drift') || q.includes('mdm') || q.includes('differential') || q.includes('ghas') || q.includes('4wd') || q.includes('2wd') || q.includes('vectoring')) {
-            focusedAnalysis = `
-[FOCUSED ANALYSIS: M xDRIVE & REAR AXLE SPORT DIFFERENTIAL (GHAS)]
-- Current Dynamic Mode: ${mode} | Lateral Acceleration: ${latG} G
-- System Architecture: Electronic multi-plate clutch transfer case splits torque front/rear seamlessly.
-- Handling Modes: 4WD provides maximum all-weather traction; 4WD Sport shifts torque rearward for neutral drift angle; 2WD mode transmits 100% torque to rear wheels with DSC OFF. Active M Differential locks up to 100% to maximize corner exit traction.`;
-        } else if (q.includes('damper') || q.includes('suspension') || q.includes('edc') || q.includes('rebound') || q.includes('body roll') || q.includes('chassis')) {
-            focusedAnalysis = `
-[FOCUSED ANALYSIS: ADAPTIVE M SUSPENSION & CHASSIS DYNAMICS]
-- Active Drive Mode: ${mode} | Measured Forces: ${latG} G Lateral | ${longG} G Longitudinal
-- Electronic Damper Control (EDC): Millisecond-speed magnetic solenoid valving adapts rebound and compression continuously.
-- COMFORT mode absorbs road expansion joints and surface imperfections; SPORT/SPORT+ stiffens valving to eliminate roll and squat under high cornering loads.`;
-        } else if (q.includes('battery') || q.includes('48v') || q.includes('voltage') || q.includes('hybrid') || q.includes('alternator') || q.includes('recuperation')) {
-            focusedAnalysis = `
-[FOCUSED ANALYSIS: 12V AGM & 48V MILD-HYBRID POWER SUPPLY]
-- Battery Terminal Rail: ${battery} V (Optimal operating state >13.8V while charging, >12.4V rest)
-- Energy Recuperation: Generator charges battery during coasting and regenerative braking.
-- Mild-Hybrid: 48V starter-generator supplies seamless automatic start/stop and e-boost torque assistance off the line.`;
-        } else if (q.includes('octane') || q.includes('knock') || q.includes('ron') || q.includes('aki') || q.includes('ethanol') || q.includes('gasoline')) {
-            focusedAnalysis = `
-[FOCUSED ANALYSIS: FUEL OCTANE, KNOCK PREVENTION & COMBUSTION]
-- Recommended Fuel: 98 RON (93 AKI) for maximum rated power and ignition timing advance.
-- Minimum Permissible: 95 RON (91 AKI) met with slight DME ignition retard under hot ambient conditions (${ambient}°C).
-- Ethanol Tolerance: Compatible with up to E10/E25 ethanol blends without fuel line or injector degradation.`;
-        } else if (q.includes('spec') || q.includes('oil') || q.includes('longlife') || q.includes('ll-01') || q.includes('ll-04') || q.includes('ll-17') || q.includes('interval') || q.includes('cbs')) {
-            focusedAnalysis = `
-[FOCUSED ANALYSIS: BMW LONGLIFE FACTORY OIL & SERVICE SPECIFICATIONS]
-- Engine Oil Temperature: ${oil}°C (${oilStatus})
-- Approved Specifications: BMW Longlife-01 FE (high HTHS petrol), Longlife-04 (low-SAPS diesel/petrol), Longlife-17 FE+ (0W-20 ultra-low friction).
-- Maintenance Cycle: BMW CBS allows up to 15,000 km, but for turbocharged performance engines (B48/B58/N63/S58), 8,000-10,000 km changes are strongly recommended for timing chain and turbo journal bearing longevity.`;
-        } else if (q.includes('charge air') || q.includes('intercooler') || q.includes('air flap') || q.includes('cat warm') || q.includes('exhaust flap') || q.includes('cold start')) {
-            focusedAnalysis = `
-[FOCUSED ANALYSIS: THERMAL AERO, INTERCOOLING & EXHAUST SYSTEM]
-- Thermal State: Oil ${oil}°C | Coolant ${coolant}°C | Ambient ${ambient}°C
-- Indirect Intercooling: Water-to-air charge coolers maintain air intake charge within 15°C of ambient.
-- Aero & Exhaust: Active kidney grille flaps open automatically when radiator cooling is needed; catalytic converter warm-up raises cold idle for ~45s with open wastegates to heat emissions systems rapidly.`;
-        } else if (q.includes('fuel') || q.includes('range') || q.includes('route') || q.includes('trip') || q.includes('mountain') || q.includes('scenic') || q.includes('consumption')) {
-            focusedAnalysis = `
-[FOCUSED ANALYSIS: RANGE, FUEL & CRUISE EFFICIENCY]
-- Fuel Level: ${fuel}% | Cruising Range: ${range} km (${rangeMiles} miles)
-- Active Drive Mode: ${mode}
-- Powertrain efficiency optimized for highway cruising and mountain ascents.`;
+        // the engine unit's own values, read when the question was asked (engine_snapshot.js)
+        const es = t.engineSnap && t.engineSnap.values, eng = [];
+        if (es) {
+            const e = (label, v, fmt) => { if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) eng.push(label + ': ' + fmt(v)); };
+            e('Boost actual / target', num(es.boostActual) && num(es.boostTarget) ? [es.boostActual, es.boostTarget] : null, (v) => r2(v[0]) + ' / ' + r2(v[1]) + ' bar');
+            if (!(num(es.boostActual) && num(es.boostTarget))) e('Boost (engine unit)', es.boostActual, (v) => r2(v) + ' bar');
+            e('Outside air pressure', es.baro, (v) => r0(v) + ' kPa');
+            e('Intake air temperature', es.iat, (v) => r0(v) + ' C');
+            e('Air charge (load) actual / target', num(es.loadActual) && num(es.loadTarget) ? [es.loadActual, es.loadTarget] : null, (v) => r0(v[0]) + ' / ' + r0(v[1]) + ' %');
+            e('Ignition timing', es.timing, (v) => r1(v) + ' deg');
+            e('High-pressure fuel (rail)', es.hpfp, (v) => r0(v) + ' bar');
+            e('Low-pressure fuel', es.lpfp, (v) => r1(v) + ' bar');
+            e('Engine oil temperature (engine unit)', es.oil, (v) => r0(v) + ' C');
+            e('Gearbox oil temperature', es.gearboxOil, (v) => r0(v) + ' C');
+            e('12 V system voltage', es.v12, (v) => r2(v) + ' V');
+            e('Misfires this driving cycle, per cylinder', Array.isArray(es.misfire) ? es.misfire : null, (v) => v.map((n, i) => (i + 1) + ': ' + (n === null ? '?' : n)).join(', '));
+            e('High-voltage battery charge', es.hvSoc, (v) => r0(v) + ' %');
+            e('High-voltage battery health (SOH)', es.hvSoh, (v) => r0(v) + ' %');
         }
 
-        // Universal BMW Intelligent Co-Driver Voice Definition
-        const personaIntro = 'You are the BMW Intelligent Co-Driver for BMW iDrive 7 (G-Series) vehicles. You provide precise, technical, concise vehicle assistance, adapting your tone naturally to the question—whether it relates to dynamic performance, thermal and chassis management, diagnostics, maintenance, or general vehicle questions.';
+        const next = t.serviceNext && t.serviceNext.text
+            ? 'Next service the car asks for: ' + t.serviceNext.text + (t.serviceNext.way ? ', in ' + t.serviceNext.way : '') + (t.serviceNext.date ? ', by ' + t.serviceNext.date : '') + '.' : '';
+        const service = Array.isArray(t.service) && t.service.length
+            ? 'Service list from the instrument cluster (what is due, by distance and / or date):\n' + t.service.map((i) => '- ' + i.name + ': '
+                + (i.state === 'overdue' ? 'OVERDUE' : i.state === 'due soon' ? 'DUE SOON' : i.state === 'OK' ? 'not due yet' : 'status unknown')
+                + (i.way ? ', in ' + i.way : '') + (i.date ? ', by ' + i.date : '')).join('\n')
+            : 'Service list: not received from the car.';
 
-        return `${personaIntro}
+        const cc = Array.isArray(t.checkControl)
+            ? (t.checkControl.length ? 'Check Control messages shown in the instrument cluster now: ' + t.checkControl.join('; ') + '.'
+                : 'Check Control: no warning messages active in the instrument cluster.')
+            : 'Check Control messages: not received from the car.';
 
-VEHICLE TELEMETRY TELEMETRIC PROFILE:
-- Vehicle: ${carModel}
-- Powertrain: ${speed} km/h (${speedMph} mph) | ${rpm} RPM | Gear: ${gear} | Torque: ${torque} Nm | Boost: ${boost} bar
-- Drive Mode: ${mode}
-- Thermal Vitals: Oil ${oil}°C (${oilStatus}) | Coolant ${coolant}°C | Ambient ${ambient}°C
-- Chassis & Tires: FL ${fl} PSI | FR ${fr} PSI | RL ${rl} PSI | RR ${rr} PSI | Tire Temp: ${tireTemp}°C
-- Dynamic Forces: ${latG} G Lateral | ${longG} G Longitudinal
-- Diagnostics & Range: Battery ${battery} V | Fuel ${fuel}% (${range} km / ${rangeMiles} mi range) | DTCs: ${dtcs}
-${focusedAnalysis}
+        let faults;
+        const d = t.dtcScan;
+        if (!d) faults = 'Fault memory: not read in this session.';
+        else if (d.error) faults = 'Fault memory: could not be read (' + d.error + ').';
+        else {
+            const units = d.units.filter((u) => u.codes.length);
+            const fault = (c) => (typeof c === 'string' ? c : c.code + (c.text ? ' "' + c.text + '"' : ' (no text known)'));
+            faults = 'Fault memory (read ' + Math.max(0, Math.round((Date.now() - d.at) / 60000)) + ' min ago from ' + d.answered + ' control units): '
+                + (units.length ? d.total + ' stored fault(s):\n' + units.map((u) => '- ' + u.name + ': ' + u.codes.map(fault).join('; ')).join('\n')
+                    + '\nThe quoted texts are BMW\'s own fault descriptions: explain what they mean for the driver. A code without a text: do not guess its meaning.'
+                    : 'no stored faults.');
+        }
 
-STRICT SAFETY DIRECTIVE (READ-ONLY MONITORING):
-- M-Copilot operates in 100% PASSIVE READ-ONLY OBSERVATION MODE.
-- You have ZERO execution or write authority. You CANNOT code, alter, or flash vehicle ECUs, ambient lighting, start/stop memories, or modules.
-- If asked to code or modify settings, refuse politely: vehicle coding is not available in these apps; the user can use E-Sys or BimmerCode.
+        const who = t.vehicle && typeof t.vehicle.lines === 'function' ? t.vehicle.lines() : [];
+        const tuned = t.vehicle && t.vehicle.profile && t.vehicle.profile.tune && t.vehicle.profile.tune !== 'stock';
 
-FORMATTING REQUIREMENTS FOR IN-CAR DISPLAY:
-- Keep answers ultra-concise, structured, and legible at a glance on the vehicle's ultrawide display.
-- Use 3 to 4 bullet points or short lines.
-- Directly reference the live vehicle numbers above when answering.
-- Maximum 150 words. Avoid generic fluff.`;
+        return [
+            'You are M-Copilot, an assistant on the central display of a BMW with iDrive 7. The driver may be driving, so be brief and practical.',
+            '',
+            'About this car:',
+            who.length ? who.map((l) => '- ' + l).join('\n') : '- Model unknown (a BMW with iDrive 7, 2018 or later).',
+            'Name the model only when it is given above or you are sure of the type code; otherwise say which models your answer fits. The owner\'s profile is more exact than the type code.',
+            t.vehicle && t.vehicle.profile && t.vehicle.profile.model ? ''
+                : 'If the answer depends on the exact model or tune, which are not given, end with this line: "For exact figures, add your model and tune under Your car on the M-Copilot phone page."',
+            '',
+            t.demo ? 'DEMO MODE: no car is connected. The readings below come from a driving simulator for testing the app: answer with them as if they were real, and say once, in a few words, that they are simulated.'
+                : 'Live data from this car, read just now. These are the only readings you have; use them when you talk about the car\'s current state:',
+            known.length ? known.map((l) => '- ' + l).join('\n') : '- (no live data yet)',
+            missing.length ? 'Not available right now: ' + missing.join(', ') + '. If an answer depends on one of these, say you do not have it. Never estimate or invent a reading.' : '',
+            eng.length ? 'Engine control unit, read just now (' + Math.max(0, Math.round((Date.now() - t.engineSnap.at) / 1000)) + ' s ago):\n' + eng.map((l) => '- ' + l).join('\n')
+                + '\nUse these for questions about boost, heat soak, knock, fuelling, misfires or tune health: compare actual with target and say what a gap means.'
+                : 'Engine control unit values (boost target, intake air, timing, fuel pressure, misfires): not read for this question.',
+            service,
+            next,
+            cc,
+            faults,
+            '',
+            tuned ? 'The car is tuned: take the higher load into account (fuel, oil, cooling, clutch or gearbox torque limits) and say where a tune changes the stock advice.'
+                : 'Unless the profile says the car is tuned, assume factory specifications.',
+            'Give numbers for this car\'s engine and gearbox when you know them; say when a figure depends on the exact model.',
+            'Where the advice itself risks damage or a crash, say so in a few words. No general disclaimers.',
+            'Answer in plain text for a car screen: at most 6 short lines, no markdown, no tables, under 110 words. Start with the answer, not a preamble.',
+        ].filter((l) => l !== '').join('\n');
     }
 
-    /**
-     * Query the AI with a prompt and live telemetry.
-     */
-    async ask(prompt, telemetry, options = {}) {
-        // Enforce online check
+    /** Forget the conversation (a new topic). */
+    resetHistory() { this.history = []; }
+
+    _messages(prompt) {
+        if (Date.now() - this.historyAt > HISTORY_MS) this.history = [];
+        return this.history.slice(-HISTORY_TURNS);
+    }
+
+    _remember(prompt, answer) {
+        this.history.push({ q: prompt, a: answer });
+        if (this.history.length > HISTORY_TURNS) this.history.shift();
+        this.historyAt = Date.now();
+    }
+
+    /** Ask with the car's current state. Resolves with the answer text (errors as readable text). */
+    async ask(prompt, telemetry, options) {
+        options = options || {};
         if (!this.hasInternet) {
             await this.checkInternetConnection();
-            if (!this.hasInternet) {
-                throw new Error('No internet uplink. Connect phone hotspot or vehicle Wi-Fi.');
-            }
+            if (!this.hasInternet) throw new Error('No internet uplink. Connect phone hotspot or vehicle Wi-Fi.');
         }
-
         if (!this.isConfigured()) {
             throw new Error('M-Copilot AI not configured. Scan the QR code with your phone to pair your free Gemini key.');
         }
+        if (options.fresh) this.resetHistory();
 
-        const persona = options.persona || this.config.persona || 'm_engineer';
         const lower = (prompt || '').toLowerCase();
-
-        // Safety Interception: M-Copilot is strictly Read-Only for vehicle modification/coding commands
+        // read-only: requests to code or change the car are answered here, not by the model
         const codingTriggers = [
             'apply coding', 'code ecu', 'write ecu', 'flash ecu', 'disable start stop',
             'enable start stop', 'change ambient', 'unlock video', 'enable vim', 'change chime'
         ];
         if (codingTriggers.some((t) => lower.includes(t))) {
-            return `[SAFETY INTERLOCK: READ-ONLY OBSERVATION]\n\n` +
-                   `M-Copilot operates strictly in passive read-only monitoring mode to safeguard vehicle ECUs.\n\n` +
-                   `Vehicle coding (such as Start/Stop memory, ambient lighting, or acoustic chimes) is not available in these apps. Use E-Sys or BimmerCode.`;
+            return 'M-Copilot only reads the car: it cannot change coding or settings.\n\n'
+                 + 'Vehicle coding (such as Start/Stop memory, ambient lighting, or chimes) is not available in these apps. Use E-Sys or BimmerCode.';
         }
 
+        const system = this.buildVehicleContext(telemetry);
+        const past = this._messages(prompt);
         const provider = this.config.provider || (this.config.geminiApiKey ? 'gemini' : 'openai');
-
-        if (provider === 'gemini' || (this.config.mode === 'gemini' && this.config.geminiApiKey)) {
-            return this.queryGemini(prompt, telemetry, persona);
-        }
-        if (provider === 'claude' || (this.config.apiKey && this.config.apiKey.startsWith('sk-ant-'))) {
-            return this.queryAnthropic(prompt, telemetry, persona);
-        }
-        return this.queryOpenAICompatible(prompt, telemetry, persona, provider);
+        let res;
+        if (provider === 'gemini' || (this.config.mode === 'gemini' && this.config.geminiApiKey)) res = await this.queryGemini(prompt, system, past);
+        else if (provider === 'claude' || (this.config.apiKey && this.config.apiKey.startsWith('sk-ant-'))) res = await this.queryAnthropic(prompt, system, past);
+        else res = await this.queryOpenAICompatible(prompt, system, past, provider);
+        if (res.ok) this._remember(prompt, res.text);
+        return res.text;
     }
 
-    async queryGemini(prompt, telemetry, persona) {
-        const systemPrompt = this.buildVehicleContext(persona, telemetry, prompt);
-        const apiKey = this.config.geminiApiKey;
-
-        const body = JSON.stringify({
-            systemInstruction: {
-                parts: [{ text: systemPrompt }]
-            },
-            contents: [
-                {
-                    role: 'user',
-                    parts: [{ text: `Based on my current vehicle telemetry, answer this:\n${prompt}` }]
-                }
-            ],
-            generationConfig: {
-                maxOutputTokens: 1000,
-                temperature: 0.6
-            }
-        });
-
-        // Fast, high-quota, resilient Gemini models on Google AI Studio
-        const candidateModels = [
-            'gemini-3.1-flash-lite',
-            'gemini-3.5-flash',
-            'gemini-3.7-flash',
-            'gemini-3.8-flash',
-            'gemini-flash-latest'
-        ];
-
-        let lastError = null;
-
-        for (const model of candidateModels) {
-            try {
-                const res = await new Promise((resolve) => {
-                    const opt = {
-                        hostname: 'generativelanguage.googleapis.com',
-                        port: 443,
-                        path: `/v1beta/models/${model}:generateContent?key=${apiKey}`,
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Content-Length': Buffer.byteLength(body)
-                        },
-                        timeout: 9000
-                    };
-                    const req = tlsDates.request(opt, (res) => {
-                        let data = '';
-                        res.on('data', (chunk) => { data += chunk; });
-                        res.on('end', () => {
-                            try {
-                                const json = JSON.parse(data);
-                                if (res.statusCode >= 200 && res.statusCode < 300 && json.candidates && json.candidates[0] && json.candidates[0].content) {
-                                    const parts = json.candidates[0].content.parts || [];
-                                    const nonThought = parts.filter((p) => !p.thought);
-                                    const chosen = nonThought.length > 0 ? nonThought[nonThought.length - 1] : parts[0];
-                                    const text = (chosen && chosen.text) ? chosen.text.trim() : '';
-                                    if (text) {
-                                        resolve({ ok: true, text });
-                                    } else {
-                                        resolve({ ok: false, status: res.statusCode, error: 'Empty text parts' });
-                                    }
-                                } else if (json.error) {
-                                    resolve({ ok: false, status: res.statusCode, error: json.error.message || JSON.stringify(json.error) });
-                                } else {
-                                    resolve({ ok: false, status: res.statusCode, error: data.slice(0, 200) });
-                                }
-                            } catch (e) {
-                                resolve({ ok: false, status: res.statusCode, error: e.message });
-                            }
-                        });
-                    });
-
-                    req.on('error', (err) => resolve({ ok: false, error: err.message }));
-                    req.on('timeout', () => {
-                        try { req.destroy(); } catch (e) {}
-                        resolve({ ok: false, error: 'Request timed out' });
-                    });
-                    req.write(body);
-                    req.end();
-                });
-
-                if (res.ok) {
-                    return res.text;
-                }
-                lastError = res.error;
-                this.log.warn(`AiBridge: Gemini model ${model} failed (${res.status || ''}: ${res.error}), trying fallback...`);
-            } catch (err) {
-                lastError = err.message;
-            }
-        }
-
-        return `[Gemini API Alert]\n${lastError || 'Failed to communicate with Google Gemini API.'}`;
-    }
-
-    queryAnthropic(prompt, telemetry, persona) {
+    /** POST json to https://host/path (kept-alive connection); resolves { status, json, raw } or { error }. */
+    _post(host, pathStr, headers, bodyObj, opts) {
+        const body = JSON.stringify(bodyObj);
+        const u = opts && opts.url;
         return new Promise((resolve) => {
-            const systemPrompt = this.buildVehicleContext(persona, telemetry, prompt);
-            const token = this.config.apiKey;
-            const model = this.config.model || 'claude-3-5-haiku-20241022';
-
-            const body = JSON.stringify({
-                model: model,
-                max_tokens: 1000,
-                system: systemPrompt,
-                messages: [
-                    { role: 'user', content: `Based on my current vehicle telemetry, answer this:\n${prompt}` }
-                ]
-            });
-
-            const opt = {
-                hostname: 'api.anthropic.com',
-                port: 443,
-                path: '/v1/messages',
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-api-key': token,
-                    'anthropic-version': '2023-06-01',
-                    'Content-Length': Buffer.byteLength(body)
-                },
-                timeout: 8000
-            };
-            const req = tlsDates.request(opt, (res) => {
-                let data = '';
-                res.on('data', (chunk) => { data += chunk; });
-                res.on('end', () => {
-                    try {
-                        const json = JSON.parse(data);
-                        if (json.content && json.content[0] && json.content[0].text) {
-                            resolve(json.content[0].text.trim());
-                        } else if (json.error) {
-                            resolve(`[Claude API Alert]\n${json.error.message || JSON.stringify(json.error)}`);
-                        } else {
-                            resolve(`[Claude Response]\n${data.slice(0, 250)}`);
-                        }
-                    } catch (e) {
-                        resolve(`Parse error: ${e.message}`);
-                    }
-                });
-            });
-
-            req.on('error', (err) => resolve(`Uplink error: ${err.message}`));
-            req.on('timeout', () => {
-                try { req.destroy(); } catch (e) {}
-                resolve('Claude query timed out. Please check phone hotspot connection.');
-            });
-            req.write(body);
-            req.end();
-        });
-    }
-
-    queryOpenAICompatible(prompt, telemetry, persona, provider) {
-        return new Promise((resolve) => {
-            const systemPrompt = this.buildVehicleContext(persona, telemetry, prompt);
-            const token = this.config.sessionToken || this.config.apiKey;
-
-            let urlStr = 'https://api.openai.com/v1/chat/completions';
-            let model = 'gpt-4o-mini';
-            const extraHeaders = {};
-
-            if (provider === 'groq' || (token && token.startsWith('gsk_'))) {
-                urlStr = 'https://api.groq.com/openai/v1/chat/completions';
-                model = 'llama-3.3-70b-versatile';
-            } else if (provider === 'openrouter' || (token && token.startsWith('sk-or-'))) {
-                urlStr = 'https://openrouter.ai/api/v1/chat/completions';
-                model = 'meta-llama/llama-3.3-70b-instruct';
-                extraHeaders['HTTP-Referer'] = 'https://hexlay.github.io/idrive7-custom-apps/';
-            } else if (this.config.relayUrl) {
-                urlStr = this.config.relayUrl;
-            }
-
-            if (this.config.model) model = this.config.model;
-
-            const body = JSON.stringify({
-                model: model,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: `Based on my current vehicle telemetry, answer this:\n${prompt}` }
-                ],
-                max_tokens: 1000,
-                temperature: 0.6
-            });
-
-            // Node 8: no global URL and no request(url, options, cb) form
-            let u;
+            let done = false;
+            const finish = (v) => { if (!done) { done = true; resolve(v); } };
+            const isHttp = u && u.protocol === 'http:';
+            const send = isHttp ? http.request : tlsDates.request;
+            let req;
             try {
-                u = urlMod.parse(urlStr);
+                req = send({
+                    hostname: host, port: (u && u.port) || (isHttp ? 80 : 443), path: pathStr, method: 'POST',
+                    agent: isHttp ? undefined : this.agent,
+                    headers: Object.assign({ 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }, headers),
+                    timeout: (opts && opts.timeoutMs) || REQUEST_TIMEOUT_MS,
+                }, (res) => {
+                    let data = '';
+                    res.setEncoding('utf8');
+                    res.on('data', (c) => { data += c; });
+                    res.on('end', () => {
+                        let json = null;
+                        try { json = JSON.parse(data); } catch (e) {}
+                        finish({ status: res.statusCode, json, raw: data });
+                    });
+                    res.on('error', (e) => finish({ error: e.message }));
+                });
             } catch (e) {
-                u = null;
+                return finish({ error: e.message });
             }
-            if (!u || !u.hostname || (u.protocol !== 'https:' && u.protocol !== 'http:')) {
-                return resolve(`Invalid relay URL: ${urlStr}`);
-            }
-
-            const isHttps = u.protocol === 'https:';
-            const send = isHttps ? tlsDates.request : http.request;
-
-            const req = send({
-                protocol: u.protocol,
-                hostname: u.hostname,
-                port: u.port || (isHttps ? 443 : 80),
-                path: u.path || '/',
-                method: 'POST',
-                headers: Object.assign({
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Length': Buffer.byteLength(body)
-                }, extraHeaders),
-                timeout: 8000
-            }, (res) => {
-                let data = '';
-                res.on('data', (chunk) => { data += chunk; });
-                res.on('end', () => {
-                    try {
-                        const json = JSON.parse(data);
-                        if (json.choices && json.choices[0] && json.choices[0].message) {
-                            resolve(json.choices[0].message.content.trim());
-                        } else if (json.error) {
-                            resolve(`[AI Error]\n${json.error.message || JSON.stringify(json.error)}`);
-                        } else {
-                            resolve(`AI Error: ${data.slice(0, 200)}`);
-                        }
-                    } catch (e) {
-                        resolve(`Parse error: ${e.message}`);
-                    }
-                });
-            });
-
-            req.on('error', (err) => resolve(`Uplink error: ${err.message}`));
-            req.on('timeout', () => {
-                try { req.destroy(); } catch (e) {}
-                resolve('Request timed out. Please check phone hotspot connection.');
-            });
+            let sent = false;                // the whole request reached the connection: a timeout is then the server being slow
+            req.on('finish', () => { sent = true; });
+            req.on('error', (e) => finish({ error: e.message }));
+            req.on('timeout', () => { try { req.destroy(); } catch (e) {} finish({ error: 'timed out', slow: sent }); });
             req.write(body);
             req.end();
         });
+    }
+
+    async queryGemini(prompt, system, past) {
+        const contents = [];
+        past.forEach((h) => { contents.push({ role: 'user', parts: [{ text: h.q }] }, { role: 'model', parts: [{ text: h.a }] }); });
+        contents.push({ role: 'user', parts: [{ text: prompt }] });
+        // Flash models reason first (Gemini 3 Flash: "high" by default), which takes long and counts against
+        // maxOutputTokens: a short car answer needs little of it. A model that refuses the field (400 about
+        // thinking) is asked again without it, and remembered.
+        const plain = this.config.geminiPlain || [];
+        const bodyFor = (model) => ({
+            systemInstruction: { parts: [{ text: system }] }, contents,
+            generationConfig: Object.assign({ maxOutputTokens: 2048, temperature: 0.4 }, plain.indexOf(model) >= 0 ? {} : { thinkingConfig: { thinkingLevel: 'low' } }),
+        });
+        // the model that worked last time first, then Google's maintained aliases. A model that is
+        // overloaded (503 "high demand", 429, 5xx) or goes silent is skipped for a while and the next
+        // one answers instead; that stand-in is not remembered as the model to use.
+        const configured = this.config.model && /gemini/i.test(this.config.model) ? this.config.model : null;
+        const all = [this.config.geminiModel, configured, 'gemini-flash-latest', 'gemini-flash-lite-latest']
+            .filter((m, i, a) => m && a.indexOf(m) === i);
+        const busy = this.geminiBusy || (this.geminiBusy = {});
+        const now = Date.now();
+        const models = all.filter((m) => !(busy[m] > now));
+        if (!models.length) models.push(all[all.length - 1]);
+        let last = 'no model answered', standIn = models[0] !== all[0];
+        const markBusy = (model, why) => {
+            busy[model] = Date.now() + GEMINI_BUSY_MS;
+            standIn = true;
+            this.log.warn('AiBridge: Gemini model ' + model + ' ' + why + ', trying the next');
+        };
+        for (let i = 0; i < models.length; i++) {
+            const model = models[i], lastTry = i === models.length - 1;
+            const r = await this._post('generativelanguage.googleapis.com', `/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+                { 'x-goog-api-key': this.config.geminiApiKey }, bodyFor(model),       // the key in a header, not in the URL
+                { timeoutMs: lastTry ? REQUEST_TIMEOUT_MS : MODEL_TRY_MS });
+            if (r.error) {
+                if (r.slow && !lastTry) { markBusy(model, 'did not answer in time'); last = 'took too long to answer'; continue; }
+                return { ok: false, text: r.slow ? 'Gemini took too long to answer. Please try again.'
+                    : 'Gemini: ' + r.error + '. Please check the phone hotspot connection.' };
+            }
+            const j = r.json || {};
+            const cand = j.candidates && j.candidates[0];
+            if (r.status >= 200 && r.status < 300 && cand && cand.content) {
+                const text = (cand.content.parts || []).filter((p) => !p.thought && p.text).map((p) => p.text).join('').trim();
+                if (text) {
+                    if (!standIn && this.config.geminiModel !== model) { this.config.geminiModel = model; this.saveConfig(); }
+                    return { ok: true, text };
+                }
+                last = cand.finishReason ? 'no answer (' + cand.finishReason + ')' : 'empty answer';
+                continue;
+            }
+            last = (j.error && j.error.message) || ('HTTP ' + r.status);
+            if (r.status === 400 && plain.indexOf(model) < 0 && /thinking/i.test(last)) {
+                this.log.warn('AiBridge: Gemini model ' + model + ' takes no thinking level, asking without it');
+                plain.push(model);
+                this.config.geminiPlain = plain;
+                this.saveConfig();
+                i--;                        // the same model again
+                continue;
+            }
+            if (r.status === 429 || r.status >= 500) { markBusy(model, 'is busy (' + r.status + ')'); continue; }
+            // only a model that doesn't exist / isn't allowed for this key tries the next one
+            if (r.status !== 404 && r.status !== 400 && r.status !== 403) break;
+            this.log.warn('AiBridge: Gemini model ' + model + ' unavailable (' + r.status + '), trying the next');
+            if (this.config.geminiModel === model) this.config.geminiModel = null;
+        }
+        if (/high demand|overloaded|try again later/i.test(last)) last = 'Google\'s servers are busy right now. Please try again in a minute.';
+        return { ok: false, text: 'Gemini: ' + last };
+    }
+
+    async queryAnthropic(prompt, system, past) {
+        const messages = [];
+        past.forEach((h) => { messages.push({ role: 'user', content: h.q }, { role: 'assistant', content: h.a }); });
+        messages.push({ role: 'user', content: prompt });
+        const model = this.config.model && /^claude-/.test(this.config.model) ? this.config.model : CLAUDE_DEFAULT_MODEL;
+        const r = await this._post('api.anthropic.com', '/v1/messages', { 'x-api-key': this.config.apiKey, 'anthropic-version': ANTHROPIC_VERSION },
+            { model, max_tokens: 2048, system, messages, output_config: { effort: 'low' } });
+        if (r.error) return { ok: false, text: r.slow ? 'Claude took too long to answer. Please try again.' : 'Claude: ' + r.error + '. Please check the phone hotspot connection.' };
+        const j = r.json || {};
+        if (j.type === 'error' || j.error) return { ok: false, text: 'Claude: ' + ((j.error && j.error.message) || ('HTTP ' + r.status)) };
+        if (j.stop_reason === 'refusal') return { ok: false, text: 'Claude declined to answer this question.' };
+        const text = (j.content || []).filter((b) => b && b.type === 'text').map((b) => b.text).join('').trim();
+        return text ? { ok: true, text } : { ok: false, text: 'Claude: empty answer (' + (j.stop_reason || 'HTTP ' + r.status) + ')' };
+    }
+
+    async queryOpenAICompatible(prompt, system, past, provider) {
+        const token = this.config.sessionToken || this.config.apiKey;
+        let urlStr = 'https://api.openai.com/v1/chat/completions';
+        let model = 'gpt-4o-mini';
+        const extraHeaders = {};
+        if (provider === 'groq' || (token && token.startsWith('gsk_'))) {
+            urlStr = 'https://api.groq.com/openai/v1/chat/completions';
+            model = 'llama-3.3-70b-versatile';
+        } else if (provider === 'openrouter' || (token && token.startsWith('sk-or-'))) {
+            urlStr = 'https://openrouter.ai/api/v1/chat/completions';
+            model = 'meta-llama/llama-3.3-70b-instruct';
+            extraHeaders['HTTP-Referer'] = 'https://hexlay.github.io/idrive7-custom-apps/';
+        } else if (this.config.relayUrl) {
+            urlStr = this.config.relayUrl;
+        }
+        if (this.config.model) model = this.config.model;
+        // Node 8: no global URL
+        let u = null;
+        try { u = urlMod.parse(urlStr); } catch (e) {}
+        if (!u || !u.hostname || (u.protocol !== 'https:' && u.protocol !== 'http:')) return { ok: false, text: 'Invalid relay URL: ' + urlStr };
+        const messages = [{ role: 'system', content: system }];
+        past.forEach((h) => { messages.push({ role: 'user', content: h.q }, { role: 'assistant', content: h.a }); });
+        messages.push({ role: 'user', content: prompt });
+        const r = await this._post(u.hostname, u.path || '/', Object.assign({ Authorization: 'Bearer ' + token }, extraHeaders),
+            { model, messages, max_tokens: 600, temperature: 0.4 }, { url: u });
+        if (r.error) return { ok: false, text: r.slow ? 'The AI took too long to answer. Please try again.' : 'AI: ' + r.error + '. Please check the phone hotspot connection.' };
+        const j = r.json || {};
+        const msg = j.choices && j.choices[0] && j.choices[0].message;
+        if (msg && msg.content) return { ok: true, text: String(msg.content).trim() };
+        return { ok: false, text: 'AI: ' + ((j.error && j.error.message) || ('HTTP ' + r.status + ' ' + String(r.raw || '').slice(0, 120))) };
     }
 }
 

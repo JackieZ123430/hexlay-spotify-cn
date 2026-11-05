@@ -312,6 +312,92 @@ def manifest_for(spec):
     return {'proxies': proxies, 'services': PLATFORM_SERVICES}
 
 
+UNIT_CATALOG = '/etc/oap/someip/someip-interfaces.json'
+
+
+def fit_to_unit(manifest, app_ifaces, catalog_path=None):
+    """Fit the app's own signals to the SOME/IP catalog of the unit it is built on.
+
+    MainApp's installer (BMW's IFConfigGenerator / AclGenerator) refuses the whole app when the
+    manifest names an interface, instance, field, method or broadcast that the firmware's catalog
+    lacks, or asks to read ("r") a field without a getter or to subscribe ("s") one without a
+    notifier. Older firmware (MainApp 6.5.5) has fewer of them. The MGU Store runs this build on the
+    head unit, where the catalog is at UNIT_CATALOG: what this unit lacks is taken out of the
+    manifest (a flag it can't serve is narrowed), so the app installs and runs without those values.
+    Returns (manifest, missing): missing = { "<iface>[ <field>]": why } for missing-interfaces.json,
+    which kit/runtime/mgu.js logs at start. Off the unit (no catalog) nothing changes.
+    The platform proxies every app has are fitted the same way: on a unit without one, the app could
+    not use it anyway, and an app that installs beats one the installer refuses."""
+    path = catalog_path or os.environ.get('MGU_SOMEIP_CATALOG') or UNIT_CATALOG
+    if not os.path.exists(path):
+        return manifest, {}
+    try:
+        db = json.load(open(path, encoding='utf-8'))
+        ifdb, instdb = db.get('interfaces') or {}, db.get('instanceIDs') or {}
+    except Exception as e:  # an unreadable catalog: build as before (the installer will say what is wrong)
+        print('  SOME/IP catalog %s unreadable (%s): signals not fitted' % (path, e))
+        return manifest, {}
+
+    def merged(name, key, seen=()):
+        """an interface's fields / methods / events, with those of the interfaces it extends"""
+        d = ifdb.get(name) or {}
+        base = d.get('extends')
+        out = dict(merged(base, key, seen + (name,))) if base and base not in seen else {}
+        out.update(d.get(key) or {})
+        return out
+
+    missing = {}
+    proxies = manifest['proxies']
+    for iface in [i for i in app_ifaces if i in proxies]:
+        entry = proxies[iface]
+        if iface not in ifdb:
+            missing[iface] = 'interface not in this firmware'
+            del proxies[iface]
+            continue
+        if iface not in instdb:      # BMW's AclGenerator needs the interface's instance map, also for "*"
+            missing[iface] = 'no instances of it in this firmware'
+            del proxies[iface]
+            continue
+        if not isinstance(entry, dict):
+            continue
+        insts = entry.get('instances')
+        if isinstance(insts, str) and insts != '*' and '${' not in insts and insts not in (instdb.get(iface) or {}):
+            missing[iface] = 'instance %s not in this firmware' % insts
+            del proxies[iface]
+            continue
+        fields, methods, events = merged(iface, 'fields'), merged(iface, 'methods'), merged(iface, 'events')
+        attrs = {}
+        for name, flags in (entry.get('attributes') or {}).items():
+            f = fields.get(name)
+            if f is None:
+                missing[iface + ' ' + name] = 'field not in this firmware'
+                continue
+            keep = ''.join(c for c in flags if not (c == 'r' and not f.get('getter')) and not (c == 's' and not f.get('notifier'))
+                           and not (c == 'w' and not f.get('setter')))
+            if keep != flags:
+                missing[iface + ' ' + name] = 'this firmware has it as "%s" only' % (keep or 'nothing usable')
+            if keep:
+                attrs[name] = keep
+        for key, have, label in (('methods', methods, 'method'), ('broadcasts', events, 'broadcast')):
+            if entry.get(key):
+                ok = [m for m in entry[key] if m in have]
+                for m in entry[key]:
+                    if m not in have:
+                        missing[iface + ' ' + m] = label + ' not in this firmware'
+                if ok:
+                    entry[key] = ok
+                else:
+                    del entry[key]
+        if attrs:
+            entry['attributes'] = attrs
+        else:
+            entry.pop('attributes', None)
+        if not any(entry.get(k) for k in ('attributes', 'methods', 'broadcasts')):
+            missing.setdefault(iface, 'nothing of it in this firmware')
+            del proxies[iface]
+    return manifest, missing
+
+
 def make_icon(spec, out):
     src = os.path.join(APPS, spec['id'], 'icon.png')
     if os.path.exists(src):
@@ -380,6 +466,10 @@ def build(app_id, language='en'):
     os.makedirs(os.path.join(src, 'node_modules', 'oap-sdk'))
 
     manifest = manifest_for(json.loads(json.dumps(spec)))
+    # built on the head unit (MGU Store): leave out what this firmware's catalog lacks
+    manifest, unit_missing = fit_to_unit(manifest, list(manifest['proxies'].keys()))
+    for k, why in sorted(unit_missing.items()):
+        print('  this unit: %s - %s' % (k, why))
     xml, uidesc, strings, state_ids = build_ui(spec, language)
     unicode_resources(uidesc, strings, language)
     for lang, tbl in spec.get('strings', {}).items():
@@ -475,6 +565,8 @@ def build(app_id, language='en'):
     if language == 'zh-CN':
         locale['credit'] = zh_credit()['corner']
     json.dump(locale, open(os.path.join(src, 'javascript', 'kit', 'locale.json'), 'w', encoding='utf-8', newline='\n'), ensure_ascii=False)
+    if unit_missing:   # logged by kit/runtime/mgu.js when the app starts
+        json.dump(unit_missing, open(os.path.join(src, 'javascript', 'kit', 'missing-interfaces.json'), 'w', encoding='utf-8', newline='\n'), indent=1)
     shutil.copy(os.path.join(SDK, 'index.js'), os.path.join(src, 'node_modules', 'oap-sdk', 'index.js'))
     shutil.copy(os.path.join(SDK, 'package.json'), os.path.join(src, 'node_modules', 'oap-sdk', 'package.json'))
 

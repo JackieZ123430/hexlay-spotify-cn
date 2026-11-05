@@ -112,7 +112,8 @@ class CloudPairManager {
                     'Title': 'BMW Spotify Unpaired',
                     'Content-Type': 'application/json'
                 },
-                timeout: 3000
+                timeout: 5000,
+                rejectUnauthorized: false
             });
             req.on('error', () => {});
             req.write(JSON.stringify({ type: 'spotify_unpaired', channel: this.channel, time: Date.now() }));
@@ -135,7 +136,8 @@ class CloudPairManager {
                     'Title': 'BMW Spotify Paired',
                     'Content-Type': 'application/json'
                 },
-                timeout: 3000
+                timeout: 5000,
+                rejectUnauthorized: false
             });
             req.on('error', () => {});
             req.write(JSON.stringify({ type: 'spotify_pair_ack', carId: this.shortCode, time: Date.now() }));
@@ -173,7 +175,8 @@ class CloudPairManager {
                     hostname: 'ntfy.sh',
                     port: 443,
                     path: pathStr,
-                    timeout: 4000
+                    timeout: 5000,
+                    rejectUnauthorized: false
                 }, (res) => {
                     let data = '';
                     res.on('data', (c) => { data += c; });

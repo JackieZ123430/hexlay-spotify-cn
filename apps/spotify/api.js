@@ -183,32 +183,46 @@ class SpotifyClient {
             this.lastInternetCheck = Date.now();
             return false;
         }
-        return new Promise((resolve) => {
-            const req = https.request({
-                hostname: 'api.spotify.com',
-                port: 443,
-                path: '/',
-                method: 'HEAD',
-                timeout: 3500
-            }, (res) => {
-                res.resume();
-                this.hasInternet = true;
-                this.lastInternetCheck = Date.now();
-                resolve(true);
+
+        const probe = (host) => {
+            return new Promise((resolve) => {
+                const req = https.request({
+                    hostname: host,
+                    port: 443,
+                    path: '/',
+                    method: 'HEAD',
+                    timeout: 6000,
+                    rejectUnauthorized: false
+                }, (res) => {
+                    res.resume();
+                    resolve(true);
+                });
+                req.on('error', () => resolve(false));
+                req.on('timeout', () => {
+                    req.destroy();
+                    resolve(false);
+                });
+                req.end();
             });
-            req.on('error', () => {
-                this.hasInternet = false;
-                this.lastInternetCheck = Date.now();
-                resolve(false);
-            });
-            req.on('timeout', () => {
-                req.destroy();
-                this.hasInternet = false;
-                this.lastInternetCheck = Date.now();
-                resolve(false);
-            });
-            req.end();
-        });
+        };
+
+        let ok = await probe('api.spotify.com');
+        if (!ok) {
+            ok = await probe('ntfy.sh');
+        }
+
+        const wasOffline = !this.hasInternet;
+        this.hasInternet = ok;
+        this.lastInternetCheck = Date.now();
+
+        if (ok && wasOffline) {
+            this.log.info('SpotifyClient: Internet uplink active.');
+            if (this.isAuthenticated()) {
+                this.initialFetch();
+            }
+        }
+
+        return ok;
     }
 
     saveAuthTokens(data) {
@@ -346,7 +360,8 @@ class SpotifyClient {
                     path: '/api/token',
                     method: 'POST',
                     headers: headers,
-                    timeout: 6000
+                    timeout: 8000,
+                    rejectUnauthorized: false
                 }, (res) => {
                     let data = '';
                     res.on('data', c => { data += c; });
@@ -437,7 +452,8 @@ class SpotifyClient {
                     'Content-Type': 'application/json',
                     'Accept': 'application/json',
                 },
-                timeout: 3500
+                timeout: 6000,
+                rejectUnauthorized: false
             }, (res) => {
                 let data = '';
                 res.on('data', (c) => { data += c; });

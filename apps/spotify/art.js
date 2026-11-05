@@ -60,7 +60,8 @@ class AlbumArtManager {
             port: parsed.port || (parsed.protocol === 'http:' ? 80 : 443),
             path: parsed.path,
             headers: { 'User-Agent': 'BMW-iDrive7' },
-            timeout: 6000
+            timeout: 6000,
+            rejectUnauthorized: false
         };
 
         const client = parsed.protocol === 'http:' ? http : https;

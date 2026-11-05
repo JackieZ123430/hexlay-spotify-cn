@@ -283,6 +283,61 @@
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
+        .howto {
+            margin-top: 12px;
+            border-top: none;
+            padding-top: 0;
+            background: #06080e;
+            border: 1px solid #16202f;
+            border-radius: 8px;
+            padding: 12px 14px;
+        }
+        .howto summary { text-transform: none; letter-spacing: 0; font-size: 13px; }
+        .howto ol {
+            margin: 12px 0 0 18px;
+            font-size: 13px;
+            color: #cbd5e1;
+            line-height: 1.5;
+        }
+        .howto li { margin-bottom: 10px; padding-left: 2px; }
+        .howto li b { color: #ffffff; }
+        .howto a { color: #1ed760; }
+        .howto .note {
+            font-size: 12px;
+            color: #8a95a6;
+            line-height: 1.5;
+            border-top: 1px solid #16202f;
+            padding-top: 10px;
+        }
+        .copy-row {
+            display: flex;
+            gap: 6px;
+            margin-top: 6px;
+        }
+        .copy-row code {
+            flex: 1;
+            min-width: 0;
+            background: #0a0d14;
+            border: 1px solid #242c39;
+            border-radius: 6px;
+            padding: 8px 10px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 11.5px;
+            color: #ffffff;
+            word-break: break-all;
+            user-select: all;
+        }
+        .copy-row button {
+            flex: none;
+            background: #141a24;
+            border: 1px solid #242c39;
+            border-radius: 6px;
+            color: #00a3e0;
+            font-size: 12px;
+            font-weight: 700;
+            padding: 0 12px;
+            cursor: pointer;
+        }
         .alert-box {
             background: rgba(225, 0, 26, 0.12);
             border: 1px solid #e1001a;
@@ -384,17 +439,38 @@
             You sign in on Spotify's own page (accounts.spotify.com). This page never sees your Spotify password; only an access token is sent to your car, encrypted with your car's key.
         </p>
 
+        <label for="inputClientId">Your Spotify Client ID</label>
+        <input type="text" id="inputClientId" placeholder="Paste your Client ID (32 letters and digits)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <p style="font-size: 11px; color: #64748b; margin-top: 4px;">
+            Only needed once: your browser and your car remember it. <span id="savedIndicator" style="color: #1ed760; display: none;">✓ Saved</span>
+        </p>
+
+        <details class="howto" id="howtoClientId">
+            <summary>How do I get a Client ID? ▾</summary>
+            <ol>
+                <li>Open <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a> and log in with your Spotify <b>Premium</b> account. Accept the developer terms if asked.</li>
+                <li>Tap <b>Create app</b>. Any app name and description work, for example "My BMW".</li>
+                <li>Under <b>Redirect URIs</b>, add exactly this address, then tap <b>Add</b>:
+                    <div class="copy-row">
+                        <code id="redirectUriText">https://hexlay.github.io/idrive7-custom-apps/pair.html</code>
+                        <button type="button" id="btnCopyRedirect" onclick="copyRedirectUri()">Copy</button>
+                    </div>
+                </li>
+                <li>Under <b>Which API/SDKs are you planning to use?</b>, tick <b>Web API</b>. Accept the terms and tap <b>Save</b>.</li>
+                <li>On your new app's page, open <b>Settings</b>, copy the <b>Client ID</b> and paste it above. You don't need the Client secret.</li>
+                <li>Tap <b>Connect with Spotify</b> below.</li>
+            </ol>
+            <p class="note">
+                Every driver makes their own app. It's free and takes about two minutes, and nobody else can use your app without your approval.
+                To let family members connect with the same app, add their Spotify email under <b>Settings → User Management</b> (Spotify allows up to 5 people per app).
+            </p>
+        </details>
+
         <button class="btn-spotify" id="btnConnect" onclick="startAuth()">Connect with Spotify</button>
 
         <details>
             <summary>Advanced / Developer Settings ▾</summary>
             <div style="margin-top: 14px;">
-                <label>Spotify Client ID</label>
-                <input type="text" id="inputClientId" placeholder="Default App ID or your Spotify Client ID">
-                <p style="font-size: 11px; color: #64748b; margin-top: 4px;">
-                    Saved securely in your browser. <span id="savedIndicator" style="color: #1ed760; display: none;">✓ Saved</span>
-                </p>
-
                 <label>Car Pairing Channel</label>
                 <input type="text" id="inputChannel" placeholder="e.g. bmw_spot_xyz">
 
@@ -531,6 +607,32 @@
 
         if (clientId) {
             document.getElementById('inputClientId').value = clientId;
+        } else {
+            // no Client ID yet: show how to get one
+            document.getElementById('howtoClientId').open = true;
+        }
+
+        // the redirect URI Spotify has to know is this page's own address
+        const pageRedirectUri = window.location.origin + window.location.pathname;
+        if (/^https?:/.test(pageRedirectUri)) document.getElementById('redirectUriText').textContent = pageRedirectUri;
+
+        function copyRedirectUri() {
+            const text = document.getElementById('redirectUriText').textContent;
+            const btn = document.getElementById('btnCopyRedirect');
+            const done = () => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 2000); };
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(done, () => selectRedirectUri());
+            } else {
+                selectRedirectUri();
+            }
+        }
+
+        function selectRedirectUri() {
+            const range = document.createRange();
+            range.selectNodeContents(document.getElementById('redirectUriText'));
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
         }
 
         function showStatus(msg, isError) {
@@ -757,8 +859,11 @@
                 return;
             }
 
-            if (!activeId) {
-                showStatus('Please enter your Spotify Client ID from your Spotify Developer Dashboard above.', true);
+            if (!activeId || !/^[0-9a-f]{32}$/i.test(activeId)) {
+                showStatus(activeId
+                    ? 'That doesn\'t look like a Client ID. It is 32 letters and digits, shown under Settings in your Spotify app. Don\'t paste the Client secret.'
+                    : 'Please paste your Spotify Client ID above. Tap "How do I get a Client ID?" for the steps.', true);
+                document.getElementById('howtoClientId').open = true;
                 document.getElementById('inputClientId').focus();
                 document.getElementById('inputClientId').style.borderColor = '#e1001a';
                 return;

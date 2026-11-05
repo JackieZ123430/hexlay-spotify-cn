@@ -29,9 +29,9 @@ This repository is built on the open-source BMW iDrive 7 platform:
 
 | App | Version | Needs internet | Touches vehicle ECUs |
 | :--- | :---: | :---: | :--- |
-| [Spotify](#1-spotify-spotify) | 1.0.7 | Yes | No |
-| [M-Cinema](#2-m-cinema-m_cinema) | 1.0.10 | Yes | No (reads speed and gear selector) |
-| [M-Copilot](#3-m-copilot-m_copilot) | 1.0.2 | Yes | No (reads driving signals) |
+| [Spotify](#1-spotify-spotify) | 1.0.8 | Yes | No |
+| [M-Cinema](#2-m-cinema-m_cinema) | 1.0.11 | Yes | No (reads speed and gear selector) |
+| [M-Copilot](#3-m-copilot-m_copilot) | 1.0.3 | Yes | No (reads driving signals) |
 
 > [!NOTE]
 > **QuickCode (BMW BDC coding) is a work in progress** and is not available in the MGU Store. It is not offered until its coding writes are verified against real BMW coding data. Its source is in `wip/quick_code/`.

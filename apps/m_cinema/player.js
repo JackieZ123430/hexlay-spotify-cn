@@ -97,20 +97,66 @@ class VideoPlayer {
         this.onEnded = null;
         this.onBuffering = null;      // (bytes, total)
         this.onError = null;          // (message)
+        this.onVideoFile = null;      // (path | null): define / drop the frame file in the renderer
+        this.videoAnnounced = false;
+
+        // leftovers of an earlier run (killed app, older version): orphaned engine, cache, FIFOs
+        if (!this.opts.noSweep) this._sweep();
 
         // 'exit' only: SIGTERM/SIGINT are handled (and exited) by main.js
         process.on('exit', () => this._resetInternal());
+    }
+
+    /** Files this player creates; all of them live in RAM (/tmp, /dev/shm). */
+    _ownFiles() {
+        return [this.streamLocalFile, this.streamLocalFile + '.done', this.sockPath, this.ctrlPath, this.statusPath, this.shmPath];
+    }
+
+    _removeFiles(files) {
+        for (const f of files) {
+            try { fs.unlinkSync(f); } catch (e) {}
+        }
+    }
+
+    /**
+     * Stop video engines left running by an earlier run of the app (an older engine does not
+     * exit with its parent) and remove what they left in /tmp and /dev/shm.
+     */
+    _sweep() {
+        let killed = 0;
+        if (process.platform === 'linux') {
+            let pids = [];
+            try { pids = fs.readdirSync('/proc').filter((d) => /^\d+$/.test(d) && Number(d) !== process.pid); } catch (e) {}
+            for (const pid of pids) {
+                let cmd = '';
+                try { cmd = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8'); } catch (e) { continue; }
+                const args = cmd.split('\0');
+                // the engine binary is the first argument (or near it, behind a wrapper such as nice)
+                if (!args.slice(0, 3).some((x) => /(^|\/)mgu-vidplay$/.test(x)) || args.indexOf(this.shmPath) < 0) continue;
+                try { process.kill(Number(pid), 'SIGKILL'); killed++; } catch (e) {}
+            }
+        }
+        const stale = this._ownFiles().filter((f) => { try { return fs.existsSync(f); } catch (e) { return false; } });
+        this._removeFiles(stale);
+        if (killed || stale.length) {
+            this.log.info(`[M-Cinema:Player] Cleaned up an earlier run: ${killed} engine(s) stopped, ${stale.length} file(s) removed`);
+        }
     }
 
     get locked() { return this.locks.size > 0; }
 
     /** Features of the engine at bin ('grow', 'sock', 'nice'); none for older engines. */
     _probeCaps(bin) {
+        this.lastProbe = '';
         try {
             const out = execFileSync(bin, ['--caps'], { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
-            return out.split(/\s+/).filter(Boolean);
+            const caps = out.split(/\s+/).filter(Boolean);
+            this.lastProbe = caps.length ? caps.join(',') : 'no features listed';
+            return caps;
         } catch (e) {
-            return [];               // older engines don't know --caps (usage, exit 1)
+            // older engines don't know --caps (usage, exit 1); EACCES / ENOEXEC = can't run from there
+            this.lastProbe = e.code ? 'cannot run (' + e.code + ')' : (e.status !== undefined ? 'older engine (no --caps)' : String(e.message || e));
+            return [];
         }
     }
 
@@ -137,6 +183,8 @@ class VideoPlayer {
                 try { fs.chmodSync(p, 0o755); } catch (e) {}
                 if (!fs.statSync(p).isFile()) continue;
                 const e = this._engineFor(p, this._probeCaps(p));
+                this.log.info(`[M-Cinema:Player] Engine candidate ${p}: ${this.lastProbe}`);
+                if (/cannot run/.test(this.lastProbe)) continue;      // e.g. a noexec mount
                 if (!best || score(e) > score(best)) best = e;
                 if (e.sock) break;
             } catch (e) {}
@@ -147,6 +195,15 @@ class VideoPlayer {
     }
 
     /** Stop the engine process now; its late 'close' is ignored. */
+    /** Tell the renderer about the frame file (defined once the engine made it, dropped before removal). */
+    _announceVideo(on) {
+        if (on === this.videoAnnounced) return;
+        this.videoAnnounced = on;
+        if (this.onVideoFile) {
+            try { this.onVideoFile(on ? this.shmPath : null); } catch (e) {}
+        }
+    }
+
     _killProc() {
         this._clearCtrlQueue();
         if (!this.proc) return;
@@ -182,11 +239,10 @@ class VideoPlayer {
         this._killProc();
         this._closeStatus();
 
-        for (const f of [this.streamLocalFile, this.streamLocalFile + '.done']) {
-            try {
-                if (fs.existsSync(f)) fs.unlinkSync(f);
-            } catch (e) {}
-        }
+        // nothing stays behind in RAM: download cache, socket, FIFOs, the engine's frame file
+        // (the renderer drops its handle first, or the removed file's memory stays in use)
+        this._announceVideo(false);
+        this._removeFiles(this._ownFiles());
     }
 
     _fail(msg) {
@@ -713,6 +769,9 @@ class VideoPlayer {
             const data = JSON.parse(line.trim());
             if (typeof data.pts === 'number') {
                 this.lastStatusAt = Date.now();
+                // a normal status line comes after the first frame was written (buffering lines can
+                // come earlier, while the stream opens): the renderer may open the frame file now
+                if (!this.videoAnnounced && this.proc && !data.buffering) this._announceVideo(true);
                 // the engine caught up with the download: show the buffering overlay until it resumes
                 if (data.buffering) {
                     this.stalled = true;

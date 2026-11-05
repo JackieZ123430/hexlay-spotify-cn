@@ -36,6 +36,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/resource.h>
+#include <sys/prctl.h>
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -387,6 +388,14 @@ int main(int argc, char *argv[]) {
     signal(SIGTERM, sig_handler);
     signal(SIGPIPE, SIG_IGN);
 
+    // Never outlive the app: the kernel sends SIGTERM when the parent (Node) dies, even by SIGKILL
+    pid_t parent = getppid();
+    prctl(PR_SET_PDEATHSIG, SIGTERM);
+    if (getppid() != parent) {              // the parent died before prctl took effect
+        fprintf(stderr, "[vidplay] Parent already gone, exiting\n");
+        return 0;
+    }
+
     // Lower priority before any decoder thread exists (Linux nice is per thread, inherited)
     if (nice_level > 0) {
         if (nice_level > 19) nice_level = 19;
@@ -535,8 +544,13 @@ int main(int argc, char *argv[]) {
     size_t fsz = ysz + 2 * csz; // 1.5 * w * h bytes per I420 frame
     size_t total_shm_size = sizeof(struct mgu_video_head) + (size_t)nslot * fsz;
 
-    unlink(shm_path);
-    int shm_fd = open(shm_path, O_RDWR | O_CREAT | O_TRUNC, 0666);
+    // Reuse an existing frame file in place: the renderer keeps the file it opened (by inode), so a
+    // file replaced under it would never show a frame. Only a file we may not write is replaced.
+    int shm_fd = open(shm_path, O_RDWR | O_CREAT, 0666);
+    if (shm_fd < 0) {
+        unlink(shm_path);
+        shm_fd = open(shm_path, O_RDWR | O_CREAT | O_TRUNC, 0666);
+    }
     if (shm_fd < 0) {
         perror("[vidplay] open shm_path");
         avcodec_free_context(&codec_ctx);
@@ -740,6 +754,7 @@ int main(int argc, char *argv[]) {
     avformat_network_deinit();
 
     munmap(shm_map, total_shm_size);
+    // the frame file stays: the app drops it from the renderer first, then removes it
     close(shm_fd);
 
     return 0;

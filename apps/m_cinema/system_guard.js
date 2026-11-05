@@ -20,7 +20,7 @@ const CRITICAL_C = 92;       // stop the engine
 const LOW_MEM_MB = 150;      // refuse to start / pause
 const RESUME_MEM_MB = 200;
 const CRITICAL_MEM_MB = 80;  // stop the engine
-const LOG_EVERY_MS = 60000;
+const LOG_EVERY_MS = 300000;      // a status line every 5 min (each change is logged at once)
 // zones that measure the CPU / SoC (others, like a battery or a modem, are ignored when present)
 const CPU_ZONE = /x86_pkg|cpu|soc|core|pch|acpitz|tcpu|package/i;
 

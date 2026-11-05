@@ -15,8 +15,8 @@
  *      Full GPU-accelerated vector stage without heavy unaligned pixel buffers.
  *      Preserves 100% responsive touchscreen touch routing across tabs and seekbar!
  *   4. Active Cockpit Playback & Live Spectrum Equalizer:
- *      Dynamic live timecode, smooth seeking scrubber, animated ambilight aura, and
- *      clean multi-colored audio spectrum visualizer.
+ *      Live timecode and seek bar; no decorative animation (the overlay redraws 4 times a second
+ *      while a video plays - the renderer shows each new video frame by itself).
  *   5. Head unit protection (system_guard.js, player.js):
  *      720p cap; the engine runs at a lower CPU priority; video pauses when the head unit gets
  *      hot or low on memory and stops when it gets critical; a hung engine is stopped.
@@ -30,7 +30,7 @@
  * Audio: not supported yet - the engine shows the picture only.
  *
  * Pages:
- *   0: Now Playing - 21:9 Widescreen player with live ambient accent & spectrum visualizer
+ *   0: Now Playing - 21:9 Widescreen player
  *   1: Search - In-car YouTube search, speller keyboard & video results
  *   2: Connect - Official YouTube TV Link Code & Pairing Instructions
  */
@@ -166,6 +166,7 @@ mgu.run({
         });
 
         setInterval(() => {
+            if (mainVisible === false) return;      // not on screen: no checks in the background
             checkInternetConnection().then((ok) => {
                 if (hasInternet !== ok) {
                     hasInternet = ok;
@@ -255,9 +256,13 @@ mgu.run({
 
         // Native Hardware Video Engine (Protocol 4 OP_VIDEO)
         const player = new VideoPlayer(log, { shmPath: '/dev/shm/mgu-video-cinema' });
-        if (ctx.display && ctx.display.video) {
-            ctx.display.video(1, '/dev/shm/mgu-video-cinema');
-        }
+        // The renderer opens the frame file once, when the video is defined: define it after the
+        // engine created the file, and drop it before the file is removed (player.onVideoFile).
+        player.onVideoFile = (file) => {
+            if (!ctx.display || !ctx.display.video) return;
+            log.info('[M-Cinema] Renderer video ' + (file ? 'defined: ' + file : 'dropped'));
+            ctx.display.video(1, file);
+        };
 
         player.onProgress = (pts, dur, playing) => {
             currentTimeSec = Math.floor(pts);
@@ -398,6 +403,7 @@ mgu.run({
                 log.info('[M-Cinema] Cast received while not on screen: queued, not played');
                 return;
             }
+            if (!gpuRenderer()) log.warn('[M-Cinema] The GPU renderer is not drawing this screen: the video picture cannot be shown');
             if (!guard.canPlay()) {
                 notify('Paused to protect the head unit: ' + guard.reason);
                 render().catch(() => {});
@@ -532,9 +538,7 @@ mgu.run({
             const vx = 52, vy = 56, vw = 1008, vh = 384;
 
             if (settings.get('ambilight') !== 'off' && !motionLocked) {
-                const pulse = (Math.sin(now / 400) + 1) * 0.5;
-                const glowAlpha = isPlaying ? (0.22 + pulse * 0.14) : 0.06;
-                cv.roundRect(vx - 2, vy - 2, vw + 4, vh + 4, 10, withAlpha('#0066b1', glowAlpha));
+                cv.roundRect(vx - 2, vy - 2, vw + 4, vh + 4, 10, withAlpha('#0066b1', isPlaying ? 0.28 : 0.06));
             }
 
             drawVideoScreen(cv, vx, vy, vw, vh, video, now, motionLocked, false);
@@ -615,19 +619,7 @@ mgu.run({
                 render().catch(() => {});
             }, 'btn_go_search', 10);
 
-            // Live Spectrum Visualizer (animated in right panel)
-            if (isPlaying) {
-                const eqX = rx + 16, eqY = 434;
-                for (let bi = 0; bi < 24; bi++) {
-                    const wave = Math.abs(Math.sin((now / 150) + bi * 0.45));
-                    const barH = 4 + Math.floor(wave * 28);
-                    const col = bi < 8 ? '#0066b1' : (bi < 16 ? '#00a3e0' : '#e1001a');
-                    cv.roundRect(eqX + bi * 16, eqY - barH, 10, barH, 2, col);
-                }
-            }
-
-            // Vehicle Stereo Audio Notice
-            cv.text('Audio output: Vehicle stereo via Bluetooth / CarPlay', rx + btnW / 2, 482, 12, '#64748b', { align: 'center' });
+            cv.text('Picture only: sound is not supported yet', rx + btnW / 2, 482, 12, '#64748b', { align: 'center' });
         }
 
         /* ---------- Fullscreen Cinema Theater (Real Ultrawide Edge-to-Edge) ---------- */
@@ -647,6 +639,7 @@ mgu.run({
                 cv.video(1, 0, 0, W, H, 0);
             }
             drawBuffering(cv, W / 2, H / 2);
+            drawNoRenderer(cv, W / 2, H / 2);
 
             // Floating Normal View Exit Button in top-right corner
             const btnExitW = 160, btnExitH = 42;
@@ -681,17 +674,6 @@ mgu.run({
             cv.text(timeStr, fsX, fsY + 12, 14, '#ffffff', { font: 'num' });
             cv.text('720p HD', fsX + 170, fsY + 12, 11, '#00a3e0', { font: 'bold' });
 
-            // Spectrum Visualizer inside the HUD pill
-            if (isPlaying) {
-                const eqX = fsX + fsW - 152, eqY = fsY + 14;
-                for (let bi = 0; bi < 16; bi++) {
-                    const wave = Math.abs(Math.sin((now / 160) + bi * 0.6));
-                    const barH = 3 + Math.floor(wave * 14);
-                    const col = bi < 5 ? '#0066b1' : (bi < 11 ? '#00a3e0' : '#e1001a');
-                    cv.roundRect(eqX + bi * 9, eqY - barH, 6, barH, 2, col);
-                }
-            }
-
             // Scrubber Track
             const fsSy = fsY + 24;
             cv.roundRect(fsX, fsSy, fsW, 6, 3, '#1e293b');
@@ -713,6 +695,22 @@ mgu.run({
                 notify(`Seek: ${formatTime(currentTimeSec)}`);
                 render().catch(() => {});
             }, 'seekbar_fs', 16);
+        }
+
+        /**
+         * Video is composited by the GPU renderer (idrive7-renderd) straight from the engine's frame
+         * file; the HMI's own (software) drawing path can't show it. Say so instead of a black box.
+         */
+        function gpuRenderer() {
+            return !ctx.display || !ctx.display.active || ctx.display.active('MAIN');
+        }
+        function drawNoRenderer(cv, cx, cy) {
+            if (gpuRenderer() || !(player.hasMedia() || isPlaying)) return;
+            const bw = 620, bh = 76;
+            cv.roundRect(cx - bw / 2, cy - bh / 2, bw, bh, 10, withAlpha('#05080e', 0.92));
+            cv.strokeRoundRect(cx - bw / 2, cy - bh / 2, bw, bh, 10, 1, '#ffb703');
+            cv.text('VIDEO NEEDS THE GPU RENDERER', cx, cy - 6, 16, '#ffb703', { align: 'center', font: 'bold' });
+            cv.text('Install or update "GPU renderer" (idrive7-renderd) in the MGU Store.', cx, cy + 20, 13, '#cbd5e1', { align: 'center' });
         }
 
         /* ---------- Buffering progress (before playback starts, and while playback waits for the download) ---------- */
@@ -747,12 +745,6 @@ mgu.run({
             const cx = x + w / 2;
             const cy = y + h / 2;
 
-            // Ambient background glow inside the video screen
-            if (isPlaying) {
-                const pulse = (Math.sin(now / 350) + 1) * 0.5;
-                cv.roundRect(x + 12, y + 12, w - 24, h - 24, 6, withAlpha('#0066b1', 0.06 + pulse * 0.05));
-            }
-
             // Top Video HUD Bar
             cv.fillRect(x, y, w, 44, withAlpha('#05080e', 0.85));
             cv.fillRect(x, y + 43, w, 1, '#1b293d');
@@ -782,16 +774,7 @@ mgu.run({
                     cv.video(1, x, y + 44, w, h - 44, 8);
                 }
                 drawBuffering(cv, cx, cy + 22);
-
-                if (isPlaying) {
-                    const eqX = x + w - 160, eqY = y + h - 14;
-                    for (let bi = 0; bi < 16; bi++) {
-                        const wave = Math.abs(Math.sin((now / 160) + bi * 0.6));
-                        const barH = 4 + Math.floor(wave * 20);
-                        const col = bi < 5 ? '#0066b1' : (bi < 11 ? '#00a3e0' : '#e1001a');
-                        cv.roundRect(eqX + bi * 9, eqY - barH, 6, barH, 2, col);
-                    }
-                }
+                drawNoRenderer(cv, cx, cy + 22);
             } else {
                 cv.circle(cx, cy - 14, 40, '#0c1420');
                 cv.arc(cx, cy - 14, 38, 40, 0, 360, '#1e2d42');
@@ -1183,7 +1166,8 @@ mgu.run({
         });
 
         // Start 15 fps / tick-driven render loop (same as Spotify, QuickCode, Copilot)
-        ctx.loop('MAIN', 15, render);
+        // the renderer shows each new video frame by itself: the overlay only has the timecode to update
+        ctx.loop('MAIN', 15, render, { maxFps: () => (isPlaying ? 4 : 12) });
         await render();
         log.info('M-Cinema ready');
     }

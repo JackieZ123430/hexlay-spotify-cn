@@ -52,8 +52,12 @@ if (SPEC.mguInternet) { try { uplink.init(DATA_DIR); } catch (e) {} }
 /* ---------------- logging: SDK logger (DLT) + small rotating file ---------------- */
 const LOG_FILE = path.join(DATA_DIR, SPEC.id + '.log');
 const RUN_TAG = Date.now().toString(36);
-// drop drawn frames left by earlier runs
-try { fs.readdirSync(RHMI_RES).filter((f) => /^dyn_/.test(f)).forEach((f) => { try { fs.unlinkSync(path.join(RHMI_RES, f)); } catch (e) {} }); } catch (e) {}
+// leftovers: frames drawn by a run (software path) and the rotated log of an earlier one
+function dropLeftovers() {
+    try { fs.readdirSync(RHMI_RES).filter((f) => /^dyn_/.test(f)).forEach((f) => { try { fs.unlinkSync(path.join(RHMI_RES, f)); } catch (e) {} }); } catch (e) {}
+    try { fs.unlinkSync(LOG_FILE + '.1'); } catch (e) {}
+}
+dropLeftovers();
 function fileLog(level, msg) {
     try {
         const st = fs.existsSync(LOG_FILE) ? fs.statSync(LOG_FILE) : null;
@@ -92,7 +96,12 @@ const log = {};
 
 // crashes otherwise only reach DLT; keep the reason next to the app's log
 process.on('uncaughtException', (e) => { fileLog('FATAL', 'uncaught: ' + (e && e.stack || e)); process.exit(1); });
-process.on('exit', (code) => fileLog(code ? 'FATAL' : 'INFO', 'exit code ' + code + ' rss=' + Math.round(process.memoryUsage().rss / 1048576) + 'MB'));
+process.on('exit', (code) => {
+    fileLog(code ? 'FATAL' : 'INFO', 'exit code ' + code + ' rss=' + Math.round(process.memoryUsage().rss / 1048576) + 'MB');
+    dropLeftovers();
+});
+// a plain SIGTERM ends Node without 'exit' handlers: exit properly, after the app's own handlers
+['SIGTERM', 'SIGINT'].forEach((sig) => process.on(sig, () => setImmediate(() => process.exit(0))));
 
 /* ---------------- settings (persisted in data/settings.json) ---------------- */
 class Settings {

@@ -138,14 +138,19 @@ class Car {
         // a while" doesn't mean "no car": once a signal's provider is there, stay on live data
         this.subs = [];
         this.t0 = Date.now();
+        this.stopped = false;
         Object.keys(watches).forEach((iface) => ctx.signals.watch(iface, '1', watches[iface], this.log)
-            .then((s) => { this.subs.push(s); this.log.info('signal ' + iface.split('.').pop() + (s.error ? ' error: ' + s.error : ' subscribed')); }));
+            .then((s) => {
+                if (this.stopped) { s.shutdown(); return; }       // stop() came first
+                this.subs.push(s);
+                this.log.info('signal ' + iface.split('.').pop() + (s.error ? ' error: ' + s.error : ' subscribed'));
+            }));
 
         // demo feed (20 Hz) - also keeps the sim warm so switching is seamless. On a busy or
         // slow CPU the timer fires late; replay every missed 50 ms step (up to 3 s) with its own
         // timestamp, so timers, dyno and brake maths see the same data on any machine.
         let simT = Date.now();
-        setInterval(() => {
+        this.simTimer = setInterval(() => {
             const now = Date.now();
             if (now - simT > 3000) simT = now - 3000;
             const d = this._wantDemo();
@@ -156,6 +161,16 @@ class Car {
                 if (d) this._emit(this.simData, simT);
             }
         }, 50);
+    }
+
+    /** End all of it: the 20 Hz demo timer and every signal subscription (an app leaving the screen). */
+    stop() {
+        if (this.stopped) return;
+        this.stopped = true;
+        clearInterval(this.simTimer);
+        this.listeners = [];
+        this.subs.forEach((s) => { try { s.shutdown(); } catch (e) { /* ignore */ } });
+        this.subs = [];
     }
 
     /** Has the car answered: a value arrived, or a signal's provider is available. */

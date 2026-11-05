@@ -9,6 +9,7 @@ const zlib = require('zlib');
 
 const DIR = path.join(__dirname, 'fonts');
 const families = Object.create(null);
+const GEORGIAN = /[\u10d0-\u10ff\u1c90-\u1cbf]/;
 
 function family(name) {
     if (families[name] !== undefined) return families[name];
@@ -28,6 +29,9 @@ function family(name) {
 function get(name, size, text) {
     // A shared CJK atlas avoids duplicating hundreds of glyphs in every numeric size.
     if (text && /[\u3000-\u9fff\uff00-\uffef]/.test(text)) name = 'cjk';
+    // Georgian: its base family again with the Georgian letters added (kit/tools/bake_georgian.py),
+    // bold from bold-ka and the rest from label-ka, so the Latin around it looks the same
+    else if (text && GEORGIAN.test(text) && family(name === 'bold' ? 'bold-ka' : 'label-ka')) name = name === 'bold' ? 'bold-ka' : 'label-ka';
     const fam = family(name) || family('label');
     if (!fam) return null;
     let best = null;

@@ -190,6 +190,32 @@
             'open it and tap Scan car QR to have this car there too.';
     }
 
+    /** "Not now" on My cars' install card: no install tips for 30 days. */
+    function installSnoozed() {
+        try { return Date.now() - Number(localStorage.getItem('install_later_at') || 0) < 30 * 24 * 3600 * 1000; } catch (e) { return false; }
+    }
+    /**
+     * The note under a car page's privacy pill: the iPhone browser-copy note (browserCopyNote),
+     * else, in a phone's browser, a tip to install the app with a link to My cars' steps.
+     */
+    function fillPageNote(el, hasCar) {
+        const copy = hasCar ? browserCopyNote() : '';
+        const kind = installKind();
+        const howTo = () => {
+            const a = document.createElement('a');
+            a.href = 'index.html';
+            a.textContent = 'How to install';
+            a.style.color = '#00a3e0';
+            return a;
+        };
+        el.textContent = '';
+        if (copy) el.append(copy + ' Not installed yet? ', howTo());
+        else if ((kind === 'ios' || kind === 'android') && !installSnoozed()) {
+            el.append('Tip: install iDrive Apps on this phone, for all your cars one tap away. ', howTo());
+        }
+        el.style.display = el.textContent ? 'block' : 'none';
+    }
+
     /** A scanned / pasted pairing link -> { app, channel, key, page } when it is one of ours, else null. */
     function parsePairingLink(text) {
         let u;
@@ -422,6 +448,8 @@
     // ---------- device ----------
     const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const isStandalone = () => (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+    /** 'installed' (opened as the Home Screen app), 'ios' / 'android' (a phone's browser), or 'other'. */
+    const installKind = () => (isStandalone() ? 'installed' : isIOS() ? 'ios' : /Android/.test(navigator.userAgent) ? 'android' : 'other');
 
     /*
      * Phone notifications were dropped (M-Copilot 1.0.17). Pages before that registered a worker
@@ -469,11 +497,11 @@
     window.CarLink = {
         APPS, appOf, validChannel, validKeyHex, shortCode, randomHex,
         getCar, listCars, confirmCar, forgetCar, forget, clearPageState, saveCar, updateInfo, carFromAddress, migrateLegacy, parsePairingLink, lastWord, dropIfUnpaired,
-        browserCopyNote,
+        browserCopyNote, installSnoozed, fillPageNote,
         sendToCar, openFromCar, listen, recent, waitFor,
         /** Why the last sendToCar failed, for the page to show. */
         get RELAY_DOWN() { return lastFailure; },
         startScanner,
-        isIOS, isStandalone,
+        isIOS, isStandalone, installKind,
     };
 })();

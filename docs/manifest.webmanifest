@@ -1,7 +1,7 @@
 {
   "name": "iDrive 7 Custom Apps",
   "short_name": "iDrive Apps",
-  "description": "Your cars' links and notifications for the unofficial iDrive 7 apps",
+  "description": "Your cars in one place for the unofficial iDrive 7 apps: M-Copilot and Spotify",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

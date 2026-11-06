@@ -1008,9 +1008,9 @@
 
         (async function init() {
             car = await CarLink.carFromAddress('copilot', channel);
-            // from a QR code scanned with the iPhone camera: the Home Screen app doesn't have this car
-            const browserNote = car ? CarLink.browserCopyNote() : '';
-            if (browserNote) { const n = document.getElementById('browserNote'); n.innerText = browserNote; n.style.display = 'block'; }
+            // from a QR code scanned with the iPhone camera: the Home Screen app doesn't have this car;
+            // else, in a phone's browser: install the app
+            CarLink.fillPageNote(document.getElementById('browserNote'), !!car);
             if (channel && !car) {
                 // forgotten here, or paired in another browser: no "Connected" without the car's key
                 CarLink.clearPageState(channel);

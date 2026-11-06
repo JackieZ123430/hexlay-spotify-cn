@@ -285,6 +285,31 @@
     </div>
 
     <div class="container">
+        <!-- Install as an app: shown in a browser on a phone, not once installed (CarLink.installKind) -->
+        <div class="card" id="cardInstall" style="display: none;">
+            <div class="card-m-header">
+                <div class="st-light"></div>
+                <div class="st-dark"></div>
+                <div class="st-red"></div>
+                <div class="line"></div>
+            </div>
+            <div class="app-title-row">
+                <div class="app-title">Install as an app</div>
+            </div>
+            <p class="app-desc">All your cars in one place, one tap from your Home Screen, full screen without the browser bar.</p>
+            <div id="installIos" style="display: none;">
+                <p class="pair-how" style="margin-bottom: 8px;">1. Tap <b>Share</b> <span aria-hidden="true">(the square with an arrow)</span>, then <b>Add to Home Screen</b>.<br>
+                    2. Open <b>iDrive Apps</b> from the Home Screen.<br>
+                    3. Tap <b>Scan car QR</b> in it and scan each car's QR code.</p>
+                <p class="muted">On iPhone the Home Screen app keeps its own cars, apart from Safari's: add your cars from inside the app.</p>
+            </div>
+            <div id="installAndroid" style="display: none;">
+                <button class="btn-app" id="btnInstall" type="button" style="display: none;">Install app</button>
+                <p class="pair-how" id="installAndroidSteps">In Chrome, tap the <b>&#8942;</b> menu, then <b>Install app</b> (or <b>Add to Home screen</b>). Your cars are in the app too.</p>
+            </div>
+            <button type="button" id="btnInstallLater" style="margin-top: 10px; background: none; border: 0; color: #8a95a6; font-size: 12px; cursor: pointer; padding: 0;">Not now</button>
+        </div>
+
         <!-- My cars: the pairings this phone keeps (keys are non-extractable, in this browser only) -->
         <div class="card" id="cardMyCars">
             <div class="card-m-header">
@@ -473,9 +498,37 @@
             document.getElementById('scanner').style.display = 'none';
         }
 
+        // Install as an app: Chrome offers its own prompt (beforeinstallprompt); iPhone has steps only
+        let installPrompt = null;
+        function showInstall() {
+            const kind = CarLink.installKind();
+            const later = CarLink.installSnoozed();
+            const card = document.getElementById('cardInstall');
+            card.style.display = (kind === 'ios' || kind === 'android') && !later ? 'block' : 'none';
+            document.getElementById('installIos').style.display = kind === 'ios' ? 'block' : 'none';
+            document.getElementById('installAndroid').style.display = kind === 'android' ? 'block' : 'none';
+            document.getElementById('btnInstall').style.display = installPrompt ? 'block' : 'none';
+            document.getElementById('installAndroidSteps').style.display = installPrompt ? 'none' : 'block';
+        }
+        window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; showInstall(); });
+        window.addEventListener('appinstalled', () => { installPrompt = null; document.getElementById('cardInstall').style.display = 'none'; });
+        document.getElementById('btnInstall').addEventListener('click', async () => {
+            if (!installPrompt) return;
+            const p = installPrompt;
+            installPrompt = null;
+            p.prompt();
+            try { await p.userChoice; } catch (e) { /* dismissed */ }
+            showInstall();
+        });
+        document.getElementById('btnInstallLater').addEventListener('click', () => {
+            try { localStorage.setItem('install_later_at', String(Date.now())); } catch (e) { /* storage blocked */ }
+            document.getElementById('cardInstall').style.display = 'none';
+        });
+
         (async function init() {
             await CarLink.migrateLegacy();
             renderCars();
+            showInstall();
         })();
     </script>
 

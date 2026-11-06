@@ -318,8 +318,16 @@ mgu.run({
 
         // Default to Online mode (demo !== 'on')
         // If not authenticated, open directly on the Connect tab!
-        const isOnlineMode = settings.get('demo') !== 'on';
-        let page = (isOnlineMode && !spotify.isAuthenticated()) ? 3 : 0;
+        // read each time: the demo setting can change while the app runs
+        const isOnlineMode = () => settings.get('demo') !== 'on';
+        let page = (isOnlineMode() && !spotify.isAuthenticated()) ? 3 : 0;
+        // the demo switched on or off (Settings, or the offline screen's button): its data in or out
+        settings.onChange((k, v) => {
+            if (k !== 'demo') return;
+            spotify.setDemoMode(v === 'on');
+            if (v !== 'on' && !spotify.isAuthenticated()) page = 3;      // to the pairing QR
+            render();
+        });
         let selectedPlaylistIdx = 0;
         let playlistScroll = 0;
         let trackScroll = 0;
@@ -430,11 +438,7 @@ mgu.run({
             cv.strokeRoundRect(b2X, btnY, btnW, btnH, 10, 1, '#334155');
             cv.text('SWITCH TO DEMO MODE', b2X + btnW / 2, btnY + 32, 15, '#cbd5e1', { align: 'center', font: 'bold' });
             cv.target(b2X, btnY, btnW, btnH, () => {
-                settings.set('demo', 'on');
-                spotify.isDemoMode = true;
-                spotify.playlists = require('./api').DEMO_PLAYLISTS;
-                spotify.devices = require('./api').DEMO_DEVICES;
-                render();
+                settings.set('demo', 'on');          // the change handler brings the demo in
             }, 'btn_switch_demo', 15);
         }
 
@@ -562,7 +566,7 @@ mgu.run({
             const ex = cv.extra || 0;          // room below the page: panels and lists go down to the dock
 
             if (!playlists || playlists.length === 0) {
-                if (isOnlineMode && !spotify.isAuthenticated()) {
+                if (isOnlineMode() && !spotify.isAuthenticated()) {
                     drawRequireConnect(cv, t);
                 } else {
                     G.panelExact(cv, t, 24, 44, 1552, 396 + ex, 'Your Playlists (0)');
@@ -725,7 +729,7 @@ mgu.run({
 
         /* ---------- Page 1: Liked Songs ---------- */
         function drawLibrary(cv, t) {
-            if (isOnlineMode && !spotify.isAuthenticated()) {
+            if (isOnlineMode() && !spotify.isAuthenticated()) {
                 drawRequireConnect(cv, t);
                 return;
             }
@@ -814,7 +818,7 @@ mgu.run({
 
         /* ---------- Page 2: Now Playing & Queue ---------- */
         function drawNowPlaying(cv, t) {
-            if (isOnlineMode && !spotify.isAuthenticated()) {
+            if (isOnlineMode() && !spotify.isAuthenticated()) {
                 drawRequireConnect(cv, t);
                 return;
             }

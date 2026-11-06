@@ -263,6 +263,28 @@ test('another account drops the cached library', async () => {
     assert.strictEqual(s._userId, 'someone-else');
 });
 
+/* ---------- the demo setting, switched while running ---------- */
+
+test('demo off: every demo trace goes; on again: the demo is back', () => {
+    const demoOn = { get: (k) => (k === 'net' ? 'off' : k === 'demo' ? 'on' : null) };
+    const s = new SpotifyClient({ dataDir: '/nonexistent', log: quiet, settings: demoOn });
+    assert.ok(s.playlists.length && s.devices.length && s.currentTrack && s.activeDevice, 'demo data at start');
+    s.setDemoMode(false);
+    assert.deepStrictEqual([s.playlists.length, s.devices.length, s.currentTrack, s.activeDevice, s.currentPlaylist],
+        [0, 0, null, null, null]);
+    s.setDemoMode(true);
+    assert.ok(s.playlists.length && s.devices.length && s.currentTrack, 'demo data again');
+    assert.strictEqual(s.activeDevice, 'BMW iDrive 7');
+});
+
+test('demo on with an account paired: its own library stays', () => {
+    const s = client(() => null);
+    s.isDemoMode = false;
+    s.playlists = [{ id: 'mine', name: 'Mine', tracks: [] }];
+    s.setDemoMode(true);
+    assert.strictEqual(s.playlists[0].id, 'mine');
+});
+
 /* ---------- text ---------- */
 
 test('typographic punctuation becomes what the fonts have', async () => {

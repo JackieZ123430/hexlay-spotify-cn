@@ -30,7 +30,7 @@ This repository is built on the open-source BMW iDrive 7 platform:
 
 | App | Version | Needs internet | Touches vehicle ECUs |
 | :--- | :---: | :---: | :--- |
-| [Spotify](#1-spotify-spotify) | 1.0.17 | Yes | No |
+| [Spotify](#1-spotify-spotify) | 1.0.18 | Yes | No |
 | [M-Copilot](#2-m-copilot-m_copilot) | 1.0.10 | Yes | No (reads driving signals, service list and fault memory) |
 
 > [!NOTE]

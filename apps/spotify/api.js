@@ -59,6 +59,8 @@ function decodeHtmlEntities(str) {
 const CACHE_TRACKS = 100;            // songs kept per playlist in the library cache
 const CACHE_LIKED = 200;             // liked songs kept in it
 
+const DEMO_DEVICE_NAME = 'BMW iDrive 7';     // "plays on" in the demo
+
 const DEMO_ART = 'https://i.scdn.co/image/ab67616d00001e02ba5db46f4b838ef6027e6f96';
 
 const DEMO_PLAYLISTS = [
@@ -169,7 +171,7 @@ class SpotifyClient {
         this.clientSecret = null;
         this.paired = false;
         this.isOnline = false;
-        this.activeDevice = 'BMW iDrive 7';
+        this.activeDevice = null;           // the demo's own: set with its data below
         this.lastSync = 0;
         this.syncing = false;
 
@@ -192,6 +194,7 @@ class SpotifyClient {
         this.currentPlaylist = this.playlists[0] || null;
         // online, "now playing" only ever comes from Spotify's player; the demo shows its first track
         this.currentTrack = this.isDemoMode && this.currentPlaylist && this.currentPlaylist.tracks ? this.currentPlaylist.tracks[0] : null;
+        if (this.isDemoMode) this.activeDevice = DEMO_DEVICE_NAME;
         this.trackIndex = 0;
         this.progressMs = 0;
         this.lastTickTime = Date.now();
@@ -435,6 +438,40 @@ class SpotifyClient {
         this._cacheUser = null;
         const p = this._cachePath();
         try { if (p && fs.existsSync(p)) fs.unlinkSync(p); } catch (e) {}
+    }
+
+    /**
+     * The demo setting changed while the app runs. On: the demo's playlists, devices and song,
+     * unless an account is paired (its own library shows then, as at start). Off: every trace of the
+     * demo goes (its playlists, devices, song and device name); a paired account's library comes in.
+     */
+    setDemoMode(on) {
+        on = !!on;
+        if (on === this.isDemoMode) return;
+        this.isDemoMode = on;
+        const demoTracks = DEMO_PLAYLISTS.reduce((all, p) => all.concat(p.tracks), []);
+        if (on) {
+            if (this.isAuthenticated()) return;
+            this.playlists = DEMO_PLAYLISTS;
+            this.devices = DEMO_DEVICES;
+            this.currentPlaylist = this.playlists[0];
+            this.currentTrack = this.currentPlaylist.tracks[0];
+            this.trackIndex = 0;
+            this.progressMs = 0;
+            this.activeDevice = DEMO_DEVICE_NAME;
+            this.log.info('Spotify: demo mode on');
+            return;
+        }
+        if (this.playlists === DEMO_PLAYLISTS) { this.playlists = []; this.currentPlaylist = null; }
+        if (this.devices === DEMO_DEVICES) this.devices = [];
+        const demoPlays = this.currentTrack && demoTracks.indexOf(this.currentTrack) >= 0;
+        if (demoPlays || !this.isAuthenticated()) this.clearPlayback('demo mode off');
+        this.trackIndex = 0;
+        this.log.info('Spotify: demo mode off');
+        if (this.isAuthenticated()) {
+            if (!this.playlists.length) this._loadCache();
+            this.initialFetch();
+        }
     }
 
     reloadAuth() {

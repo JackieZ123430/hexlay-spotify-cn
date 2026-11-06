@@ -279,6 +279,12 @@ class CloudPairManager {
             return;
         }
 
+        // The AI model picked on the phone page (also on a replay: AiBridge.setModel keeps only the newest)
+        if (parsed.type === 'copilot_model') {
+            if (this.onModel) this.onModel(parsed.provider, parsed.model, parsed.time);
+            return;
+        }
+
         // The owner's car profile (also on a replay: Vehicle.setProfile keeps only the newest)
         if (parsed.type === 'copilot_profile') {
             if (this.onProfile) this.onProfile(parsed.profile, parsed.time);

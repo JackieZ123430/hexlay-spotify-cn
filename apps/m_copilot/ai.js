@@ -24,6 +24,8 @@ const HISTORY_MS = 10 * 60 * 1000;          // a conversation older than this st
 const ANTHROPIC_VERSION = '2026-10-21';
 const MODEL_TRY_MS = 8000;                  // a model with another one after it: wait this long, then ask the next
 const GEMINI_BUSY_MS = 10 * 60 * 1000;      // an overloaded Gemini model is skipped this long
+// answer languages the head unit's fonts can draw (accents are folded by main.js; Georgian has its own font)
+const LANGUAGES = { ka: 'Georgian (Georgian script)', de: 'German', fr: 'French', es: 'Spanish', it: 'Italian', nl: 'Dutch', pt: 'Portuguese', tr: 'Turkish', pl: 'Polish' };
 const CLAUDE_DEFAULT_MODEL = 'claude-haiku-5-5';   // fast and cheap; the phone page can choose another
 
 class AiBridge {
@@ -103,6 +105,7 @@ class AiBridge {
 
     saveCredentials(payload) {
         if (!payload) return;
+        const before = this.config.provider;
         if (payload.mode) this.config.mode = payload.mode;
         if (payload.provider) this.config.provider = payload.provider;
         if (payload.model) this.config.model = payload.model;
@@ -135,9 +138,42 @@ class AiBridge {
         if (payload.sessionToken) this.config.sessionToken = payload.sessionToken;
         this.config.paired = true;
         this.config.geminiModel = null;     // a new key: find the model that works for it again
+        // another provider: a model picked for the old one would not exist there
+        if (this.config.provider !== before && !payload.model) { this.config.model = null; this.config.modelAt = 0; }
+        this.lastModel = null;
         this.config.geminiPlain = null;
         this.saveConfig();
         this.log.info('AiBridge: Saved new credentials (mode=' + this.config.mode + ', provider=' + (this.config.provider || 'gemini') + ')');
+    }
+
+    /**
+     * The model the owner picked on the phone page (copilot_model message): for the paired provider
+     * only; '' = the default. An older (replayed) message never replaces a newer one.
+     */
+    setModel(provider, model, time) {
+        time = typeof time === 'number' ? time : Date.now();
+        if (time <= (this.config.modelAt || 0)) return false;
+        const cur = this.config.provider || (this.config.mode === 'gemini' ? 'gemini' : this.config.mode === 'claude' ? 'claude' : null);
+        if (!provider || provider !== cur) { this.log.warn('AiBridge: model for ' + provider + ' ignored (paired: ' + cur + ')'); return false; }
+        const m = typeof model === 'string' ? model.trim() : '';
+        if (m && !/^[A-Za-z0-9._:\/-]{1,80}$/.test(m)) return false;
+        this.config.model = m || null;
+        this.config.modelAt = time;
+        this.config.geminiModel = null;
+        this.lastModel = null;
+        this.saveConfig();
+        return true;
+    }
+
+    /** A short name of the model that answered last, for the status pill ('FLASH-LITE', 'HAIKU 5.5'), or null. */
+    modelLabel() {
+        const m = this.lastModel;
+        if (!m) return null;
+        let x = /^gemini-(.+?)(-latest)?$/.exec(m);
+        if (x) return x[1].toUpperCase();
+        x = /^claude-([a-z]+)-(\d+)-(\d+)/.exec(m);
+        if (x) return x[1].toUpperCase() + ' ' + x[2] + '.' + x[3];
+        return m.split('/').pop().replace(/-(versatile|instruct|latest)$/, '').toUpperCase().slice(0, 16);
     }
 
     isConfigured() {
@@ -219,59 +255,92 @@ class AiBridge {
             if (v === null || v === undefined || (typeof v === 'number' && !isFinite(v))) { if (!optional) missing.push(label); } else known.push(label + ': ' + fmt(v));
         };
         const r0 = (v) => String(Math.round(v)), r1 = (v) => (Math.round(v * 10) / 10).toFixed(1), r2 = (v) => v.toFixed(2);
+        // the car's own display units (main.js: the unit settings and the trip computer): numbers go out in them
+        const u = t.units || {};
+        const fahr = u.temp === 'F', miles = u.speed === 'mph' || /mpg/.test(u.cons || ''), ukGal = /UK/.test(u.cons || '');
+        const T = (c, d) => (fahr ? (d ? r1 : r0)(c * 9 / 5 + 32) + ' F' : (d ? r1 : r0)(c) + ' C');
+        const pUnit = u.press === 'PSI' ? 'psi' : u.press === 'KPA' ? 'kPa' : 'bar';
+        const Pn = (bar, d) => (pUnit === 'psi' ? r1(bar * 14.5038) : pUnit === 'kPa' ? r0(bar * 100) : d ? r2(bar) : r1(bar));
+        const P = (bar, d) => Pn(bar, d) + ' ' + pUnit;
+        const D = (km) => (miles ? r0(km / 1.609344) + ' mi' : r0(km) + ' km');
+        const SPD = (kmh) => (miles ? r0(kmh / 1.609344) + ' mph' : r0(kmh) + ' km/h');
+        const VOL = (l) => (ukGal ? r1(l / 4.54609) + ' UK gal' : miles ? r1(l / 3.78541) + ' US gal' : r0(l) + ' l');
         const CONDITIONS = { 1: 'parked', 2: 'parked', 3: 'parked, driver away', 5: 'parked, no ignition', 7: 'ignition on, not drive-ready',
             8: 'getting drive-ready', 10: 'drive-ready', 12: 'switching off' };
         add('Vehicle state', CONDITIONS[t.condition] || null, (v) => v, true);
         add('Engine', t.engine, (v) => v);
-        add('Speed', t.speed, (v) => r0(v) + ' km/h');
+        add('Speed', t.speed, SPD);
         add('Engine speed', t.rpm, (v) => r0(v) + ' rpm');
         add('Gear selector', t.stage || (num(t.gear) ? (t.gear > 0 ? 'D' : null) : null), (v) => v + (num(t.gear) && t.gear > 0 ? ' (gear ' + t.gear + ')' : ''));
         add('Engine torque', t.torque, (v) => r0(v) + ' Nm');
         add('Power / torque, % of the engine maximum (sport display)', num(t.powerPct) && num(t.torquePct) ? [t.powerPct, t.torquePct] : null, (v) => r0(v[0]) + ' % / ' + r0(v[1]) + ' %', true);
-        add('Boost (sport display)', t.boost, (v) => r2(v) + ' bar', true);
+        add('Boost (sport display)', t.boost, (v) => P(v, true), true);
         add('Driving mode', t.mode, (v) => v);
         add('M xDrive setting', t.awd, (v) => v, true);
         add('Auto start-stop', t.msa, (v) => v, true);
         add('Parking brake', t.handbrake, (v) => v, true);
-        add('Engine oil temperature', t.oilTemp, (v) => r0(v) + ' C');
-        add('Coolant temperature', t.coolantTemp, (v) => r0(v) + ' C');
+        add('Engine oil temperature', t.oilTemp, (v) => T(v));
+        add('Coolant temperature', t.coolantTemp, (v) => T(v));
         add('Engine oil level', t.oilLevel, (v) => v);
-        add('Outside temperature', t.ambient, (v) => r1(v) + ' C');
+        add('Outside temperature', t.ambient, (v) => T(v, true));
         add('Lateral / longitudinal acceleration', num(t.gLat) && num(t.gLong) ? [t.gLat, t.gLong] : null, (v) => r2(v[0]) + ' g / ' + r2(v[1]) + ' g');
         const corners = (o, fmt) => (o && ['fl', 'fr', 'rl', 'rr'].every((k) => num(o[k])) ? 'FL ' + fmt(o.fl) + ', FR ' + fmt(o.fr) + ', RL ' + fmt(o.rl) + ', RR ' + fmt(o.rr) : null);
-        add('Tyre pressures', corners(t.tyres, r1), (v) => v + ' bar');
-        add('Tyre pressure targets (set in the car)', corners(t.tyreTargets, r1), (v) => v + ' bar');
-        add('Tyre temperatures', corners(t.tyreTemps, r0), (v) => v + ' C', true);
-        add('Fuel in the tank', t.fuelL, (v) => r0(v) + ' l');
-        add('Range', t.rangeKm, (v) => r0(v) + ' km');
+        add('Tyre pressures', corners(t.tyres, (v) => Pn(v)), (v) => v + ' ' + pUnit);
+        add('Tyre pressure targets (set in the car)', corners(t.tyreTargets, (v) => Pn(v)), (v) => v + ' ' + pUnit);
+        add('Tyre temperatures', corners(t.tyreTemps, (v) => T(v).split(' ')[0]), (v) => v + (fahr ? ' F' : ' C'), true);
+        add('Fuel in the tank', t.fuelL, VOL);
+        add('Range', t.rangeKm, D);
         add('Average consumption (trip computer)', t.avgCons, (v) => r1(v.value) + ' ' + v.unit, true);
-        add('Odometer', t.odoKm, (v) => r0(v) + ' km');
+        add('Odometer', t.odoKm, D);
         add('12 V battery charge', t.batteryPct, (v) => r0(v) + ' %');
         add('Gearbox programme shown', t.programme, (v) => v, true);
         add('Air conditioning (A/C)', t.ac === null || t.ac === undefined ? null : t.ac ? 'on' : 'off', (v) => v, true);
-        add('High-voltage battery temperature', t.hvTemp, (v) => r0(v) + ' C', true);
+        add('High-voltage battery temperature', t.hvTemp, (v) => T(v), true);
         add('High-voltage battery voltage', t.hvVolt, (v) => r0(v) + ' V', true);
 
         // the engine unit's own values, read when the question was asked (engine_snapshot.js)
         const es = t.engineSnap && t.engineSnap.values, eng = [];
         if (es) {
             const e = (label, v, fmt) => { if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) eng.push(label + ': ' + fmt(v)); };
-            e('Boost actual / target', num(es.boostActual) && num(es.boostTarget) ? [es.boostActual, es.boostTarget] : null, (v) => r2(v[0]) + ' / ' + r2(v[1]) + ' bar');
-            if (!(num(es.boostActual) && num(es.boostTarget))) e('Boost (engine unit)', es.boostActual, (v) => r2(v) + ' bar');
+            e('Boost actual / target', num(es.boostActual) && num(es.boostTarget) ? [es.boostActual, es.boostTarget] : null, (v) => Pn(v[0], true) + ' / ' + P(v[1], true));
+            if (!(num(es.boostActual) && num(es.boostTarget))) e('Boost (engine unit)', es.boostActual, (v) => P(v, true));
             e('Outside air pressure', es.baro, (v) => r0(v) + ' kPa');
-            e('Intake air temperature', es.iat, (v) => r0(v) + ' C');
+            e('Intake air temperature', es.iat, (v) => T(v));
             e('Air charge (load) actual / target', num(es.loadActual) && num(es.loadTarget) ? [es.loadActual, es.loadTarget] : null, (v) => r0(v[0]) + ' / ' + r0(v[1]) + ' %');
             e('Ignition timing', es.timing, (v) => r1(v) + ' deg');
-            e('High-pressure fuel (rail)', es.hpfp, (v) => r0(v) + ' bar');
-            e('Low-pressure fuel', es.lpfp, (v) => r1(v) + ' bar');
-            e('Engine oil temperature (engine unit)', es.oil, (v) => r0(v) + ' C');
-            e('Gearbox oil temperature', es.gearboxOil, (v) => r0(v) + ' C');
+            e('High-pressure fuel (rail)', es.hpfp, (v) => (pUnit === 'psi' ? r0(v * 14.5038) + ' psi' : r0(v) + ' bar'));
+            e('Low-pressure fuel', es.lpfp, (v) => P(v));
+            e('Engine oil temperature (engine unit)', es.oil, (v) => T(v));
+            e('Gearbox oil temperature', es.gearboxOil, (v) => T(v));
             e('12 V system voltage', es.v12, (v) => r2(v) + ' V');
             e('Misfires this driving cycle, per cylinder', Array.isArray(es.misfire) ? es.misfire : null, (v) => v.map((n, i) => (i + 1) + ': ' + (n === null ? '?' : n)).join(', '));
             e('High-voltage battery charge', es.hvSoc, (v) => r0(v) + ' %');
             e('High-voltage battery health (SOH)', es.hvSoh, (v) => r0(v) + ' %');
         }
 
+        // this drive so far (main.js drive memory, recorded while M-Copilot was on screen)
+        const dr = t.drive, drv = [];
+        if (dr && dr.min >= 1) {
+            const e = (label, v, fmt) => { if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) drv.push(label + ': ' + fmt(v)); };
+            e('Top speed', dr.vmax, SPD);
+            e('Highest engine speed', dr.rpmMax, (v) => r0(v) + ' rpm');
+            e('Peak torque', dr.torqueMax, (v) => r0(v) + ' Nm');
+            e('Peak power, % of maximum (sport display)', dr.powerPctMax, (v) => r0(v) + ' %');
+            e('Peak boost (sport display)', dr.boostMax, (v) => P(v, true));
+            e('Engine oil temperature, lowest / highest', num(dr.oilMin) && num(dr.oilMax) ? [dr.oilMin, dr.oilMax] : null, (v) => T(v[0]).split(' ')[0] + ' / ' + T(v[1]));
+            e('Highest coolant temperature', dr.coolMax, (v) => T(v));
+            e('Revving with cold oil (below ' + T(70) + ', above 4500 rpm)', dr.coldRevSec > 0 ? dr.coldRevSec : null, (v) => r0(v) + ' s, up to ' + r0(dr.coldRevRpm) + ' rpm');
+            e('Time above 5500 rpm', dr.highRpmSec > 0 ? dr.highRpmSec : null, (v) => r0(v) + ' s');
+            e('Peak g: sideways / accelerating / braking', num(dr.gLatMax) ? [dr.gLatMax, dr.gAccMax || 0, dr.gBrakeMax || 0] : null, (v) => r2(v[0]) + ' / ' + r2(v[1]) + ' / ' + r2(v[2]) + ' g');
+            e('Hottest tyre', dr.tyreTempMax, (v) => T(v));
+            if (dr.loadSamples > 0) {
+                e('Engine unit samples under load', dr.loadSamples, (v) => String(v));
+                e('Highest intake air temperature under load', dr.iatMax, (v) => T(v));
+                e('Boost short of target by more than ' + P(0.15, true) + ' under load', dr.boostShort, (v) => v + ' of ' + dr.loadSamples + ' samples'
+                    + (num(dr.boostShortWorst) ? ', worst ' + P(dr.boostShortWorst, true) + ' at ' + r0(dr.boostShortRpm) + ' rpm' : ''));
+                e('Lowest ignition timing under load', dr.timingMin, (v) => r1(v) + ' deg at ' + r0(dr.timingMinRpm) + ' rpm');
+            }
+        }
         const next = t.serviceNext && t.serviceNext.text
             ? 'Next service the car asks for: ' + t.serviceNext.text + (t.serviceNext.way ? ', in ' + t.serviceNext.way : '') + (t.serviceNext.date ? ', by ' + t.serviceNext.date : '') + '.' : '';
         const service = Array.isArray(t.service) && t.service.length
@@ -317,6 +386,8 @@ class AiBridge {
             eng.length ? 'Engine control unit, read just now (' + Math.max(0, Math.round((Date.now() - t.engineSnap.at) / 1000)) + ' s ago):\n' + eng.map((l) => '- ' + l).join('\n')
                 + '\nUse these for questions about boost, heat soak, knock, fuelling, misfires or tune health: compare actual with target and say what a gap means.'
                 : 'Engine control unit values (boost target, intake air, timing, fuel pressure, misfires): not read for this question.',
+            drv.length ? 'This drive so far (' + Math.round(dr.min) + ' min, ' + D(dr.km || 0) + ', recorded while M-Copilot was on screen):\n' + drv.map((l) => '- ' + l).join('\n')
+                + '\nUse these for questions about how the drive went, warm-up, heat soak and how hard the car was driven.' : '',
             service,
             next,
             cc,
@@ -326,7 +397,9 @@ class AiBridge {
                 : 'Unless the profile says the car is tuned, assume factory specifications.',
             'Give numbers for this car\'s engine and gearbox when you know them; say when a figure depends on the exact model.',
             'Where the advice itself risks damage or a crash, say so in a few words. No general disclaimers.',
+            fahr || miles || pUnit !== 'bar' ? 'The car is set to ' + [pUnit, fahr ? 'degrees F' : 'degrees C', miles ? 'miles' : 'km'].join(', ') + ': give every number in these units, as the readings above are.' : '',
             'Answer in plain text for a car screen: at most 6 short lines, no markdown, no tables, under 110 words. Start with the answer, not a preamble.',
+            LANGUAGES[t.vehicle && t.vehicle.profile && t.vehicle.profile.lang] ? 'Answer in ' + LANGUAGES[t.vehicle.profile.lang] + '.' : '',
         ].filter((l) => l !== '').join('\n');
     }
 
@@ -375,6 +448,7 @@ class AiBridge {
         else if (provider === 'claude' || (this.config.apiKey && this.config.apiKey.startsWith('sk-ant-'))) res = await this.queryAnthropic(prompt, system, past);
         else res = await this.queryOpenAICompatible(prompt, system, past, provider);
         if (res.ok) this._remember(prompt, res.text);
+        this.lastOk = !!res.ok;            // main.js offers follow-up chips after a real answer only
         return res.text;
     }
 
@@ -433,7 +507,7 @@ class AiBridge {
         // overloaded (503 "high demand", 429, 5xx) or goes silent is skipped for a while and the next
         // one answers instead; that stand-in is not remembered as the model to use.
         const configured = this.config.model && /gemini/i.test(this.config.model) ? this.config.model : null;
-        const all = [this.config.geminiModel, configured, 'gemini-flash-latest', 'gemini-flash-lite-latest']
+        const all = [configured, this.config.geminiModel, 'gemini-flash-latest', 'gemini-flash-lite-latest']
             .filter((m, i, a) => m && a.indexOf(m) === i);
         const busy = this.geminiBusy || (this.geminiBusy = {});
         const now = Date.now();
@@ -461,6 +535,7 @@ class AiBridge {
                 const text = (cand.content.parts || []).filter((p) => !p.thought && p.text).map((p) => p.text).join('').trim();
                 if (text) {
                     if (!standIn && this.config.geminiModel !== model) { this.config.geminiModel = model; this.saveConfig(); }
+                    this.lastModel = model;
                     return { ok: true, text };
                 }
                 last = cand.finishReason ? 'no answer (' + cand.finishReason + ')' : 'empty answer';
@@ -497,6 +572,7 @@ class AiBridge {
         if (j.type === 'error' || j.error) return { ok: false, text: 'Claude: ' + ((j.error && j.error.message) || ('HTTP ' + r.status)) };
         if (j.stop_reason === 'refusal') return { ok: false, text: 'Claude declined to answer this question.' };
         const text = (j.content || []).filter((b) => b && b.type === 'text').map((b) => b.text).join('').trim();
+        if (text) this.lastModel = model;
         return text ? { ok: true, text } : { ok: false, text: 'Claude: empty answer (' + (j.stop_reason || 'HTTP ' + r.status) + ')' };
     }
 
@@ -528,7 +604,7 @@ class AiBridge {
         if (r.error) return { ok: false, text: r.slow ? 'The AI took too long to answer. Please try again.' : 'AI: ' + r.error + '. Please check the phone hotspot connection.' };
         const j = r.json || {};
         const msg = j.choices && j.choices[0] && j.choices[0].message;
-        if (msg && msg.content) return { ok: true, text: String(msg.content).trim() };
+        if (msg && msg.content) { this.lastModel = model; return { ok: true, text: String(msg.content).trim() }; }
         return { ok: false, text: 'AI: ' + ((j.error && j.error.message) || ('HTTP ' + r.status + ' ' + String(r.raw || '').slice(0, 120))) };
     }
 }

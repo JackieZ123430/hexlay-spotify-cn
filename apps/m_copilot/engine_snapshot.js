@@ -93,6 +93,32 @@ class EngineSnapshot {
         return { at: Date.now(), values };
     }
 
+    /**
+     * A light sample under load for the drive memory: boost actual / target, intake air and timing
+     * only, within budgetMs (default 900). Not kept; never while a full read runs.
+     * Resolves { boostActual, boostTarget, iat, timing } (bar above outside air pressure) or null.
+     */
+    async sample(opts) {
+        if (this.busy || this.sampling) return null;
+        this.sampling = true;
+        try {
+            const until = Date.now() + ((opts && opts.budgetMs) || 900);
+            const ok = () => Date.now() < until && (!opts || !opts.steady || opts.steady());
+            const out = {};
+            const baro = this.baro !== null ? this.baro : 101.3, d = this.dme;
+            for (const k of ['boostTarget', 'boostActual', 'iat', 'timing']) {
+                if (!ok() || !d[k] || (this.fails[k] || 0) >= GIVE_UP) continue;
+                const v = await this.rd.value(k, EngineSnapshot.quick(d[k]));
+                this.fails[k] = v === null ? (this.fails[k] || 0) + 1 : 0;
+                if (v === null) continue;
+                out[k] = k === 'boostTarget' || k === 'boostActual' ? (v - baro) / 100 : v;
+            }
+            return Object.keys(out).length ? out : null;
+        } finally {
+            this.sampling = false;
+        }
+    }
+
     /** misfires per cylinder in this driving cycle (OBD 06, MIDs A2.. = cylinder 1..), as M Vitals reads them */
     async _misfire(ok) {
         const m = this.dme.misfire || {}, ecu = m.ecu == null ? (this.dme.ecu || 0x12) : m.ecu, tid = parseInt(m.tid || '0C', 16), rd = this.rd;

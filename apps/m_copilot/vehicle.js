@@ -111,6 +111,7 @@ const PROFILE_CHOICE = {
     tyres: ['summer', 'allseason', 'winter', 'semislick', 'runflat'],
     fuel: ['ron95', 'ron98', 'ron100', 'e85', 'diesel'],
     use: ['daily', 'spirited', 'track', 'towing', 'touring'],
+    lang: ['en', 'ka', 'de', 'fr', 'es', 'it', 'nl', 'pt', 'tr', 'pl'],    // the answer language (ai.js LANGUAGES)
 };
 const PROFILE_WORDS = {
     tune: { stock: 'stock (no tune)', stage1: 'Stage 1 software tune', stage2: 'Stage 2 tune (software + hardware)', stage2plus: 'beyond Stage 2 (turbo / fuel upgrades)', custom: 'custom tune' },

@@ -7,7 +7,7 @@
  *     page sends the AI key, and optionally the owner's car profile (model, tune, mods, tyres, fuel).
  *   - 20 topic chips in 4 categories, worded for a stock daily car as well as a tuned one:
  *       CHECK     health check, warning lights / fault memory, service due, tyres, 12 V battery
- *       DRIVE     ready for full power, fuel and range, weather grip, driving modes, cool-down
+ *       DRIVE     ready for full power, fuel and range, weather grip, how was that drive, cool-down
  *       PERFORM   launch, track day prep, tune health, heat soak, mods and upgrade path
  *       KNOW-HOW  oil spec, gearbox care, fuel and octane, known weak points, long trip prep
  *     plus an on-screen keyboard for any question (follow-up questions keep the context).
@@ -54,7 +54,7 @@ const TOPIC_CATEGORIES = [
             { title: 'Ready for Full Power?', query: 'Is my engine warm enough for full throttle and high revs right now? Use the oil and coolant temperatures, and say what threshold you use for my engine and tune.' },
             { title: 'Fuel & Range', query: 'How far can I go on the fuel I have, how does my consumption look, and what would make the biggest difference to it on this trip?' },
             { title: 'Weather & Grip', query: 'With the outside temperature and my tyres as they are now, how much grip should I expect, is there a risk of ice or cold tyres, and what should I change in how I drive?' },
-            { title: 'Driving Modes Explained', query: 'What does my current driving mode change on my car (throttle, gearbox, steering, dampers, stability control), and which mode suits city, motorway, wet roads and a fun back road?' },
+            { title: 'How Was That Drive?', query: 'Look at this drive so far: how hard was the car driven, was the engine warm before it was pushed, any heat soak, boost falling short or timing pulled? Anything to change next time?' },
             { title: 'Cool-Down & Parking', query: 'After how I have been driving, should I let the engine idle or drive gently before switching off? Use the oil and coolant temperatures and say why it matters for my engine and tune.' },
         ],
     },
@@ -132,7 +132,7 @@ mgu.run({
             tyres: null, tyreTargets: null, tyreTemps: null, fuelL: null, rangeKm: null, batteryPct: null,
             engine: null, msa: null, handbrake: null, odoKm: null, avgCons: null, powerPct: null, torquePct: null,
             awd: null, condition: null, service: null, serviceNext: null, checkControl: null, programme: null, ac: null, hvTemp: null, hvVolt: null,
-            engineSnap: null, dtcScan: null, vehicle: null,
+            engineSnap: null, dtcScan: null, vehicle: null, units: {}, drive: null,
         };
         const Vehicle = require('./vehicle');
         const vehicle = new Vehicle({ dataDir: ctx.dataDir, log });
@@ -159,6 +159,8 @@ mgu.run({
             return null;
         };
         const carText = (x) => String(x === undefined || x === null ? '' : x).replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 60);
+        const UNIT_PRESS = { 1: 'BAR', 2: 'KPA', 3: 'PSI', BAR: 'BAR', KPA: 'KPA', PSI: 'PSI' }, UNIT_TEMP = { 1: 'C', 2: 'F', C: 'C', F: 'F' };
+        const SPEED_UNITS = { KM_S_H__KM: 'km/h', MPH__MLS: 'mph', 1: 'km/h', 2: 'mph' };
         const PROGRAMMES = { S_MINUS_PROGRAMM: 'S (sport)', M_MINUS_PROGRAMM: 'M (manual)', 1: 'S (sport)', 2: 'M (manual)' };
         const AC_ON = { 1: true, KLIMAANLAGE_EIN: true, 0: false, KLIMAANLAGE_AUS: false };
         const pick = (v, key) => { const o = findKey(v, key); return o ? o[key] : undefined; };
@@ -184,7 +186,10 @@ mgu.run({
         let tyreFahrenheit = false;
         const tyreBar = (raw) => {
             if (typeof raw !== 'number' || raw >= 65532) return null;
-            const v = raw * 0.1;
+            const v = raw * 0.1, known = telemetry.units.press;
+            if (known === 'PSI') return v / 14.5038;
+            if (known === 'KPA') return v / 100;
+            if (known === 'BAR') return v >= 0.5 && v <= 6 ? v : null;
             if (v >= 0.5 && v <= 6) return v;
             if (v >= 7 && v < 60) { tyreFahrenheit = true; return v / 14.5038; }     // psi (the car then uses deg F too)
             if (v >= 60 && v <= 600) return v / 100;                                 // kPa
@@ -220,6 +225,9 @@ mgu.run({
                 statusBordcomputerAverage: (v) => {
                     const r = v && v.consumptionAverage1BC1, unit = v && CONS_UNITS[v.statusUnitOfMeasurementConsumptionBC];
                     telemetry.avgCons = typeof r === 'number' && r > 0 && r < 65535 && unit ? { value: r * 0.1, unit } : null;
+                    if (unit) telemetry.units.cons = unit;
+                    const sp = v && SPEED_UNITS[v.statusUnitOfMeasurementSpeedBC];
+                    if (sp) telemetry.units.speed = sp;
                 },
             },
             'de.bmw.infotainment.vehicle.CDS': {
@@ -242,6 +250,14 @@ mgu.run({
                     v = v || {};
                     telemetry.powerPct = typeof v.displaySportEnginePower === 'number' && v.displaySportEnginePower <= 100 ? v.displaySportEnginePower : null;
                     telemetry.torquePct = typeof v.displaySportEngineTorque === 'number' && v.displaySportEngineTorque <= 100 ? v.displaySportEngineTorque : null;
+                },
+            },
+            // the car's display units (as BMW's x_call / M Vitals read them): answers use them
+            'de.bmw.infotainment.vehicle.Vehicle': {
+                statusNewCurrentUnitsStatusExt: (v) => {
+                    const pr = UNIT_PRESS[v && v.unitOfMeasurementAirPressure], tp = UNIT_TEMP[v && v.unitOfMeasurementTemperature];
+                    if (pr) telemetry.units.press = pr;
+                    if (tp) { telemetry.units.temp = tp; tyreFahrenheit = tp === 'F'; }
                 },
             },
             // M xDrive setting (M models only); the S / M programme the cluster shows next to the gear (M Vitals)
@@ -317,6 +333,7 @@ mgu.run({
         function onCarSample(data) {
             // kit/car feeds a simulator while no car answers: that must never reach the AI as the car's state
             if (data.demo) return;
+            driveFeed(data);
             {
                 let changed = false;
                 if (data.speed !== undefined && Math.round(data.speed) !== telemetry.speed) {
@@ -354,6 +371,81 @@ mgu.run({
             if (!vehicle.setProfile(profile, time)) return;
             ai.resetHistory();
             notify(vehicle.profile ? 'Car profile updated from your phone.' : 'Car profile cleared.');
+            render(true).catch(() => {});
+        };
+
+        /*
+         * Drive memory: what happened on this drive while M-Copilot was on screen, as a few running
+         * figures (no trace is kept): top speed and rpm, oil / coolant range, cold revving, time at high
+         * rpm, peak g, hottest tyre, and - from light engine unit samples under load - intake air heat,
+         * boost short of its target and the lowest timing. A new drive starts after 15 minutes without
+         * data (the screen was left, or the car stood switched off).
+         */
+        let drive = null;
+        function driveNew() {
+            return { start: Date.now(), last: Date.now(), ms: 0, km: 0, vmax: null, rpmMax: null, torqueMax: null, powerPctMax: null, boostMax: null,
+                oilMin: null, oilMax: null, coolMax: null, coldRevMs: 0, coldRevRpm: 0, highRpmMs: 0, gLatMax: null, gAccMax: null, gBrakeMax: null,
+                tyreTempMax: null, loadSamples: 0, iatMax: null, boostShort: 0, boostShortWorst: null, boostShortRpm: null, timingMin: null, timingMinRpm: null };
+        }
+        const hi = (a, b) => (typeof b !== 'number' || !isFinite(b) ? a : a === null || b > a ? b : a);
+        const lo = (a, b) => (typeof b !== 'number' || !isFinite(b) ? a : a === null || b < a ? b : a);
+        function driveFeed(d) {
+            const now = Date.now();
+            if (!drive || now - drive.last > 15 * 60 * 1000) drive = driveNew();
+            const dt = Math.min(1000, now - drive.last);
+            drive.last = now;
+            const sp = d.speed, rpm = d.rpm;
+            if (typeof sp === 'number' && sp >= 0 && sp < 400) { drive.km += sp * dt / 3600000; drive.vmax = hi(drive.vmax, sp); }
+            if (typeof rpm === 'number' && rpm > 0 && rpm < 12000) {
+                drive.ms += dt;
+                drive.rpmMax = hi(drive.rpmMax, rpm);
+                if (rpm > 5500) drive.highRpmMs += dt;
+                if (typeof d.oil === 'number' && d.oil < 70 && rpm > 4500) { drive.coldRevMs += dt; drive.coldRevRpm = Math.max(drive.coldRevRpm, rpm); }
+            }
+            if (typeof d.oil === 'number' && rpm > 0) { drive.oilMin = lo(drive.oilMin, d.oil); drive.oilMax = hi(drive.oilMax, d.oil); }
+            if (typeof d.coolant === 'number') drive.coolMax = hi(drive.coolMax, d.coolant);
+            drive.torqueMax = hi(drive.torqueMax, d.torque);
+            if (typeof d.gLat === 'number' && Math.abs(d.gLat) < 2) drive.gLatMax = hi(drive.gLatMax, Math.abs(d.gLat));
+            if (typeof d.gLong === 'number' && Math.abs(d.gLong) < 2) { if (d.gLong > 0) drive.gAccMax = hi(drive.gAccMax, d.gLong); else drive.gBrakeMax = hi(drive.gBrakeMax, -d.gLong); }
+            drive.powerPctMax = hi(drive.powerPctMax, telemetry.powerPct);
+            drive.boostMax = hi(drive.boostMax, telemetry.boost);
+            if (telemetry.tyreTemps) ['fl', 'fr', 'rl', 'rr'].forEach((k) => { drive.tyreTempMax = hi(drive.tyreTempMax, telemetry.tyreTemps[k]); });
+        }
+        /** Under load (high rpm and torque), every 2 s: a light engine unit sample for the drive memory. */
+        let loadTimer = null;
+        function loadSampling(on) {
+            if (!on) { if (loadTimer) { clearInterval(loadTimer); loadTimer = null; } return; }
+            if (loadTimer) return;
+            loadTimer = setInterval(async () => {
+                const rpm = telemetry.rpm;
+                const load = typeof rpm === 'number' && rpm > 2500 && ((typeof telemetry.torquePct === 'number' && telemetry.torquePct >= 50) || (typeof telemetry.torque === 'number' && telemetry.torque >= 250));
+                if (!load || !drive || isThinking || !steady()) return;
+                try {
+                    const d = await diagLink();
+                    if (!d.available) return;
+                    if (!snapshot) { const EngineSnapshot = require('./engine_snapshot'); snapshot = new EngineSnapshot(d, ctx.spec && ctx.spec.config, log); }
+                    const x = await snapshot.sample({ budgetMs: 900, steady });
+                    if (!x || !drive) return;
+                    drive.loadSamples++;
+                    drive.iatMax = hi(drive.iatMax, x.iat);
+                    if (typeof x.boostTarget === 'number' && typeof x.boostActual === 'number' && x.boostTarget > 0.3) {
+                        const gap = x.boostTarget - x.boostActual;
+                        if (gap > 0.15) { drive.boostShort++; if (drive.boostShortWorst === null || gap > drive.boostShortWorst) { drive.boostShortWorst = gap; drive.boostShortRpm = rpm; } }
+                    }
+                    if (typeof x.timing === 'number' && (drive.timingMin === null || x.timing < drive.timingMin)) { drive.timingMin = x.timing; drive.timingMinRpm = rpm; }
+                } catch (e) { /* the next sample */ }
+            }, 2000);
+        }
+        /** The drive memory as the AI gets it (ai.js buildVehicleContext). */
+        function driveSummary() {
+            if (!drive) return null;
+            return Object.assign({}, drive, { min: (Date.now() - drive.start) / 60000, coldRevSec: drive.coldRevMs / 1000, highRpmSec: drive.highRpmMs / 1000 });
+        }
+
+        // the AI model picked on the phone page
+        cloudPair.onModel = (provider, model, time) => {
+            if (!ai.setModel(provider, model, time)) return;
+            notify('AI model: ' + (model || 'default') + '.');
             render(true).catch(() => {});
         };
 
@@ -548,6 +640,13 @@ mgu.run({
         };
 
         let askSeq = 0;
+        let canFollowUp = false;            // the last answer was a real one: follow-up chips under it
+        // one tap instead of typing: they go on in the same conversation (ai.js keeps the last exchanges)
+        const FOLLOW_UPS = [
+            { title: 'What should I do?', query: 'Based on that, what exactly should I do now, step by step?' },
+            { title: 'Safe to keep driving?', query: 'Is it safe to keep driving the car normally as it is now? Say what to watch for.' },
+            { title: 'Explain more', query: 'Explain that in more detail for my car.' },
+        ];
         async function askCopilot(queryText, title, opts) {
             if (isThinking) { notify('M-Copilot is still answering...'); return; }
             if (!ai.hasInternet) {
@@ -562,6 +661,7 @@ mgu.run({
 
             currentPrompt = title || 'Custom Query';
             dialogueScroll = 0;
+            canFollowUp = false;
             const seq = ++askSeq;
             setThinking(true);
             currentResponse = 'Asking M-Copilot with your car\'s live data...';
@@ -576,9 +676,11 @@ mgu.run({
                 // demo switched on by hand (emulator, bench): the simulator's readings, labelled as such.
                 // On "auto" (the car's default) simulated values never reach the AI.
                 const d = car ? car.data() : null;
+                telemetry.drive = driveSummary();
                 const t = d && d.demo && settings.get('demo') === 'on' ? simulated(d) : telemetry;
+                ai.lastOk = false;
                 const answer = await ai.ask(queryText, t, { fresh: !!(opts && opts.fresh) });
-                if (seq === askSeq) currentResponse = answer;
+                if (seq === askSeq) { currentResponse = answer; canFollowUp = !!ai.lastOk; }
             } catch (e) {
                 if (seq === askSeq) currentResponse = 'Error: ' + e.message;
             } finally {
@@ -603,6 +705,26 @@ mgu.run({
         }
 
         /* ---------- Helper: Text Formatting & Wrapping ---------- */
+        // The baked fonts draw ASCII, a few symbols and Georgian: accented letters lose their accents
+        // (German umlauts as ae / oe / ue), other letters without a glyph are left out, never shown as "?".
+        const DRAWABLE = new Set(Array.from('°±²³·×μ–—…€←↑→↓│✓✕'));
+        const FOLD = { 'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue', 'ß': 'ss', 'ı': 'i', 'İ': 'I', 'ł': 'l', 'Ł': 'L',
+            'ø': 'o', 'Ø': 'O', 'æ': 'ae', 'Æ': 'Ae', 'œ': 'oe', 'Œ': 'Oe', 'đ': 'd', 'Đ': 'D', '’': "'", '‘': "'", '“': '"', '”': '"', '„': '"',
+            '«': '"', '»': '"', '•': '-', '\u00a0': ' ', '\u202f': ' ', '−': '-', '≈': '~', '≥': '>=', '≤': '<=', '→': '→' };
+        function drawable(text) {
+            let out = '';
+            for (const ch of text) {
+                const c = ch.codePointAt(0);
+                if (c < 128 || DRAWABLE.has(ch) || (c >= 0x10d0 && c <= 0x10ff) || (c >= 0x1c90 && c <= 0x1cbf)) out += ch;
+                else if (FOLD[ch] !== undefined) out += FOLD[ch];
+                else {
+                    const base = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                    if (base && Array.from(base).every((x) => x.codePointAt(0) < 128)) out += base;
+                }
+            }
+            return out;
+        }
+
         const wrapCache = { key: null, lines: null };
         function wrapLines(text, maxChars = 62) {
             if (!text) return [];
@@ -629,7 +751,7 @@ mgu.run({
                 .replace(/[‘’]/g, "'")
                 .replace(/\n{3,}/g, '\n\n');       // collapse excessive blank lines
 
-            const rawLines = cleaned.split('\n');
+            const rawLines = drawable(cleaned).split('\n');
             const lines = [];
             let lastEmpty = false;
 
@@ -985,9 +1107,23 @@ mgu.run({
             // Left decorative M stripe on response card
             cv.fillRect(rx + 2, ry + 12, 4, rh - 24, '#00a3e0');
 
+            // follow-up chips along the bottom of the card after a real answer
+            const chips = canFollowUp && !isThinking, chipH = 36, chipY = ry + rh - chipH - 12;
+            if (chips) {
+                let cx = rx + 24;
+                FOLLOW_UPS.forEach((f, i) => {
+                    const w = 32 + f.title.length * 9;
+                    cv.roundRect(cx, chipY, w, chipH, 8, withAlpha('#00a3e0', 0.15));
+                    cv.strokeRoundRect(cx, chipY, w, chipH, 8, 1, '#00a3e0');
+                    cv.text(f.title, cx + w / 2, chipY + 24, 15, '#e2e8f0', { align: 'center', font: 'bold' });
+                    cv.target(cx, chipY, w, chipH, () => askCopilot(f.query, f.title, { fresh: false }), 'follow_' + i, 8);
+                    cx += w + 12;
+                });
+            }
+
             // Render Response text with wrap and scroll
             const lines = wrapLines(currentResponse, 88);
-            const maxVisibleLines = 11 + Math.floor(dEx / 26);
+            const maxVisibleLines = 11 + Math.floor(dEx / 26) - (chips ? 2 : 0);
             dialogueRows = { count: lines.length, visible: maxVisibleLines };
             cv.scroll = true;
             const maxScroll = Math.max(0, lines.length - maxVisibleLines);
@@ -1011,7 +1147,7 @@ mgu.run({
 
             // Scrollbar & Page indicator when content exceeds card
             if (lines.length > maxVisibleLines) {
-                const sbX = rx + rw - 14, sbY = ry + 20, sbH = rh - 40;
+                const sbX = rx + rw - 14, sbY = ry + 20, sbH = (chips ? chipY - ry - 6 : rh) - 40;
                 cv.roundRect(sbX, sbY, 4, sbH, 2, withAlpha(t.panelEdge, 0.4));
                 const thumbH = Math.max(24, Math.floor((maxVisibleLines / lines.length) * sbH));
                 const thumbY = sbY + Math.floor((dialogueScroll / maxScroll) * (sbH - thumbH));
@@ -1020,15 +1156,16 @@ mgu.run({
                 // Page badge
                 const curPage = Math.floor(dialogueScroll / maxVisibleLines) + 1;
                 const totPages = Math.ceil(lines.length / maxVisibleLines);
-                cv.text(`PAGE ${curPage}/${totPages}`, rx + rw - 24, ry + rh - 12, 12, t.dim, { align: 'right', font: 'num' });
+                const textH = chips ? chipY - ry - 6 : rh;
+                cv.text(`PAGE ${curPage}/${totPages}`, rx + rw - 24, ry + textH - 12, 12, t.dim, { align: 'right', font: 'num' });
 
                 // Touch targets to scroll
-                cv.target(rx, ry, rw, rh / 2, () => {
+                cv.target(rx, ry, rw, textH / 2, () => {
                     dialogueScroll = Math.max(0, dialogueScroll - 4);
                     render(true);
                 }, 'card_scroll_up', 4);
 
-                cv.target(rx, ry + rh / 2, rw, rh / 2, () => {
+                cv.target(rx, ry + textH / 2, rw, textH / 2, () => {
                     dialogueScroll = Math.min(maxScroll, dialogueScroll + 4);
                     render(true);
                 }, 'card_scroll_down', 4);
@@ -1057,7 +1194,8 @@ mgu.run({
             }
 
             // G-Series Live Cockpit frame tabs along the top: clean single title + live status badges
-            const provName = providerName().toUpperCase();
+            const ml = ai.modelLabel();
+            const provName = providerName().toUpperCase() + (ml ? ' · ' + ml : '');
             G.frame(cv, t, PAGES, 0, [
                 { text: 'READ-ONLY SAFE', color: '#2af575' },
                 { text: ai.isConfigured() ? `${provName} ONLINE` : 'SETUP REQUIRED', color: ai.isConfigured() ? '#00a3e0' : '#ffb703' }
@@ -1104,12 +1242,14 @@ mgu.run({
         // ---- lifecycle: nothing runs while M-Copilot is not on screen; everything stops on exit
         function foreground() {
             startCar();
+            loadSampling(true);
             cloudPair.startPolling();
             ai.checkInternetConnection().catch(() => {});
             render(true).catch(() => {});
         }
         function background() {
             stopCar();
+            loadSampling(false);
             cloudPair.stopPolling();
             if (thinkTimer) { clearInterval(thinkTimer); thinkTimer = null; }   // an answer still lands
         }

@@ -503,8 +503,51 @@
             <option value="touring">Long trips</option>
         </select>
 
+        <label for="pfLang">Answer language</label>
+        <select id="pfLang">
+            <option value="">English</option>
+            <option value="ka">ქართული (Georgian)</option>
+            <option value="de">Deutsch (without accents on the car screen)</option>
+            <option value="fr">Français (without accents)</option>
+            <option value="es">Español (without accents)</option>
+            <option value="it">Italiano (without accents)</option>
+            <option value="nl">Nederlands</option>
+            <option value="pt">Português (without accents)</option>
+            <option value="tr">Türkçe (without accents)</option>
+            <option value="pl">Polski (without accents)</option>
+        </select>
+        <p class="helper-text">The car's screen can draw Latin letters and Georgian; accented letters are shown without their accents.</p>
+
         <button class="btn-connect" onclick="sendProfile()">SAVE TO MY CAR</button>
         <p id="profileMsg" style="font-size: 13px; text-align: center; margin-top: 12px; display: none;"></p>
+    </div>
+
+    <!-- AI model (optional): which model of the paired provider answers. Sent encrypted like the key. -->
+    <div class="card" id="cardModel" style="display: none;">
+        <div class="card-m-header">
+            <div class="st-light"></div>
+            <div class="st-dark"></div>
+            <div class="st-red"></div>
+            <div class="line"></div>
+        </div>
+        <h2 style="font-size: 16px; font-weight: 800; color: #ffffff; margin-bottom: 6px;">AI MODEL <span style="color: #64748b; font-weight: 600;">(optional)</span></h2>
+        <p class="helper-text" style="margin-bottom: 14px;">Which model of your provider answers in the car. The default is fast and works on free keys.</p>
+
+        <label for="mdProvider">Provider you paired</label>
+        <select id="mdProvider" onchange="modelOptions()">
+            <option value="gemini">Google Gemini</option>
+            <option value="claude">Anthropic Claude</option>
+            <option value="openai">OpenAI</option>
+            <option value="groq">Groq</option>
+            <option value="openrouter">OpenRouter</option>
+        </select>
+
+        <label for="mdModel">Model</label>
+        <select id="mdModel" onchange="modelCustomShown()"></select>
+        <input type="text" id="mdCustom" maxlength="80" placeholder="model id, e.g. gpt-4o" autocomplete="off" autocapitalize="off" spellcheck="false" style="display: none; margin-top: 8px;">
+
+        <button class="btn-connect" onclick="sendModel()">USE THIS MODEL</button>
+        <p id="modelMsg" style="font-size: 13px; text-align: center; margin-top: 12px; display: none;"></p>
     </div>
 
     <div class="footer-nav">
@@ -585,9 +628,57 @@
 
             initRelayListener();
             showProfileCard();
+            showModelCard();
         }
 
-        const PROFILE_FIELDS = { model: 'pfModel', tune: 'pfTune', power: 'pfPower', mods: 'pfMods', tyres: 'pfTyres', fuel: 'pfFuel', use: 'pfUse' };
+        // models per provider; '' = the car's default, '*' = type a model id
+        const MODELS = {
+            gemini: [['', 'Auto: Flash, Flash-Lite when Flash is busy (default)'], ['gemini-flash-lite-latest', 'Flash-Lite first (fastest)'], ['gemini-flash-latest', 'Flash first'], ['*', 'Other model id...']],
+            claude: [['', 'Claude Haiku 5.5 (fast, default)'], ['claude-sonnet-5-5', 'Claude Sonnet 5.5 (smarter)'], ['claude-opus-5-5', 'Claude Opus 5.5 (best, slowest)'], ['*', 'Other model id...']],
+            openai: [['', 'Default (gpt-4o-mini)'], ['*', 'Other model id...']],
+            groq: [['', 'Default (Llama 3.3 70B)'], ['*', 'Other model id...']],
+            openrouter: [['', 'Default (Llama 3.3 70B)'], ['*', 'Other model id...']],
+        };
+        function showModelCard() {
+            const card = document.getElementById('cardModel');
+            if (!channel || !secretKey || secretKey.length !== 64) { card.style.display = 'none'; return; }
+            card.style.display = 'block';
+            const prov = localStorage.getItem('copilot_provider_' + channel);
+            if (prov && MODELS[prov]) document.getElementById('mdProvider').value = prov;
+            modelOptions();
+        }
+        function modelOptions() {
+            const prov = document.getElementById('mdProvider').value, sel = document.getElementById('mdModel');
+            sel.innerHTML = '';
+            (MODELS[prov] || []).forEach(([v, label]) => { const o = document.createElement('option'); o.value = v; o.textContent = label; sel.appendChild(o); });
+            const saved = localStorage.getItem('copilot_model_' + channel + '_' + prov) || '';
+            if ((MODELS[prov] || []).some(([v]) => v === saved)) sel.value = saved;
+            else if (saved) { sel.value = '*'; document.getElementById('mdCustom').value = saved; }
+            modelCustomShown();
+        }
+        function modelCustomShown() {
+            document.getElementById('mdCustom').style.display = document.getElementById('mdModel').value === '*' ? 'block' : 'none';
+        }
+        async function sendModel() {
+            const msg = document.getElementById('modelMsg');
+            const say = (text, ok) => { msg.innerText = text; msg.style.color = ok ? '#2fd27a' : '#ff4d4d'; msg.style.display = 'block'; };
+            const prov = document.getElementById('mdProvider').value;
+            let model = document.getElementById('mdModel').value;
+            if (model === '*') model = document.getElementById('mdCustom').value.trim();
+            if (model && !/^[A-Za-z0-9._:\/-]{1,80}$/.test(model)) { say('That model id has characters the car does not accept.', false); return; }
+            const payload = await encryptCredentials(JSON.stringify({ type: 'copilot_model', provider: prov, model: model, time: Date.now() }), secretKey);
+            if (!payload) { say('This page has no valid car key. Scan the QR code on the car again.', false); return; }
+            try {
+                const res = await fetch('https://ntfy.sh/' + channel, { method: 'POST', headers: { 'Title': 'BMW M-Copilot AI Model' }, body: JSON.stringify(payload) });
+                if (!res.ok) { say('Transmission error. Check the phone\'s internet connection.', false); return; }
+                try { localStorage.setItem('copilot_model_' + channel + '_' + prov, model); } catch (e) {}
+                say('Saved. The car uses it within a minute while M-Copilot is open (the provider must be the one you paired).', true);
+            } catch (e) {
+                say('Network error: ' + e.message, false);
+            }
+        }
+
+        const PROFILE_FIELDS = { model: 'pfModel', tune: 'pfTune', power: 'pfPower', mods: 'pfMods', tyres: 'pfTyres', fuel: 'pfFuel', use: 'pfUse', lang: 'pfLang' };
 
         // the profile card needs the car's key (it came with the QR code)
         function showProfileCard() {
@@ -789,7 +880,9 @@
                     body: JSON.stringify(transmissionPayload)
                 });
                 if (res.ok) {
+                    try { localStorage.setItem('copilot_provider_' + channel, creds.provider); } catch (e) {}
                     handleCarConnected();
+                    showModelCard();
                 } else {
                     err.innerText = 'Transmission error. Check phone internet connection.';
                     err.style.display = 'block';

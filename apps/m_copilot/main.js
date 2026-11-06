@@ -933,23 +933,24 @@ mgu.run({
                 const C = '#00a3e0';
                 cv.roundRect(64, 100, 592, 330 + ex, 14, '#0a1218');
                 cv.strokeRoundRect(64, 100, 592, 330 + ex, 14, 1.5, withAlpha(C, 0.55));
-                const by = 150;
+                const sh = Math.floor(ex * 0.45);        // taller page (no bar): the card's contents move to its middle
+                const by = 150 + sh;
                 cv.circle(cx, by, 36, withAlpha(C, 0.12));
                 cv.arc(cx, by, 30, 32, 0, 360, withAlpha(C, 0.45));
                 cv.circle(cx, by, 25, C);
                 cv.polyline([[cx - 11, by + 1], [cx - 4, by + 8], [cx + 11, by - 8]], 4.5, '#04101a');
-                cv.text('CONNECTED TO ' + providerName().toUpperCase(), cx, 212, 20, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+                cv.text('CONNECTED TO ' + providerName().toUpperCase(), cx, 212 + sh, 20, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
                 const ml = ai.modelLabel();
-                cv.text('Model: ' + (ml || ai.config.model || 'default') + (ml ? ' (answered last)' : ''), cx, 238, 16, '#cbd5e1', { align: 'center' });
+                cv.text('Model: ' + (ml || ai.config.model || 'default') + (ml ? ' (answered last)' : ''), cx, 238 + sh, 16, '#cbd5e1', { align: 'center' });
                 const pill = (y, on, text) => {
                     const w = 440, x = cx - w / 2;
                     cv.roundRect(x, y, w, 32, 16, withAlpha(on ? '#2af575' : '#ffffff', on ? 0.12 : 0.06));
                     cv.circle(x + 22, y + 16, 5, on ? '#2af575' : '#94a3b8');
                     cv.text(text, x + 38, y + 21, 14, on ? '#2af575' : '#94a3b8', { font: 'bold' });
                 };
-                pill(258, ai.hasInternet, ai.hasInternet ? 'Internet: online' : 'Internet: offline (phone hotspot?)');
+                pill(258 + sh, ai.hasInternet, ai.hasInternet ? 'Internet: online' : 'Internet: offline (phone hotspot?)');
                 const np = phone.phoneCount();
-                pill(298, np > 0, np ? 'Notifications: on for ' + np + ' phone' + (np === 1 ? '' : 's') : 'Notifications: off (turn on from the phone page)');
+                pill(298 + sh, np > 0, np ? 'Notifications: on for ' + np + ' phone' + (np === 1 ? '' : 's') : 'Notifications: off (turn on from the phone page)');
                 // Disconnect: quiet until needed, and asks again
                 const asking = now - confirmAt < 5000;
                 const dw = 360, dx = cx - dw / 2, dy = 352 + ex, dh = 44;
@@ -961,26 +962,32 @@ mgu.run({
                     render(true);
                 }, 'btn_disconnect', 12);
             } else {
-                drawQr(cv, cloudPair.getPairingUrl(), cx - 105, 104, 210);
-                cv.text('Scan with your phone to connect an AI', cx, 360, 18, t.text, { align: 'center', font: 'bold' });
-                cv.text('PAIRING CODE: ' + cloudPair.getShortCode(), cx, 386, 15, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
-                cv.text('Google Gemini (free), Claude, OpenAI, Groq or OpenRouter', cx, 410, 14, '#94a3b8', { align: 'center' });
-                cv.text('hexlay.github.io/idrive7-custom-apps/copilot.html', cx, 432, 12, '#64748b', { align: 'center' });
+                // the QR code grows into the room a taller page has (no bar), the block centred in the panel
+                const qs = Math.min(320, 210 + Math.round(ex * 0.9)), top = 92, bottom = 52 + 458 + ex - 12;
+                const block = qs + 20 + 108, y0 = top + Math.max(0, Math.floor((bottom - top - block) / 2));
+                drawQr(cv, cloudPair.getPairingUrl(), cx - qs / 2, y0 + 10, qs);
+                const ty = y0 + qs + 56;
+                cv.text('Scan with your phone to connect an AI', cx, ty, 18, t.text, { align: 'center', font: 'bold' });
+                cv.text('PAIRING CODE: ' + cloudPair.getShortCode(), cx, ty + 26, 15, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
+                cv.text('Google Gemini (free), Claude, OpenAI, Groq or OpenRouter', cx, ty + 50, 14, '#94a3b8', { align: 'center' });
+                cv.text('hexlay.github.io/idrive7-custom-apps/copilot.html', cx, ty + 72, 12, '#64748b', { align: 'center' });
             }
 
             // right: what is set from the phone (the only place it can be changed)
             G.panelExact(cv, t, 700, 52, 860, 458 + ex, 'Set From Your Phone');
             if (showPhoneQr && paired) {
-                drawQr(cv, cloudPair.getPairingUrl(), 1130 - 90, 116, 180);
-                cv.text('Open the phone page for this car', 1130, 344, 17, t.text, { align: 'center', font: 'bold' });
-                cv.text('Car profile, AI model and notifications', 1130, 368, 14, '#94a3b8', { align: 'center' });
+                const qs2 = Math.min(280, 180 + Math.round(ex * 0.8)), y2 = 96 + Math.max(0, Math.floor((410 + ex - 96 - qs2 - 70) / 2));
+                drawQr(cv, cloudPair.getPairingUrl(), 1130 - qs2 / 2, y2 + 10, qs2);
+                cv.text('Open the phone page for this car', 1130, y2 + qs2 + 48, 17, t.text, { align: 'center', font: 'bold' });
+                cv.text('Car profile, AI model and notifications', 1130, y2 + qs2 + 72, 14, '#94a3b8', { align: 'center' });
             } else {
                 const p = vehicle.profile || {};
                 const lines = Vehicle.profileLines(p).filter((l) => !/^Country|^Model \(owner\)/.test(l));
                 const rows = [['Model', p.model || 'not set']].concat(lines.map((l) => { const i = l.indexOf(': '); return [l.slice(0, i), l.slice(i + 2)]; }));
                 rows.push(['Country', p.country || 'not set'], ['Answer language', LANG_NAMES[p.lang] || 'English'], ['AI model', ai.config.model || 'default']);
+                const rstep = 26 + Math.min(12, Math.floor(ex / 8));
                 rows.slice(0, 10).forEach(([k, v], i) => {
-                    const y = 134 + i * 26;
+                    const y = 134 + i * rstep;
                     cv.text(k, 730, y, 14, t.dim);
                     cv.text(v.length > 52 ? v.slice(0, 51) + '…' : v, 1530, y, 14, /not set|default/.test(v) ? t.dim : '#e2e8f0', { align: 'right' });
                 });
@@ -997,9 +1004,10 @@ mgu.run({
         /** The co-driver before an AI is paired: where to pair. */
         function drawNeedsConnect(cv, t) {
             G.panelExact(cv, t, 40, 52, 1520, 458 + (cv.extra || 0), '');
-            cv.text('M-COPILOT NEEDS AN AI KEY FROM YOUR PHONE', 800, 210, 24, '#00a3e0', { align: 'center', font: 'bold', spacing: 1 });
-            cv.text('Pair once on the Connect tab: scan its QR code with your phone and choose a provider (Google Gemini is free).', 800, 248, 16, '#cbd5e1', { align: 'center' });
-            const bw = 320, bx = 800 - bw / 2, by = 290, bh = 50;
+            const sh = Math.floor((cv.extra || 0) / 2);
+            cv.text('M-COPILOT NEEDS AN AI KEY FROM YOUR PHONE', 800, 210 + sh, 24, '#00a3e0', { align: 'center', font: 'bold', spacing: 1 });
+            cv.text('Pair once on the Connect tab: scan its QR code with your phone and choose a provider (Google Gemini is free).', 800, 248 + sh, 16, '#cbd5e1', { align: 'center' });
+            const bw = 320, bx = 800 - bw / 2, by = 290 + sh, bh = 50;
             cv.roundRect(bx, by, bw, bh, 10, '#004e8c');
             cv.strokeRoundRect(bx, by, bw, bh, 10, 1.5, '#00a3e0');
             cv.text('OPEN CONNECT', 800, by + 32, 17, '#ffffff', { align: 'center', font: 'bold' });
@@ -1306,7 +1314,7 @@ mgu.run({
             const ex = cv.extra || 0;
             G.panelExact(cv, t, 40, 52, 1520, 458 + ex, '');
             const COL = { green: '#2af575', amber: '#ffb703', red: '#ef4444', grey: t.dim };
-            const step = 22, top = 100;
+            const step = 22 + Math.min(10, Math.floor(ex / 16)), top = 100;
             const row = (x, w, i, label, st) => {
                 const y = top + i * step;
                 cv.circle(x + 6, y - 4, 4, COL[st.c] || t.dim);
@@ -1497,6 +1505,11 @@ mgu.run({
             }
             return render(true);
         });
+
+        // Where the kit runs the screen, no bottom bar: the topic chips ask and Connect is a tab, so both bar
+        // buttons are left out (the kit then drops the empty bar and gives the page its height). On the
+        // HMI's own path they stay, so the controller can still reach both actions there.
+        if (ctx.hideButton) { ctx.hideButton('BTN_PROMPT'); ctx.hideButton('BTN_REPAIR'); }
 
         ui.onClick('BTN_REPAIR', () => {
             page = 2;

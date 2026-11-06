@@ -190,7 +190,24 @@ async function main() {
     page.fetch = async () => { calls++; throw new TypeError('Load failed'); };
     assert.strictEqual(await CL.sendToCar(car, { type: 'copilot_profile', profile: {} }), false, 'still down after 3 tries: false, no throw');
     assert.strictEqual(calls, 3);
-    assert(/ntfy\.sh/.test(CL.RELAY_DOWN), 'the message names the relay');
+    assert(/ntfy\.sh/.test(CL.RELAY_DOWN) && /3 tries/.test(CL.RELAY_DOWN), 'the message names the relay');
+    // the daily message quota: not tried again, and said as it is (with the reset time when known)
+    calls = 0;
+    const quota = { code: 42908, http: 429, error: 'limit reached: daily message quota reached; increase your limits with a paid plan, see https://ntfy.sh' };
+    const resetAt = Math.floor(Date.now() / 1000) + 3600;
+    page.fetch = async (url) => {
+        if (/\/v1\/account$/.test(url)) return { ok: true, json: async () => ({ stats: { messages_remaining: 0, reset_at: resetAt } }) };
+        calls++;
+        return { ok: false, status: 429, json: async () => quota };
+    };
+    assert.strictEqual(await CL.sendToCar(car, { type: 'copilot_profile', profile: {} }), false, 'daily quota: false');
+    assert.strictEqual(calls, 1, 'daily quota: not tried again');
+    assert(/daily limit/.test(CL.RELAY_DOWN) && /mobile data/.test(CL.RELAY_DOWN) && /resets at /.test(CL.RELAY_DOWN), 'daily quota: said as it is');
+    // the short burst limit (another 429) is still tried again
+    calls = 0;
+    page.fetch = async () => { calls++; if (calls < 2) return { ok: false, status: 429, json: async () => ({ code: 42901, error: 'limit reached: too many requests' }) }; return { ok: true }; };
+    assert.strictEqual(await CL.sendToCar(car, { type: 'copilot_profile', profile: {} }), true, 'burst limit: tried again, then sent');
+    assert.strictEqual(calls, 2);
     page.fetch = realFetch;
 
     // ---- forgetting a car: only this phone, or disconnecting the car too ----

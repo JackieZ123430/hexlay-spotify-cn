@@ -296,11 +296,11 @@
         });
         return w;
     }
-    /** Drop a car that disconnected while this page was closed (the relay keeps 12 hours). True if dropped. */
+    /** Forget a car that disconnected while this page was closed (the relay keeps 12 hours). True if forgotten. */
     async function dropIfUnpaired(car) {
         const msgs = await recent(car).catch(() => []);
         if (lastWord(msgs) !== 'unpaired') return false;
-        await forgetCar(car.channel);
+        await forget(car, false);
         return true;
     }
 

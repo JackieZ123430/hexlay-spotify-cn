@@ -504,7 +504,7 @@
         <p style="font-size: 12px; color: #64748b; margin-bottom: 18px;">
             You can safely close this browser window.
         </p>
-        <button class="btn-unpair" onclick="unpairThisVehicle()">UNPAIR THIS VEHICLE</button>
+        <button class="btn-unpair" id="btnDisconnect" onclick="disconnectCar()">DISCONNECT THIS CAR</button>
     </div>
 
     <script src="carlink.js"></script>
@@ -571,6 +571,8 @@
                     show('cardPairing', true);
                 }
             }) : null;
+            // the car disconnected while this page was closed (the relay keeps 12 hours)
+            if (car) CarLink.recent(car).then((msgs) => { if (CarLink.lastWord(msgs) === 'unpaired') handleCarDisconnected(); }).catch(() => {});
             // ask the car whether it is paired (it answers encrypted, within seconds while the app runs);
             // not on the way back from the Spotify login, which sends the token next
             if (car && !urlParams.get('code')) CarLink.sendToCar(car, { type: 'hello_request' }).catch(() => {});
@@ -624,12 +626,20 @@
             el.style.color = isError ? '#ff8080' : '#1ed760';
         }
 
-        function handleCarDisconnected() {
-            localStorage.removeItem('bmw_spot_paired_' + channel);
-            CarLink.forgetCar(channel).catch(() => {});      // its channel and key are dead: out of My cars
+        // The car disconnected (or Disconnect here): this phone forgets it completely - its entry in My cars,
+        // its key and what was saved for it. Connecting again is a new pairing (the car's new QR code).
+        function handleCarDisconnected(text) {
+            if (!channel) return;
+            const code = CarLink.shortCode(channel);
+            if (stopListening) { stopListening(); stopListening = null; }
+            if (car) CarLink.forget(car, false).catch(() => {});
+            else { CarLink.clearPageState(channel); CarLink.forgetCar(channel).catch(() => {}); }
+            car = null;
             show('cardSuccess', false);
-            show('cardPairing', true);
-            showStatus('Vehicle ' + CarLink.shortCode(channel) + ' was disconnected. Scan its new QR code to pair again.', false);
+            show('cardPairing', false);
+            show('cardNoVehicle', true);
+            showStatus(text || ('Car ' + code + ' was disconnected and removed from this phone. To connect again, open the Connect tab in Spotify on the car and scan its QR code.'), false);
+            channel = '';
         }
 
         function handleCarConnected() {
@@ -640,11 +650,29 @@
             document.getElementById('statusAlert').style.display = 'none';
         }
 
-        async function unpairThisVehicle() {
-            if (car) {
-                try { await CarLink.sendToCar(car, { type: 'phone_unpair' }, 'BMW Spotify Unpair'); } catch (e) {}
+        /**
+         * Disconnect: the car is told to unpair (it logs out of Spotify and shows a new QR code), and this
+         * phone forgets it completely. The second tap within 5 s does it.
+         */
+        let disconnectAsked = 0;
+        async function disconnectCar() {
+            const btn = document.getElementById('btnDisconnect');
+            if (Date.now() - disconnectAsked > 5000) {
+                disconnectAsked = Date.now();
+                btn.innerText = 'TAP AGAIN TO DISCONNECT';
+                setTimeout(() => { if (Date.now() - disconnectAsked >= 5000) btn.innerText = 'DISCONNECT THIS CAR'; }, 5100);
+                return;
             }
-            handleCarDisconnected();
+            disconnectAsked = 0;
+            btn.disabled = true;
+            const code = CarLink.shortCode(channel);
+            const r = car ? await CarLink.forget(car, true).catch(() => ({ told: false })) : { told: false };
+            car = null;
+            btn.disabled = false;
+            btn.innerText = 'DISCONNECT THIS CAR';
+            handleCarDisconnected(r.told
+                ? 'Car ' + code + ' is disconnected: it logs out of Spotify and shows a new QR code. This phone forgot it.'
+                : 'This phone forgot car ' + code + ', but the car could not be told (no internet?). Disconnect it on the car: Spotify, Connect tab.');
         }
 
         // PKCE verifier and OAuth state from the CSPRNG (RFC 7636: 43-128 unreserved characters)

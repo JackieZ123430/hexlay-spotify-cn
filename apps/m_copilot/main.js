@@ -95,14 +95,6 @@ mgu.run({
         const { ui, settings, log, signals } = ctx;
         const ai = new AiBridge(ctx);
         const cloudPair = new CloudPairManager(ctx, ai);
-        // this car's id for the phone page (random, survives a disconnect, never derived from the VIN)
-        cloudPair.carId = (() => {
-            const f = require('path').join(ctx.dataDir, 'car_id.json'), fs = require('fs');
-            try { const id = JSON.parse(fs.readFileSync(f, 'utf8')).id; if (/^[0-9a-f]{16}$/.test(id)) return id; } catch (e) { /* first start */ }
-            const id = require('crypto').randomBytes(8).toString('hex');
-            try { fs.writeFileSync(f, JSON.stringify({ id })); } catch (e) { /* kept for this run */ }
-            return id;
-        })();
         // Foreground only: vehicle data, pairing polls, internet checks and the thinking animation
         // run while the screen is shown. The pairing itself (keys, channel) is kept; messages the
         // phone sends meanwhile wait on the channel and are read when the app is opened again.

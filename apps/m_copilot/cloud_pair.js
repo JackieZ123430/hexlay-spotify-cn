@@ -83,9 +83,6 @@ class CloudPairManager {
     /** Tell the phone something, encrypted for it (car -> phone key); fire and forget. */
     tellPhone(obj, title) {
         if (!this.channel) return;
-        // the car's own id (random, kept when the pairing is renewed): a phone pairing again replaces
-        // its old entry for this car with the new one, settings included. Sealed like the rest.
-        if (this.carId) obj = Object.assign({ carId: this.carId }, obj);
         const wire = link.sealForPhone(this.secretKey, 'copilot_car', obj);
         if (!wire) return;
         try {

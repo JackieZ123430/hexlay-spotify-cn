@@ -365,7 +365,7 @@
         <div style="background: #06080e; border: 1px solid #1a2333; padding: 14px; border-radius: 8px; font-size: 13px; color: #cbd5e1; margin-bottom: 18px; text-align: left;">
             <strong style="color: #00f0ff; display: block; margin-bottom: 4px;">How to pair:</strong>
             1. Open <strong>M-Copilot</strong> on your BMW iDrive screen.<br>
-            2. Press <strong>Pair Phone</strong> on the bottom button bar (an already paired car stays paired).<br>
+            2. Open its <strong>Connect</strong> tab (it opens there by itself until a phone is paired).<br>
             3. Point your smartphone camera at the displayed QR code.
         </div>
         <a class="btn-connect" href="index.html" style="display: block; text-align: center; text-decoration: none;">MY CARS &amp; QR SCANNER</a>
@@ -454,7 +454,7 @@
             You can safely lock your phone or close this browser tab.
         </p>
         <button class="btn-connect" onclick="changeKey()" style="background: transparent; border-color: #00a3e0; color: #00a3e0; margin-top: 14px;">CHANGE AI PROVIDER OR KEY</button>
-        <button class="btn-unpair" onclick="unpairThisVehicle()">UNPAIR THIS VEHICLE</button>
+        <button class="btn-unpair" id="btnDisconnect" onclick="disconnectCar()">DISCONNECT THIS CAR</button>
     </div>
 
     <!-- Phone notifications: the car pushes new warning lights and service due to this phone -->
@@ -714,12 +714,8 @@
 
             if (stopListening) stopListening();
             stopListening = car ? CarLink.listen(car, onCarMessage) : null;
-            // what the car said while this page was closed (the relay keeps 12 hours): a disconnect, its id
-            if (car) CarLink.recent(car).then((msgs) => {
-                const id = msgs.filter((m) => m.carId).map((m) => m.carId).pop();
-                if (id) adoptCar(id);
-                if (CarLink.lastWord(msgs) === 'unpaired') handleCarDisconnected();
-            }).catch(() => {});
+            // the car disconnected while this page was closed (the relay keeps 12 hours)
+            if (car) CarLink.recent(car).then((msgs) => { if (CarLink.lastWord(msgs) === 'unpaired') handleCarDisconnected(); }).catch(() => {});
             // ask the car whether it is paired (a paired car answers encrypted while M-Copilot is open)
             if (car) CarLink.sendToCar(car, { type: 'hello_request' }).catch(() => {});
             showProfileCard();
@@ -727,41 +723,8 @@
             showNotifyCard();
         }
 
-        /**
-         * The car's own id (it survives a disconnect): pairing the same car again replaces its old entry,
-         * and the car profile, model choice and provider saved for it move to the new pairing.
-         */
-        function adoptCar(carId) {
-            if (!/^[0-9a-f]{16}$/.test(String(carId)) || !channel) return;
-            const key = 'copilot_car_' + carId, old = localStorage.getItem(key);
-            if (old && old !== channel) {
-                const move = (k) => { const v = localStorage.getItem(k + old); if (v !== null && localStorage.getItem(k + channel) === null) localStorage.setItem(k + channel, v); localStorage.removeItem(k + old); };
-                ['copilot_profile_', 'copilot_provider_'].forEach(move);
-                const keys = []; for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
-                keys.filter((k) => k && k.indexOf('copilot_model_' + old + '_') === 0).forEach((k) => {
-                    const nk = 'copilot_model_' + channel + k.slice(('copilot_model_' + old).length);
-                    if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
-                    localStorage.removeItem(k);
-                });
-                localStorage.removeItem('copilot_paired_' + old);
-                CarLink.forgetCar(old).catch(() => {});
-                showProfileCard();
-                showModelCard();
-                // the car forgot them when it disconnected: send them back, so pairing again restores everything
-                if (car) {
-                    let prof = null;
-                    try { prof = JSON.parse(localStorage.getItem('copilot_profile_' + channel) || 'null'); } catch (e) {}
-                    if (prof && Object.keys(prof).length) CarLink.sendToCar(car, { type: 'copilot_profile', profile: prof }, 'BMW M-Copilot Car Profile').catch(() => {});
-                    const prov = localStorage.getItem('copilot_provider_' + channel), mdl = prov && localStorage.getItem('copilot_model_' + channel + '_' + prov);
-                    if (prov && mdl) CarLink.sendToCar(car, { type: 'copilot_model', provider: prov, model: mdl }, 'BMW M-Copilot AI Model').catch(() => {});
-                }
-            }
-            try { localStorage.setItem(key, channel); } catch (e) {}
-        }
-
         // what the car says (only messages that authenticate with this car's key reach here)
         function onCarMessage(m) {
-            if (m.carId) adoptCar(m.carId);
             if (m.type === 'unpaired') handleCarDisconnected();
             else if (m.type === 'pair_ack') handleCarConnected();
             else if (m.type === 'car_hello') {
@@ -960,18 +923,21 @@
             document.getElementById('errorMsg').style.display = 'none';
         }
 
-        function handleCarDisconnected() {
-            localStorage.removeItem('copilot_paired_' + channel);
-            // the car moved to a new channel and key: this entry can't reach it any more, so it leaves My cars
-            // (the settings stay on this phone: pairing the car again carries them over, see adoptCar)
-            CarLink.forgetCar(channel).catch(() => {});
-            show('cardSuccess', false);
-            show('cardPairing', true);
-            show('cardNotify', false);
-            CarLink.unsubscribePush(car).catch(() => {});
+        // The car disconnected: this phone forgets it completely - its entry in My cars, its key,
+        // notifications and everything saved for it. Connecting again is a new pairing (its new QR code).
+        function handleCarDisconnected(text) {
+            if (!channel) return;
+            const code = CarLink.shortCode(channel);
+            if (stopListening) { stopListening(); stopListening = null; }
+            if (car) CarLink.forget(car, false).catch(() => {});
+            else { CarLink.clearPageState(channel); CarLink.forgetCar(channel).catch(() => {}); }
+            car = null;
+            ['cardSuccess', 'cardPairing', 'cardNotify', 'cardProfile', 'cardModel'].forEach((id) => show(id, false));
+            show('cardNoVehicle', true);
             const alertBox = document.getElementById('disconnectNotice');
             alertBox.style.display = 'block';
-            alertBox.innerText = 'Vehicle ' + CarLink.shortCode(channel) + ' was unpaired. Scan its new QR code to pair again.';
+            alertBox.innerText = text || ('Car ' + code + ' was disconnected and removed from this phone. To connect again, open Connect in M-Copilot on the car and scan its QR code.');
+            channel = '';
         }
 
         // the paired car's provider, and changing provider or key without unpairing (the car takes a
@@ -1011,13 +977,29 @@
             showNotifyCard();
         }
 
-        async function unpairThisVehicle() {
-            if (car) {
-                const endpoint = await CarLink.unsubscribePush(car).catch(() => null);
-                if (endpoint) await CarLink.sendToCar(car, { type: 'push_unsubscribe', endpoint }, 'BMW M-Copilot').catch(() => {});
-                try { await CarLink.sendToCar(car, { type: 'phone_unpair' }, 'BMW M-Copilot Unpair'); } catch (e) {}
+        /**
+         * Disconnect: the car is told to unpair (it drops the AI key and what this phone set, and shows a
+         * new QR code), and this phone forgets it completely. The second tap within 5 s does it.
+         */
+        let disconnectAsked = 0;
+        async function disconnectCar() {
+            const btn = document.getElementById('btnDisconnect');
+            if (Date.now() - disconnectAsked > 5000) {
+                disconnectAsked = Date.now();
+                btn.innerText = 'TAP AGAIN TO DISCONNECT';
+                setTimeout(() => { if (Date.now() - disconnectAsked >= 5000) btn.innerText = 'DISCONNECT THIS CAR'; }, 5100);
+                return;
             }
-            handleCarDisconnected();
+            disconnectAsked = 0;
+            btn.disabled = true;
+            const code = CarLink.shortCode(channel);
+            const r = car ? await CarLink.forget(car, true).catch(() => ({ told: false })) : { told: false };
+            car = null;
+            btn.disabled = false;
+            btn.innerText = 'DISCONNECT THIS CAR';
+            handleCarDisconnected(r.told
+                ? 'Car ' + code + ' is disconnected: it drops your AI key and shows a new QR code (within a minute while M-Copilot is open, or the next time it is opened). This phone forgot it.'
+                : 'This phone forgot car ' + code + ', but the car could not be told (no internet?). Disconnect it on the car: M-Copilot, Connect tab.');
         }
 
         async function connectCopilot() {
@@ -1089,7 +1071,7 @@
                 show('cardPairing', false);
                 show('cardSuccess', false);
                 const notice = document.getElementById('disconnectNotice');
-                notice.innerText = 'This phone no longer has car ' + CarLink.shortCode(channel) + ' (it was forgotten here, or paired in another browser). On the car, press Pair Phone and scan the QR code to add it again.';
+                notice.innerText = 'This phone no longer has car ' + CarLink.shortCode(channel) + ' (it was forgotten here, or paired in another browser). On the car, open M-Copilot's Connect tab and scan its QR code to add it again.';
                 notice.style.display = 'block';
                 channel = '';
             } else if (!channel) {

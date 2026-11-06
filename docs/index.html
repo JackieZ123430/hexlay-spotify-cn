@@ -323,7 +323,7 @@
             <p class="app-desc">
                 Ask about your car on its screen: warning lights, service, tyres, fuel, performance and more. Answers use your car's live readings. Works with Gemini (free), Claude, ChatGPT and others.
             </p>
-            <p class="pair-how">To pair: on the car, open <b>M-Copilot</b> and press <b>Pair Phone</b> on the bottom bar, then tap <b>Scan car QR</b> above.</p>
+            <p class="pair-how">To pair: on the car, open <b>M-Copilot</b> or <b>Spotify</b> and its <b>Connect</b> tab, then tap <b>Scan car QR</b> above.</p>
         </div>
 
         <!-- Spotify Connect -->
@@ -363,7 +363,7 @@
 
     <div class="scanner" id="scanner">
         <video id="scanVideo" muted playsinline></video>
-        <p id="scanMsg">Point the camera at the QR code on the car's screen (Spotify: Connect tab; M-Copilot: Pair phone).</p>
+        <p id="scanMsg">Point the camera at the QR code on the car's screen (the Connect tab of Spotify or M-Copilot).</p>
         <button class="btn-app" type="button" onclick="closeScanner()" style="max-width: 420px;">Cancel</button>
     </div>
 
@@ -398,7 +398,7 @@
                 open.textContent = 'Open';
                 const forget = document.createElement('button');
                 forget.type = 'button';
-                forget.textContent = 'Forget';
+                forget.textContent = 'Disconnect';
                 forget.onclick = () => askForget(row, c, [open, forget]);
                 row.append(who, open, forget);
                 list.appendChild(row);
@@ -414,8 +414,8 @@
             }
         }
 
-        // Forget: disconnect the car too (it logs out / drops its AI key and makes a new QR code),
-        // or only this phone (the car stays paired and keeps working)
+        // Disconnect: the car is told to unpair (Spotify logs out, M-Copilot drops its AI key; both show a
+        // new QR code) and this phone forgets it completely. Asked once before it is done.
         function askForget(row, c, hide) {
             if (row.querySelector('.forget-choice')) return;
             hide.forEach((el) => { el.style.display = 'none'; });
@@ -423,20 +423,17 @@
             box.className = 'forget-choice';
             const p = document.createElement('p');
             p.innerText = c.app === 'spotify'
-                ? 'Disconnect the car too? It logs out of Spotify and shows a new QR code. "Only this phone" leaves the car signed in.'
-                : 'Disconnect the car too? It drops your AI key, stops notifying your phones and shows a new QR code. "Only this phone" leaves the car paired.';
+                ? 'Disconnect this car? It logs out of Spotify and shows a new QR code, and this phone forgets it.'
+                : 'Disconnect this car? It drops your AI key and what this phone set, shows a new QR code, and this phone forgets it.';
             const btns = document.createElement('div');
             const mk = (label, cls, fn) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; if (cls) b.className = cls; b.onclick = fn; btns.appendChild(b); return b; };
-            const done = async (disconnect) => {
+            mk('Disconnect', 'danger', async () => {
                 btns.querySelectorAll('button').forEach((b) => { b.disabled = true; });
-                const r = await CarLink.forget(c, disconnect);
-                say(!disconnect ? 'Forgotten on this phone. The car stays paired: to sign it out, use its own screen.'
-                    : r.told ? 'Forgotten, and the car was told to disconnect. It does so within a minute while the app runs, or the next time the app is opened (within 12 hours).'
-                    : 'Forgotten on this phone, but the car could not be reached (no internet?). Disconnect it on its own screen.');
+                const r = await CarLink.forget(c, true);
+                say(r.told ? 'Disconnected. The car does it within a minute while the app runs, or the next time the app is opened (within 12 hours).'
+                    : 'This phone forgot the car, but the car could not be reached (no internet?). Disconnect it on its own screen: the app\'s Connect tab.');
                 renderCars();
-            };
-            mk('Forget & disconnect car', 'danger', () => done(true));
-            mk('Only this phone', '', () => done(false));
+            });
             mk('Cancel', '', () => { box.remove(); hide.forEach((el) => { el.style.display = ''; }); });
             box.append(p, btns);
             row.appendChild(box);
@@ -456,7 +453,7 @@
         async function openScanner() {
             say('');
             document.getElementById('scanner').style.display = 'flex';
-            document.getElementById('scanMsg').innerText = 'Point the camera at the QR code on the car\'s screen (Spotify: Connect tab; M-Copilot: Pair phone).';
+            document.getElementById('scanMsg').innerText = 'Point the camera at the QR code on the car\'s screen (the Connect tab of Spotify or M-Copilot).';
             try {
                 scanning = await CarLink.startScanner(document.getElementById('scanVideo'), (text) => {
                     if (!CarLink.parsePairingLink(text)) {

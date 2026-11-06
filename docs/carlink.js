@@ -175,11 +175,25 @@
         await migrateLegacy();
         const hash = window.location.hash || '';
         if (hash.indexOf('#k=') === 0) {
+            openedFromQr = true;
             const k = hash.slice(3).trim();
             history.replaceState(history.state, document.title, window.location.pathname + window.location.search);
             if (validChannel(channel, app) && validKeyHex(k)) await saveCar(channel, k);
         }
         return validChannel(channel, app) ? getCar(channel) : null;
+    }
+
+    /**
+     * A car QR code scanned with the iPhone's camera opens in the browser, and on iPhone the
+     * Home Screen app keeps its own cars apart from the browser's: the car lands in the browser
+     * only. Then this says how to have it in the app too; '' otherwise (in the app, or not from
+     * a QR code, or Android, where the installed app shares the browser's cars).
+     */
+    let openedFromQr = false;
+    function browserCopyNote() {
+        if (!openedFromQr || !isIOS() || isStandalone()) return '';
+        return 'Opened in the browser. If you added iDrive Apps to your Home Screen, it keeps its own cars: ' +
+            'open it and tap Scan car QR to have this car there too (notifications need the app).';
     }
 
     /** A scanned / pasted pairing link -> { app, channel, key, page } when it is one of ours, else null. */
@@ -506,6 +520,7 @@
     window.CarLink = {
         APPS, appOf, validChannel, validKeyHex, shortCode, randomHex,
         getCar, listCars, confirmCar, forgetCar, forget, clearPageState, saveCar, updateInfo, carFromAddress, migrateLegacy, parsePairingLink, lastWord, dropIfUnpaired,
+        browserCopyNote,
         sendToCar, openFromCar, listen, recent, waitFor,
         /** Why the last sendToCar failed, for the page to show. */
         get RELAY_DOWN() { return lastFailure; },

@@ -1104,7 +1104,10 @@ mgu.run({
                 const cx = 314;
                 cv.text(authed ? 'Scan to open this car on your phone' : 'Scan with phone to connect Spotify', cx, 320, 17, t.text, { align: 'center', font: 'bold' });
                 cv.text('PAIRING CODE: ' + cloudPair.getShortCode(), cx, 344, 14, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
-                cv.text('https://hexlay.github.io/idrive7-custom-apps/pair.html', cx, 364, 11, '#64748b', { align: 'center' });
+                // paired: the phone that scans it may have the app installed; the camera opens the
+                // browser, and on iPhone the Home Screen app keeps its own cars
+                if (authed) cv.text('Installed the phone app? Scan with its Scan car QR, not the camera.', cx, 364, 12, '#64748b', { align: 'center' });
+                else cv.text('https://hexlay.github.io/idrive7-custom-apps/pair.html', cx, 364, 11, '#64748b', { align: 'center' });
                 if (authed) {
                     const bbX = 164, bbY = 384, bbW = 300, bbH = 40;
                     cv.roundRect(bbX, bbY, bbW, bbH, 10, '#004e3a');

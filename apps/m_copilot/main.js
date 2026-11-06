@@ -957,10 +957,12 @@ mgu.run({
             // right: what is set from the phone (the only place it can be changed)
             G.panelExact(cv, t, 700, 52, 860, 458 + ex, 'Set From Your Phone');
             if (showPhoneQr && paired) {
-                const qs2 = Math.min(280, 180 + Math.round(ex * 0.8)), y2 = 96 + Math.max(0, Math.floor((410 + ex - 96 - qs2 - 70) / 2));
+                const qs2 = Math.min(280, 180 + Math.round(ex * 0.8)), y2 = 96 + Math.max(0, Math.floor((410 + ex - 96 - qs2 - 92) / 2));
                 drawQr(cv, cloudPair.getPairingUrl(), 1130 - qs2 / 2, y2 + 10, qs2);
                 cv.text('Open the phone page for this car', 1130, y2 + qs2 + 48, 17, t.text, { align: 'center', font: 'bold' });
                 cv.text('Car profile, AI model, notifications, Disconnect', 1130, y2 + qs2 + 72, 14, '#94a3b8', { align: 'center' });
+                // the camera opens the browser; on iPhone the Home Screen app keeps its own cars
+                cv.text('Installed the phone app? Scan with its Scan car QR, not the camera.', 1130, y2 + qs2 + 94, 13, '#64748b', { align: 'center' });
             } else {
                 const p = vehicle.profile || {};
                 const lines = Vehicle.profileLines(p).filter((l) => !/^Country|^Model \(owner\)/.test(l));

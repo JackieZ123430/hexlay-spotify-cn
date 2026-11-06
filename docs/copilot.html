@@ -397,6 +397,7 @@
         <div class="privacy-pill" id="privacyIndicator">
             🔒 Encrypted for this car only.
         </div>
+        <p id="browserNote" style="display: none; font-size: 12px; color: #cbd5e1; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 6px; padding: 8px 12px; margin: -6px 0 16px; line-height: 1.45;"></p>
 
         <div class="tabs">
             <div class="tab active" id="tabGemini" onclick="switchTab('gemini')">Gemini (free)</div>
@@ -1064,6 +1065,9 @@
 
         (async function init() {
             car = await CarLink.carFromAddress('copilot', channel);
+            // from a QR code scanned with the iPhone camera: the Home Screen app doesn't have this car
+            const browserNote = car ? CarLink.browserCopyNote() : '';
+            if (browserNote) { const n = document.getElementById('browserNote'); n.innerText = browserNote; n.style.display = 'block'; }
             if (channel && !car) {
                 // forgotten here, or paired in another browser: no "Connected" without the car's key
                 CarLink.clearPageState(channel);

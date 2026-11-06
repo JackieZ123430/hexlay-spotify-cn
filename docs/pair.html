@@ -448,6 +448,7 @@
         <div class="privacy-pill" id="privacyIndicator">
             🔒 Encrypted for this car only.
         </div>
+        <p id="browserNote" style="display: none; font-size: 12px; color: #cbd5e1; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 6px; padding: 8px 12px; margin: -6px 0 16px; line-height: 1.45;"></p>
 
         <p style="font-size: 13px; color: #8a95a6; text-align: center; margin-bottom: 14px; line-height: 1.5;">
             You sign in on Spotify's own page (accounts.spotify.com). This page never sees your Spotify password; only an access token is sent to your car, encrypted with your car's key.
@@ -804,6 +805,9 @@
             // leftovers of older versions: the plain-text key copies and the unused pairing channel
             try { localStorage.removeItem('bmw_spot_channel'); } catch (e) {}
             car = await CarLink.carFromAddress('spotify', channel);
+            // from a QR code scanned with the iPhone camera: the Home Screen app doesn't have this car
+            const browserNote = car ? CarLink.browserCopyNote() : '';
+            if (browserNote) { const n = document.getElementById('browserNote'); n.innerText = browserNote; n.style.display = 'block'; }
             if (channel && !car) {
                 // forgotten here, or paired in another browser: no "Connected" without the car's key
                 CarLink.clearPageState(channel);

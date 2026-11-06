@@ -56,6 +56,9 @@ function decodeHtmlEntities(str) {
         .replace(/[\u00A0\u2007\u202F]/g, ' ');
 }
 
+const CACHE_TRACKS = 100;            // songs kept per playlist in the library cache
+const CACHE_LIKED = 200;             // liked songs kept in it
+
 const DEMO_ART = 'https://i.scdn.co/image/ab67616d00001e02ba5db46f4b838ef6027e6f96';
 
 const DEMO_PLAYLISTS = [
@@ -215,6 +218,7 @@ class SpotifyClient {
 
         this._loadAuth();
         if (this.token || this.refreshToken) {
+            this._loadCache();              // the library as last seen, at once; refreshed right after
             this.initialFetch();
         }
 
@@ -358,6 +362,81 @@ class SpotifyClient {
         }
     }
 
+    /* ---------- The library cache (spotify_cache.json in the app's data folder) ----------
+     * The profile, the playlists with the songs loaded (up to CACHE_TRACKS each) and Liked Songs
+     * (up to CACHE_LIKED), as last seen: shown at once at start, so the lists are there before
+     * Spotify answers, and refreshed from Spotify right after. Tied to the account (its user id),
+     * dropped at logout. No tokens in it. */
+
+    _cachePath() {
+        return this.ctx && this.ctx.dataDir ? path.join(this.ctx.dataDir, 'spotify_cache.json') : null;
+    }
+
+    _loadCache() {
+        const p = this._cachePath();
+        if (!p || !fs.existsSync(p)) return;
+        try {
+            const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+            if (!c || c.v !== 1 || !c.userId) return;
+            this._cacheUser = c.userId;
+            this._userId = c.userId;
+            if (c.profile) this.profile = c.profile;
+            if (Array.isArray(c.playlists) && c.playlists.length) {
+                // songs from the cache are fetched again when shown (_refresh); no "more" until then
+                this.playlists = c.playlists.map((pl) => Object.assign({}, pl, {
+                    tracks: pl.tracks || [], tracksLoaded: !!pl.tracks, _refresh: true, _offset: 0, _total: 0,
+                }));
+                this.currentPlaylist = this.playlists[0];
+            }
+            if (Array.isArray(c.likedSongs) && c.likedSongs.length) {
+                this.likedSongs = c.likedSongs;
+                this.likedTotal = c.likedTotal || c.likedSongs.length;
+                this._likedOffset = this.likedTotal;        // the next pages come after the refresh
+            }
+            this.log.info('Spotify: library from the cache (' + this.playlists.length + ' playlists, '
+                + this.likedSongs.length + ' liked songs, ' + Math.round((Date.now() - (c.savedAt || 0)) / 60000) + ' min old)');
+        } catch (e) {
+            this.log.warn('Spotify cache unreadable: ' + e.message);
+        }
+    }
+
+    _saveCacheSoon() {
+        if (this._cacheTimer || !this._cachePath()) return;
+        this._cacheTimer = setTimeout(() => { this._cacheTimer = null; this._saveCache(); }, 3000);
+    }
+
+    _saveCache() {
+        const p = this._cachePath();
+        if (!p || !this.token || !this._userId) return;
+        const slim = (t) => ({ id: t.id, title: t.title, artist: t.artist, album: t.album, albumArt: t.albumArt, durationMs: t.durationMs, uri: t.uri });
+        const data = {
+            v: 1, savedAt: Date.now(), userId: this._userId, profile: this.profile || null,
+            playlists: this.playlists
+                .filter((pl) => pl && pl.id && !String(pl.uri || '').startsWith('spotify:playlist:demo'))
+                .map((pl) => ({
+                    id: pl.id, name: pl.name, description: pl.description, trackCount: pl.trackCount, uri: pl.uri, accent: pl.accent,
+                    tracks: pl.tracksLoaded ? pl.tracks.slice(0, CACHE_TRACKS).map(slim) : undefined,
+                })),
+            likedTotal: this.likedTotal || 0,
+            likedSongs: (this.likedSongs || []).slice(0, CACHE_LIKED).map(slim),
+        };
+        try {
+            const tmp = p + '.tmp-' + process.pid;
+            fs.writeFileSync(tmp, JSON.stringify(data), { encoding: 'utf8', mode: 0o600 });
+            fs.renameSync(tmp, p);
+        } catch (e) {
+            this.log.warn('Spotify cache not saved: ' + e.message);
+        }
+    }
+
+    _dropCache() {
+        clearTimeout(this._cacheTimer);
+        this._cacheTimer = null;
+        this._cacheUser = null;
+        const p = this._cachePath();
+        try { if (p && fs.existsSync(p)) fs.unlinkSync(p); } catch (e) {}
+    }
+
     reloadAuth() {
         this._loadAuth();
         if (this.isAuthenticated()) {
@@ -390,6 +469,7 @@ class SpotifyClient {
         this.agent = tlsDates.agent();
 
         this._forgetAuthFiles();
+        this._dropCache();
 
         this.log.info('Logged out from Spotify');
     }
@@ -740,13 +820,14 @@ class SpotifyClient {
                 list.forEach((p) => {
                     const o = old[p.id];
                     if (o && o.tracksLoaded) {
-                        p.tracks = o.tracks; p.tracksLoaded = true;
+                        p.tracks = o.tracks; p.tracksLoaded = true; p._refresh = o._refresh;
                         p._offset = o._offset; p._total = o._total; p._itemsPath = o._itemsPath;
                     }
                 });
                 this.playlists = list;
                 const cur = this.currentPlaylist && list.find((p) => p.id === this.currentPlaylist.id);
                 if (list.length) this.selectPlaylist(cur || list[0]);
+                this._saveCacheSoon();
             }
         } catch (e) {
             this.log.warn('Fetch playlists error: ' + e.message);
@@ -764,7 +845,8 @@ class SpotifyClient {
         // the built-in demo playlists come with their songs (the demo setting itself says nothing:
         // logged in, the account's own playlists show with it on too)
         if (playlist.uri && playlist.uri.startsWith('spotify:playlist:demo')) return;
-        if (playlist.tracksLoaded || playlist._loadingTracks) return;
+        // loaded (a list from the cache: loaded again once, shown meanwhile), or loading
+        if ((playlist.tracksLoaded && !playlist._refresh) || playlist._loadingTracks) return;
         if (playlist._tracksFailedAt && Date.now() - playlist._tracksFailedAt < 5000) return;
         this.fetchTracksForPlaylist(playlist);
     }
@@ -800,7 +882,9 @@ class SpotifyClient {
                     this.currentTrack = playlist.tracks[0];
                 }
                 playlist.tracksLoaded = true;
+                playlist._refresh = false;
                 playlist._tracksFailedAt = 0;
+                this._saveCacheSoon();
             } else {
                 playlist._tracksFailedAt = Date.now();
             }
@@ -870,6 +954,7 @@ class SpotifyClient {
                 this.likedTotal = res.total || res.items.length;
                 this.likedSongs = res.items.map((item) => mapTrack(item.track)).filter(Boolean);
                 this._likedOffset = res.items.length;
+                this._saveCacheSoon();
             }
         } catch (e) {
             this.log.warn('Fetch liked songs error: ' + e.message);
@@ -971,11 +1056,19 @@ class SpotifyClient {
         try {
             const me = await this._request('GET', '/v1/me');
             if (me && me.id) {
+                // the cache shown at start was another account's (a new pairing): not shown any more
+                if (this._cacheUser && this._cacheUser !== me.id) {
+                    this.log.info('Spotify: another account - the cached library is dropped');
+                    this.playlists = []; this.likedSongs = []; this.likedTotal = 0; this.currentPlaylist = null;
+                    this._dropCache();
+                }
+                this._cacheUser = me.id;
                 this._userId = me.id;
                 this.profile = {
                     name: decodeHtmlEntities(me.display_name || me.id),
                     product: me.product || '',          // premium | free | open
                 };
+                this._saveCacheSoon();
             }
         } catch (e) {
             this.log.warn('Fetch profile error: ' + e.message);

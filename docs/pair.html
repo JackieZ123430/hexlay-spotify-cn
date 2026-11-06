@@ -3,6 +3,15 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://ntfy.sh https://accounts.spotify.com; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
+    <meta name="referrer" content="no-referrer">
+    <meta name="theme-color" content="#04060a">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="icons/icon-180.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <link rel="icon" href="icons/icon-192.png">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <title>Spotify pairing - iDrive 7 Custom Apps (unofficial)</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -407,12 +416,14 @@
             2. Go to the <strong>Connect</strong> tab.<br>
             3. Point your smartphone camera at the displayed QR code.
         </div>
+        <a class="btn-secondary" href="index.html" style="text-decoration: none;">My cars &amp; QR scanner</a>
         <details style="text-align: left; margin-top: 10px;">
-            <summary style="font-size: 12px; color: #00a3e0; cursor: pointer; font-weight: 700;">Manual Relay Code Entry ▾</summary>
+            <summary style="font-size: 12px; color: #00a3e0; cursor: pointer; font-weight: 700;">Car paired on this phone before? ▾</summary>
             <div style="margin-top: 12px;">
-                <label>Enter 8-Character Car Code</label>
-                <input type="text" id="inputManualCode" placeholder="e.g. 7F8A-9E2D" style="text-transform: uppercase;">
-                <button class="btn-secondary" style="margin-top: 12px;" onclick="applyManualCode()">Target Vehicle</button>
+                <label for="inputManualCode">Code shown on the car</label>
+                <input type="text" id="inputManualCode" placeholder="e.g. 7F8A-9E2D" style="text-transform: uppercase;" autocomplete="off" autocapitalize="characters" spellcheck="false">
+                <button class="btn-secondary" style="margin-top: 12px;" onclick="applyManualCode()">Open this car</button>
+                <p style="font-size: 11px; color: #64748b; margin-top: 6px; line-height: 1.5;">The code only finds a car this phone already has: the car's key is only in its QR code, so a code someone glimpses on your screen is no use to them.</p>
             </div>
         </details>
     </div>
@@ -467,15 +478,6 @@
         </details>
 
         <button class="btn-spotify" id="btnConnect" onclick="startAuth()">Connect with Spotify</button>
-
-        <details>
-            <summary>Advanced / Developer Settings ▾</summary>
-            <div style="margin-top: 14px;">
-                <label>Car Pairing Channel</label>
-                <input type="text" id="inputChannel" placeholder="e.g. bmw_spot_xyz">
-
-            </div>
-        </details>
     </div>
 
     <!-- Success Card -->
@@ -502,6 +504,8 @@
         <button class="btn-unpair" onclick="unpairThisVehicle()">UNPAIR THIS VEHICLE</button>
     </div>
 
+    <script src="carlink.js"></script>
+
     <div class="footer-nav">
         <span>iDrive 7 Custom Apps</span>
         &middot;
@@ -523,86 +527,50 @@
         ].join(' ');
 
         const urlParams = new URLSearchParams(window.location.search);
-        // Spotify's OAuth redirect comes back as ?code=...&state=<channel> without ?channel=
-        const CHANNEL_RE = /^bmw_spot_[A-Za-z0-9]+$/;
+        // Spotify's OAuth redirect comes back as ?code=...&state=<channel>.<nonce> without ?channel=
         const stateParam = urlParams.get('state') || '';
-        let channel = urlParams.get('channel') || (CHANNEL_RE.test(stateParam) ? stateParam : '');
+        const stateChannel = stateParam.split('.')[0];
+        let channel = urlParams.get('channel') || stateChannel;
+        if (!CarLink.validChannel(channel, 'spotify')) channel = '';
         let clientId = urlParams.get('client_id') || localStorage.getItem('bmw_spot_client_id') || DEFAULT_CLIENT_ID;
-        let secretKey = '';
-        let evtSource = null;
+        if (!/^[0-9a-f]{32}$/i.test(clientId)) clientId = '';
+        let car = null;          // this car's link (non-extractable keys), from carlink.js
+        let stopListening = null;
 
-        // The car's key arrives in the QR link's hash (#k=<key>), which the OAuth round trip drops.
-        // It is kept in localStorage (per channel): on iOS the Spotify app can hand the login back
-        // in a new tab, where sessionStorage is empty.
-        function keyStoreName(ch) { return 'bmw_spot_k_' + ch; }
-        function loadKey(ch) {
-            if (!ch) return '';
-            try {
-                return localStorage.getItem(keyStoreName(ch)) || sessionStorage.getItem(keyStoreName(ch)) || '';
-            } catch (e) { return ''; }
-        }
-        if (window.location.hash && window.location.hash.startsWith('#k=')) {
-            secretKey = window.location.hash.substring(3).trim();
-            if (channel && secretKey) {
-                try { localStorage.setItem(keyStoreName(channel), secretKey); } catch (e) {}
-            }
-        } else {
-            secretKey = loadKey(channel);
-        }
-
-        function formatDisplayCode(ch) {
-            if (!ch) return '--------';
-            const raw = ch.replace('bmw_spot_', '').toUpperCase();
-            if (raw.length >= 8) {
-                return raw.substring(0, 4) + '-' + raw.substring(4, 8);
-            }
-            return raw;
-        }
-
-        if (!channel) {
-            document.getElementById('cardNoVehicle').style.display = 'block';
-            document.getElementById('cardPairing').style.display = 'none';
-            document.getElementById('cardSuccess').style.display = 'none';
-        } else {
-            initVehicleContext();
-        }
+        const show = (id, on) => { document.getElementById(id).style.display = on ? 'block' : 'none'; };
 
         function initVehicleContext() {
-            const shortCode = formatDisplayCode(channel);
+            const shortCode = CarLink.shortCode(channel);
             document.getElementById('spanCode').innerText = shortCode;
             document.getElementById('successCarId').innerText = shortCode;
-            document.getElementById('inputChannel').value = channel;
 
             const isPaired = localStorage.getItem('bmw_spot_paired_' + channel) === 'true';
+            show('cardNoVehicle', false);
+            show('cardPairing', !isPaired);
+            show('cardSuccess', isPaired);
 
-            if (isPaired) {
-                document.getElementById('cardNoVehicle').style.display = 'none';
-                document.getElementById('cardPairing').style.display = 'none';
-                document.getElementById('cardSuccess').style.display = 'block';
-            } else {
-                document.getElementById('cardNoVehicle').style.display = 'none';
-                document.getElementById('cardPairing').style.display = 'block';
-                document.getElementById('cardSuccess').style.display = 'none';
-            }
+            const pill = document.getElementById('privacyIndicator');
+            pill.textContent = '';
+            const strong = document.createElement('strong');
+            strong.textContent = car ? 'End-to-end encrypted:' : 'No key for this car on this phone:';
+            pill.append(car ? '🔒 ' : '⚠️ ', strong, car
+                ? ' 256-bit AES-GCM, for car ' + shortCode + ' only.'
+                : ' scan the QR code on the car screen to pair.');
 
-            if (secretKey && secretKey.length === 64) {
-                document.getElementById('privacyIndicator').innerHTML =
-                    '🔒 <strong>Zero-Knowledge E2EE:</strong> 256-bit AES-GCM encrypted exclusively for car <strong>' + shortCode + '</strong>.';
-            } else {
-                document.getElementById('privacyIndicator').innerHTML =
-                    '● <strong>Isolated Cloud Channel:</strong> Dedicated uplink for car <strong>' + shortCode + '</strong>.';
-            }
-
-            initRelayListener();
+            if (stopListening) stopListening();
+            stopListening = car ? CarLink.listen(car, (m) => {
+                if (m.type === 'unpaired') handleCarDisconnected();
+                else if (m.type === 'pair_ack') handleCarConnected();
+            }) : null;
         }
 
-        function applyManualCode() {
-            let code = document.getElementById('inputManualCode').value.trim();
-            if (!code) return;
-            code = code.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-            channel = 'bmw_spot_' + code;
-            secretKey = loadKey(channel);
-            initVehicleContext();
+        // the code shown on the car finds a car this phone already has (the key is only in the QR code)
+        async function applyManualCode() {
+            const code = document.getElementById('inputManualCode').value.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+            if (code.length !== 8) { showStatus('The code has 8 letters and digits, like 7F8A-9E2D.', true); return; }
+            const found = (await CarLink.listCars()).find((c) => c.app === 'spotify' && c.channel.slice(CarLink.APPS.spotify.prefix.length, CarLink.APPS.spotify.prefix.length + 8) === code);
+            if (!found) { showStatus('This phone has no car with that code. Scan the QR code on the car screen to pair it.', true); return; }
+            window.location.href = 'pair.html?channel=' + encodeURIComponent(found.channel);
         }
 
         if (clientId) {
@@ -645,63 +613,30 @@
 
         function handleCarDisconnected() {
             localStorage.removeItem('bmw_spot_paired_' + channel);
-            document.getElementById('cardSuccess').style.display = 'none';
-            document.getElementById('cardPairing').style.display = 'block';
-            showStatus('Vehicle ' + formatDisplayCode(channel) + ' was disconnected. Ready to re-pair.', false);
+            show('cardSuccess', false);
+            show('cardPairing', true);
+            showStatus('Vehicle ' + CarLink.shortCode(channel) + ' was disconnected. Scan its new QR code to pair again.', false);
         }
 
         function handleCarConnected() {
             localStorage.setItem('bmw_spot_paired_' + channel, 'true');
-            document.getElementById('cardPairing').style.display = 'none';
-            document.getElementById('cardSuccess').style.display = 'block';
+            show('cardPairing', false);
+            show('cardSuccess', true);
             document.getElementById('statusAlert').style.display = 'none';
         }
 
-        function initRelayListener() {
-            if (evtSource) {
-                try { evtSource.close(); } catch (e) {}
-            }
-            if (!channel) return;
-            try {
-                evtSource = new EventSource('https://ntfy.sh/' + channel + '/sse');
-                evtSource.onmessage = (e) => {
-                    try {
-                        const data = JSON.parse(e.data);
-                        if (data.event === 'message' && data.message) {
-                            let msg = null;
-                            try { msg = JSON.parse(data.message); } catch (err) {}
-                            if (!msg) return;
-
-                            if (msg.type === 'spotify_unpaired') {
-                                handleCarDisconnected();
-                            } else if (msg.type === 'spotify_pair_ack') {
-                                handleCarConnected();
-                            }
-                        }
-                    } catch (err) {}
-                };
-            } catch (err) {}
-        }
-
         async function unpairThisVehicle() {
-            try {
-                await fetch('https://ntfy.sh/' + channel, {
-                    method: 'POST',
-                    headers: { 'Title': 'BMW Spotify Unpair' },
-                    // the car only acts on messages encrypted with its pairing key
-                    body: JSON.stringify(await encryptPayload(JSON.stringify({ type: 'phone_unpair', channel: channel, time: Date.now() }), secretKey))
-                });
-            } catch (e) {}
+            if (car) {
+                try { await CarLink.sendToCar(car, { type: 'phone_unpair' }, 'BMW Spotify Unpair'); } catch (e) {}
+            }
             handleCarDisconnected();
         }
 
-        function generateRandomString(length) {
-            let text = '';
-            const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
-            for (let i = 0; i < length; i++) {
-                text += possible.charAt(Math.floor(Math.random() * possible.length));
-            }
-            return text;
+        // PKCE verifier and OAuth state from the CSPRNG (RFC 7636: 43-128 unreserved characters)
+        function randomVerifier() {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+            const bytes = crypto.getRandomValues(new Uint8Array(64));
+            return Array.from(bytes, (b) => chars[b % 64]).join('');
         }
 
         async function generateCodeChallenge(codeVerifier) {
@@ -712,150 +647,78 @@
                 .replace(/\//g, '_');
         }
 
-        // WebCrypto AES-256-GCM Zero-Knowledge Encryption
-        async function encryptPayload(plaintextStr, keyHex) {
-            if (!keyHex || keyHex.length !== 64 || !window.crypto || !window.crypto.subtle) {
-                return null;
-            }
-            try {
-                const keyBytes = new Uint8Array(keyHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-                const cryptoKey = await window.crypto.subtle.importKey(
-                    'raw',
-                    keyBytes,
-                    { name: 'AES-GCM' },
-                    false,
-                    ['encrypt']
-                );
-                const iv = window.crypto.getRandomValues(new Uint8Array(12));
-                const encoded = new TextEncoder().encode(plaintextStr);
-                const ctBuffer = await window.crypto.subtle.encrypt(
-                    { name: 'AES-GCM', iv: iv, tagLength: 128 },
-                    cryptoKey,
-                    encoded
-                );
-                const cipherArray = new Uint8Array(ctBuffer);
-                const tag = cipherArray.slice(-16);
-                const data = cipherArray.slice(0, -16);
-                const toHex = arr => Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
-
-                return {
-                    type: 'spotify_encrypted',
-                    iv: toHex(iv),
-                    tag: toHex(tag),
-                    data: toHex(data),
-                    channel: channel,
-                    time: Date.now()
-                };
-            } catch (err) {
-                console.warn('WebCrypto encryption failed, falling back:', err);
-                return null;
-            }
-        }
-
-        async function sendTokensToCar(tokenData, targetChannel) {
-            let transmissionPayload = null;
-            if (secretKey && secretKey.length === 64) {
-                transmissionPayload = await encryptPayload(JSON.stringify(tokenData), secretKey);
-            }
-            if (!transmissionPayload) {
-                showStatus(!(secretKey && secretKey.length === 64)
-                    ? 'Your car\'s key was not found in this browser tab. Close the other pairing tabs, scan the QR code on the car screen again, and tap Connect in the page that opens.'
-                    : 'This browser cannot encrypt the token for your car (no WebCrypto). Open the QR link in Safari or Chrome.', true);
+        async function sendTokensToCar(tokenData) {
+            if (!car) {
+                showStatus('This phone has no key for car ' + CarLink.shortCode(channel) + '. Scan the QR code on the car screen again, and tap Connect in the page that opens.', true);
                 return;
             }
-
-            await fetch('https://ntfy.sh/' + targetChannel, {
-                method: 'POST',
-                headers: { 'Title': 'BMW Spotify Secure Pairing' },
-                body: JSON.stringify(transmissionPayload)
-            });
-
+            let ok = false;
+            try { ok = await CarLink.sendToCar(car, tokenData, 'BMW Spotify Secure Pairing'); } catch (e) { ok = false; }
+            if (!ok) { showStatus('Could not reach the relay. Check the phone\'s internet connection and try again.', true); return; }
             handleCarConnected();
         }
 
         async function checkOAuthReturn() {
-            const params = new URLSearchParams(window.location.search);
-            const code = params.get('code');
-            const state = params.get('state');
+            const code = urlParams.get('code');
+            if (!code) {
+                if (urlParams.get('error')) showStatus('Spotify login was cancelled or refused: ' + urlParams.get('error'), true);
+                return;
+            }
+            const storedVerifier = localStorage.getItem('bmw_code_verifier');
+            const storedState = localStorage.getItem('bmw_spot_oauth_state');
+            const activeId = localStorage.getItem('bmw_spot_client_id') || clientId;
+            const redirectUri = window.location.origin + window.location.pathname;
+            // the code and the login it came from are used once
+            localStorage.removeItem('bmw_code_verifier');
+            localStorage.removeItem('bmw_spot_oauth_state');
+            window.history.replaceState({}, document.title, window.location.pathname + (channel ? ('?channel=' + channel) : ''));
 
-            if (code) {
-                const storedVerifier = localStorage.getItem('bmw_code_verifier');
-                const activeId = localStorage.getItem('bmw_spot_client_id') || clientId;
-                const redirectUri = window.location.origin + window.location.pathname;
-
-                if (!storedVerifier) {
-                    showStatus('Error: PKCE verification token lost. Please restart authorization.', true);
-                    return;
-                }
-
-                showStatus('Exchanging Spotify code for vehicle credentials...', false);
-
-                try {
-                    const tokenResponse = await fetch('https://accounts.spotify.com/api/token', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                        body: new URLSearchParams({
-                            client_id: activeId,
-                            grant_type: 'authorization_code',
-                            code: code,
-                            redirect_uri: redirectUri,
-                            code_verifier: storedVerifier
-                        })
-                    });
-
-                    const data = await tokenResponse.json();
-                    if (data.access_token) {
-                        const targetChannel = state || channel || localStorage.getItem('bmw_spot_channel');
-                        const tokenData = {
-                            token: data.access_token,
-                            refreshToken: data.refresh_token || null,
-                            expiresAt: Date.now() + (parseInt(data.expires_in, 10) * 1000),
-                            clientId: activeId,
-                            time: Date.now()
-                        };
-
-                        await sendTokensToCar(tokenData, targetChannel);
-                        window.history.replaceState({}, document.title, window.location.pathname + (targetChannel ? ('?channel=' + targetChannel) : ''));
-                    } else {
-                        showStatus('Spotify Token Exchange Failed: ' + (data.error_description || data.error || JSON.stringify(data)), true);
-                    }
-                } catch (e) {
-                    showStatus('Network error while exchanging Spotify token: ' + e.message, true);
-                }
+            // a login this page didn't start (or started for another car) is not sent anywhere
+            if (!storedVerifier || !storedState || storedState !== stateParam || !channel) {
+                showStatus('This Spotify login was not started from this page, so it was not used. Tap Connect with Spotify to start again.', true);
                 return;
             }
 
-            // Implicit grant fallback
-            if (window.location.hash && window.location.hash.includes('access_token')) {
-                const hashParams = new URLSearchParams(window.location.hash.substring(1));
-                const token = hashParams.get('access_token');
-                const expiresIn = hashParams.get('expires_in') || '3600';
-                const st = hashParams.get('state') || channel;
-
-                if (token && st) {
-                    const tokenData = {
-                        token: token,
-                        expiresAt: Date.now() + (parseInt(expiresIn, 10) * 1000),
-                        time: Date.now()
-                    };
-                    await sendTokensToCar(tokenData, st);
+            showStatus('Exchanging Spotify code for vehicle credentials...', false);
+            try {
+                const tokenResponse = await fetch('https://accounts.spotify.com/api/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({
+                        client_id: activeId,
+                        grant_type: 'authorization_code',
+                        code: code,
+                        redirect_uri: redirectUri,
+                        code_verifier: storedVerifier
+                    })
+                });
+                const data = await tokenResponse.json();
+                if (data.access_token) {
+                    await sendTokensToCar({
+                        token: data.access_token,
+                        refreshToken: data.refresh_token || null,
+                        expiresAt: Date.now() + (parseInt(data.expires_in, 10) * 1000),
+                        clientId: activeId
+                    });
+                } else {
+                    showStatus('Spotify Token Exchange Failed: ' + (data.error_description || data.error || 'unknown error'), true);
                 }
+            } catch (e) {
+                showStatus('Network error while exchanging Spotify token: ' + e.message, true);
             }
         }
 
         async function startAuth() {
             const customId = document.getElementById('inputClientId').value.trim();
             const activeId = customId || clientId || localStorage.getItem('bmw_spot_client_id');
-            const customChannel = document.getElementById('inputChannel').value.trim() || channel;
 
-            if (!customChannel) {
+            if (!channel) {
                 showStatus('No vehicle connected. Please scan the QR code on your car display.', true);
                 return;
             }
-
             // without the car's key the token could not be sent: stop before the Spotify login
-            if (customChannel === channel && !(secretKey && secretKey.length === 64)) {
-                showStatus('This page was opened without your car\'s key. Close this tab, scan the QR code on the car screen again, and tap Connect in the page that opens.', true);
+            if (!car) {
+                showStatus('This phone has no key for this car. Scan the QR code on the car screen again, and tap Connect in the page that opens.', true);
                 return;
             }
 
@@ -870,32 +733,43 @@
             }
 
             localStorage.setItem('bmw_spot_client_id', activeId);
-            localStorage.setItem('bmw_spot_channel', customChannel);
             const ind = document.getElementById('savedIndicator');
             if (ind) ind.style.display = 'inline';
 
-            const codeVerifier = generateRandomString(64);
+            const codeVerifier = randomVerifier();
+            const state = channel + '.' + CarLink.randomHex(16);
             localStorage.setItem('bmw_code_verifier', codeVerifier);
+            localStorage.setItem('bmw_spot_oauth_state', state);
             const codeChallenge = await generateCodeChallenge(codeVerifier);
-
-            const redirectUri = window.location.origin + window.location.pathname;
 
             const authParams = new URLSearchParams({
                 client_id: activeId,
                 response_type: 'code',
-                redirect_uri: redirectUri,
+                redirect_uri: window.location.origin + window.location.pathname,
                 code_challenge_method: 'S256',
                 code_challenge: codeChallenge,
                 scope: SCOPES,
-                state: customChannel,
+                state: state,
                 show_dialog: 'true'
             });
 
             window.location.href = 'https://accounts.spotify.com/authorize?' + authParams.toString();
         }
 
-
-        checkOAuthReturn();
+        (async function init() {
+            // leftovers of older versions: the plain-text key copies and the unused pairing channel
+            try { localStorage.removeItem('bmw_spot_channel'); } catch (e) {}
+            car = await CarLink.carFromAddress('spotify', channel);
+            if (!channel) {
+                await CarLink.migrateLegacy();
+                show('cardNoVehicle', true);
+                show('cardPairing', false);
+                show('cardSuccess', false);
+            } else {
+                initVehicleContext();
+            }
+            checkOAuthReturn();
+        })();
     </script>
 </body>
 </html>

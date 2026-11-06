@@ -1,0 +1,14 @@
+{
+  "name": "iDrive 7 Custom Apps",
+  "short_name": "iDrive Apps",
+  "description": "Your cars' links and notifications for the unofficial iDrive 7 apps",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#04060a",
+  "theme_color": "#04060a",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

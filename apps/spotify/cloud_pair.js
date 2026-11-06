@@ -11,29 +11,26 @@
  *   4. Mobile browser encrypts Spotify access/refresh tokens with AES-GCM before relaying.
  *   5. Only this specific car can decrypt and store the driver's Spotify tokens.
  *   6. Multi-car safe: each vehicle has an independent channel, encryption key, and storage.
+ *   7. What the car tells the phone (paired, unpaired) is encrypted too, with its own key, and
+ *      re-posted old messages are dropped (kit/link_crypto.js).
  */
 const fs = require('fs');
 const path = require('path');
 const tlsDates = require('./tls_dates');
+const link = require('./kit/link_crypto');
 
 // polling the channel: quickly while waiting to be paired, slowly once paired (for the phone's unpair)
 const PAIRING_POLL_MS = 2500;
 const PAIRED_POLL_MS = 60000;
 const BACKGROUND_POLL_MS = 30000;   // not paired, app not on screen
 
-let crypto;
-try { crypto = require('crypto'); } catch (e) {}
+const crypto = require('crypto');
 
+// pairing keys and channels come only from the system's CSPRNG
 function generateEntropyHex(bytes) {
-    if (crypto && crypto.randomBytes) {
-        return crypto.randomBytes(bytes).toString('hex');
-    }
-    let s = '';
-    while (s.length < bytes * 2) {
-        s += Math.random().toString(36).substring(2);
-    }
-    return s.substring(0, bytes * 2);
+    return crypto.randomBytes(bytes).toString('hex');
 }
+const CHANNEL_PREFIX = 'bmw_spot_';
 
 function formatShortCode(channel) {
     if (!channel) return '--------';
@@ -65,12 +62,15 @@ class CloudPairManager {
             }
         } catch (e) {}
 
-        this.channel = savedChannel || ('bmw_spot_' + generateEntropyHex(12));
-        this.secretKey = savedSecret || generateEntropyHex(32);
+        // a saved pairing is used only as a whole and in the expected shape
+        const savedOk = link.validChannel(savedChannel, CHANNEL_PREFIX) && /^[0-9a-f]{64}$/.test(savedSecret || '');
+        this.channel = savedOk ? savedChannel : (CHANNEL_PREFIX + generateEntropyHex(12));
+        this.secretKey = savedOk ? savedSecret : generateEntropyHex(32);
         this.shortCode = formatShortCode(this.channel);
+        this.fresh = new link.Freshness();
 
         // Persist if generated freshly
-        if (!savedChannel || !savedSecret) {
+        if (!savedOk) {
             this.savePairingState();
         }
 
@@ -111,57 +111,46 @@ class CloudPairManager {
         return this.shortCode;
     }
 
-    notifyUnpair() {
+    /** Tell the phone something, encrypted for it (car -> phone key); fire and forget. */
+    tellPhone(obj, title) {
         if (!this.channel) return;
+        const wire = link.sealForPhone(this.secretKey, 'spotify_car', obj);
+        if (!wire) return;
         try {
             const req = tlsDates.request({
                 hostname: 'ntfy.sh',
                 port: 443,
                 path: '/' + this.channel,
                 method: 'POST',
-                headers: {
-                    'Title': 'BMW Spotify Unpaired',
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Title': title, 'Content-Type': 'application/json' },
                 timeout: 5000
             }, (res) => res.resume());
             req.on('error', () => {});
             req.on('timeout', () => req.destroy());
-            req.write(JSON.stringify({ type: 'spotify_unpaired', channel: this.channel, time: Date.now() }));
+            req.write(JSON.stringify(wire));
             req.end();
-            this.log.info('CloudPair: Broadcasted unpair to channel', this.channel);
         } catch (e) {
-            this.log.error('CloudPair: notifyUnpair error', e);
+            this.log.warn('CloudPair: could not reach the relay: ' + e.message);
         }
     }
 
+    /** Before the pairing is dropped (still with the old key, which the phone has). */
+    notifyUnpair() {
+        this.tellPhone({ type: 'unpaired' }, 'BMW Spotify Unpaired');
+        this.log.info('CloudPair: told the phone about the unpair');
+    }
+
     notifyAck() {
-        if (!this.channel) return;
-        try {
-            const req = tlsDates.request({
-                hostname: 'ntfy.sh',
-                port: 443,
-                path: '/' + this.channel,
-                method: 'POST',
-                headers: {
-                    'Title': 'BMW Spotify Paired',
-                    'Content-Type': 'application/json'
-                },
-                timeout: 5000
-            }, (res) => res.resume());
-            req.on('error', () => {});
-            req.on('timeout', () => req.destroy());
-            req.write(JSON.stringify({ type: 'spotify_pair_ack', carId: this.shortCode, time: Date.now() }));
-            req.end();
-        } catch (e) {}
+        this.tellPhone({ type: 'pair_ack' }, 'BMW Spotify Paired');
     }
 
     reset() {
-        this.channel = 'bmw_spot_' + generateEntropyHex(12);
+        this.channel = CHANNEL_PREFIX + generateEntropyHex(12);
         this.secretKey = generateEntropyHex(32);
         this.shortCode = formatShortCode(this.channel);
         this.lastMsgId = null;
         this.primed = false;
+        this.fresh.reset();
         this.savePairingState();
         this.log.info('CloudPair: Reset session to fresh channel ' + this.shortCode);
     }
@@ -217,7 +206,7 @@ class CloudPairManager {
                                     this.lastMsgId = item.id;
                                 }
                                 if (item.event === 'message' && item.message) {
-                                    this.handleIncomingMessage(item.message, replay);
+                                    this.handleIncomingMessage(item.message, replay, item.time);
                                 }
                             } catch (e) {
                                 // not ntfy JSON: nothing authenticated in it
@@ -242,40 +231,14 @@ class CloudPairManager {
     }
 
     decryptMessage(parsed) {
-        if (!parsed || parsed.type !== 'spotify_encrypted' || typeof parsed.data !== 'string' ||
-            typeof parsed.iv !== 'string' || typeof parsed.tag !== 'string') {
-            return null;
-        }
-        if (!this.secretKey) {
-            this.log.warn('Spotify CloudPair: Encrypted payload received but car has no secretKey');
-            return null;
-        }
-        try {
-            if (!crypto || !crypto.createDecipheriv) {
-                this.log.warn('Spotify CloudPair: Node crypto module unavailable for decryption');
-                return null;
-            }
-            const key = Buffer.from(this.secretKey, 'hex');
-            const iv = Buffer.from(parsed.iv, 'hex');
-            const tag = Buffer.from(parsed.tag, 'hex');
-            // Node 8 accepts truncated GCM tags; only a full 128-bit tag authenticates
-            if (key.length !== 32 || iv.length !== 12 || tag.length !== 16) {
-                this.log.warn('Spotify CloudPair: Malformed encrypted payload ignored');
-                return null;
-            }
-            const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-            decipher.setAuthTag(tag);
-            let dec = decipher.update(parsed.data, 'hex', 'utf8');
-            dec += decipher.final('utf8');
-            return JSON.parse(dec);
-        } catch (e) {
-            this.log.error('Spotify CloudPair: E2EE decryption failed (wrong key or tampering): ' + e.message);
-            return null;
-        }
+        if (!parsed || parsed.type !== 'spotify_encrypted') return null;
+        const inner = link.openFromPhone(this.secretKey, parsed);
+        if (!inner) this.log.warn('Spotify CloudPair: a message did not authenticate (wrong key or tampering): ignored');
+        return inner;
     }
 
-    handleIncomingMessage(rawMsg, replay) {
-        if (!rawMsg || typeof rawMsg !== 'string') return;
+    handleIncomingMessage(rawMsg, replay, ntfyTime) {
+        if (!rawMsg || typeof rawMsg !== 'string' || rawMsg.length > 8192) return;
         const trimmed = rawMsg.trim();
         if (trimmed.length < 3) return;
 
@@ -287,12 +250,18 @@ class CloudPairManager {
         // The ntfy channel is public: only messages that decrypt and authenticate with this
         // car's pairing key (AES-256-GCM) are acted upon; plaintext pair/unpair is dropped.
         if (!parsed || parsed.type !== 'spotify_encrypted') {
-            const own = parsed && (parsed.type === 'spotify_pair_ack' || parsed.type === 'spotify_unpaired');
+            const own = parsed && (parsed.type === 'spotify_car' || parsed.type === 'spotify_pair_ack' || parsed.type === 'spotify_unpaired');
             if (!own) this.log.warn('Spotify CloudPair: Ignoring unauthenticated plaintext message on pairing channel');
             return;
         }
-        parsed = this.decryptMessage(parsed);
-        if (!parsed || typeof parsed !== 'object') return;
+        const wire = parsed;
+        parsed = this.decryptMessage(wire);
+        if (!parsed) return;
+        // sent long before it reached the relay (a re-post), or seen already: not acted on
+        if (!this.fresh.accept(parsed, wire, ntfyTime)) {
+            this.log.warn('Spotify CloudPair: an old or repeated message on the channel: ignored');
+            return;
+        }
 
         // Phone unpair request
         if (parsed.type === 'phone_unpair') {
@@ -303,7 +272,7 @@ class CloudPairManager {
         }
 
         // Credentials Pairing Event
-        if (parsed.token) {
+        if (typeof parsed.token === 'string' && parsed.token) {
             if (replay) return;
             this.log.info('Spotify CloudPair: Received verified Spotify token via secure uplink!');
             this.spotify.saveAuthTokens({

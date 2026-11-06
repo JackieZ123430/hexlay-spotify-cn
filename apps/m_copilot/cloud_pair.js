@@ -11,25 +11,23 @@
  *   4. Mobile browser encrypts user's API key with AES-GCM before relaying.
  *   5. Only this specific car can decrypt and store the API credentials.
  *   6. Multi-car safe: each vehicle has an independent channel, encryption key, and storage.
+ *   7. What the car tells the phone (paired, unpaired, its notification key) is encrypted too,
+ *      with its own key, and re-posted old messages are dropped (kit/link_crypto.js).
  */
 const tlsDates = require('./tls_dates');
-let crypto;
-try { crypto = require('crypto'); } catch (e) {}
+const link = require('./kit/link_crypto');
+const crypto = require('crypto');
 
-// polling the channel: quickly while waiting to be paired, slowly once paired (for the phone's unpair)
+// polling the channel (while M-Copilot is on screen): quickly while waiting to be paired, then
+// every 15 s for the phone's settings, notification set-up and unpair
 const PAIRING_POLL_MS = 2500;
-const PAIRED_POLL_MS = 60000;
+const PAIRED_POLL_MS = 15000;
 const BACKGROUND_POLL_MS = 30000;   // not paired, app not on screen
+const CHANNEL_PREFIX = 'bmw_copilot_';
 
+// pairing keys and channels come only from the system's CSPRNG
 function generateEntropyHex(bytes) {
-    if (crypto && crypto.randomBytes) {
-        return crypto.randomBytes(bytes).toString('hex');
-    }
-    let s = '';
-    while (s.length < bytes * 2) {
-        s += Math.random().toString(36).substring(2);
-    }
-    return s.substring(0, bytes * 2);
+    return crypto.randomBytes(bytes).toString('hex');
 }
 
 function formatShortCode(channel) {
@@ -48,15 +46,17 @@ class CloudPairManager {
         this.ai = aiBridge;
 
         // Persist unique channel and secret key per car installation
+        // a saved pairing is used only as a whole and in the expected shape
         const cfg = (this.ai && this.ai.config) || {};
-        this.channel = cfg.channel || ('bmw_copilot_' + generateEntropyHex(12));
-        this.secretKey = cfg.secretKey || generateEntropyHex(32);
+        const savedOk = link.validChannel(cfg.channel, CHANNEL_PREFIX) && /^[0-9a-f]{64}$/.test(cfg.secretKey || '');
+        this.channel = savedOk ? cfg.channel : (CHANNEL_PREFIX + generateEntropyHex(12));
+        this.secretKey = savedOk ? cfg.secretKey : generateEntropyHex(32);
+        this.fresh = new link.Freshness();
 
-        if (this.ai && this.ai.config) {
-            let saveNeeded = false;
-            if (!this.ai.config.channel) { this.ai.config.channel = this.channel; saveNeeded = true; }
-            if (!this.ai.config.secretKey) { this.ai.config.secretKey = this.secretKey; saveNeeded = true; }
-            if (saveNeeded) this.ai.saveConfig();
+        if (this.ai && this.ai.config && !savedOk) {
+            this.ai.config.channel = this.channel;
+            this.ai.config.secretKey = this.secretKey;
+            this.ai.saveConfig();
         }
 
         this.shortCode = formatShortCode(this.channel);
@@ -71,6 +71,9 @@ class CloudPairManager {
 
         this.onPaired = null;
         this.onUnpaired = null;
+        // phone notifications (phone_push.js): the phone's requests, and the relay's clock
+        this.onPush = null;          // (message) for push_subscribe / push_unsubscribe / hello_request
+        this.onServerTime = null;    // (ms) from each poll's Date header
     }
 
     getPairingUrl() {
@@ -81,57 +84,46 @@ class CloudPairManager {
         return this.shortCode;
     }
 
-    notifyUnpair() {
+    /** Tell the phone something, encrypted for it (car -> phone key); fire and forget. */
+    tellPhone(obj, title) {
         if (!this.channel) return;
+        const wire = link.sealForPhone(this.secretKey, 'copilot_car', obj);
+        if (!wire) return;
         try {
             const req = tlsDates.request({
                 hostname: 'ntfy.sh',
                 port: 443,
                 path: '/' + this.channel,
                 method: 'POST',
-                headers: {
-                    'Title': 'BMW M-Copilot Unpaired',
-                    'Content-Type': 'application/json'
-                },
-                timeout: 3000
+                headers: { 'Title': title || 'BMW M-Copilot', 'Content-Type': 'application/json' },
+                timeout: 5000
             }, (res) => res.resume());
             req.on('error', () => {});
             req.on('timeout', () => req.destroy());
-            req.write(JSON.stringify({ type: 'copilot_unpaired', channel: this.channel, time: Date.now() }));
+            req.write(JSON.stringify(wire));
             req.end();
-            this.log.info('CloudPair: Broadcasted unpair to channel', this.channel);
         } catch (e) {
-            this.log.error('CloudPair: notifyUnpair error', e);
+            this.log.warn('CloudPair: could not reach the relay: ' + e.message);
         }
     }
 
+    /** Before the pairing is dropped (still with the old key, which the phone has). */
+    notifyUnpair() {
+        this.tellPhone({ type: 'unpaired' }, 'BMW M-Copilot Unpaired');
+        this.log.info('CloudPair: told the phone about the unpair');
+    }
+
     notifyAck() {
-        if (!this.channel) return;
-        try {
-            const req = tlsDates.request({
-                hostname: 'ntfy.sh',
-                port: 443,
-                path: '/' + this.channel,
-                method: 'POST',
-                headers: {
-                    'Title': 'BMW M-Copilot Paired',
-                    'Content-Type': 'application/json'
-                },
-                timeout: 3000
-            }, (res) => res.resume());
-            req.on('error', () => {});
-            req.on('timeout', () => req.destroy());
-            req.write(JSON.stringify({ type: 'copilot_pair_ack', carId: this.shortCode, time: Date.now() }));
-            req.end();
-        } catch (e) {}
+        this.tellPhone({ type: 'pair_ack' }, 'BMW M-Copilot Paired');
     }
 
     reset() {
-        this.channel = 'bmw_copilot_' + generateEntropyHex(12);
+        this.channel = CHANNEL_PREFIX + generateEntropyHex(12);
         this.secretKey = generateEntropyHex(32);
         this.shortCode = formatShortCode(this.channel);
         this.lastMsgId = null;
         this.primed = false;
+        this.fresh.reset();
         this.lastSince = Math.floor(Date.now() / 1000) - 2;
         if (this.ai && this.ai.config) {
             this.ai.config.channel = this.channel;
@@ -178,6 +170,8 @@ class CloudPairManager {
                     res.on('data', (c) => { data += c; });
                     res.on('end', () => {
                         this.pollInFlight = false;
+                        const date = Date.parse(res.headers && res.headers.date);
+                        if (isFinite(date) && this.onServerTime) this.onServerTime(date);
                         if (channel !== this.channel || res.statusCode !== 200) return;
                         this.primed = true;
                         const trimmed = data.trim();
@@ -194,7 +188,7 @@ class CloudPairManager {
                                     this.lastMsgId = item.id;
                                 }
                                 if (item.event === 'message' && item.message) {
-                                    this.handleIncomingMessage(item.message, replay);
+                                    this.handleIncomingMessage(item.message, replay, item.time);
                                 }
                             } catch (e) {
                                 // not ntfy JSON: nothing authenticated in it
@@ -219,40 +213,14 @@ class CloudPairManager {
     }
 
     decryptMessage(parsed) {
-        if (!parsed || parsed.type !== 'copilot_encrypted' || typeof parsed.data !== 'string' ||
-            typeof parsed.iv !== 'string' || typeof parsed.tag !== 'string') {
-            return null;
-        }
-        if (!this.secretKey) {
-            this.log.warn('CloudPair: Encrypted payload received but car has no secretKey');
-            return null;
-        }
-        try {
-            if (!crypto || !crypto.createDecipheriv) {
-                this.log.warn('CloudPair: Node crypto module unavailable for decryption');
-                return null;
-            }
-            const key = Buffer.from(this.secretKey, 'hex');
-            const iv = Buffer.from(parsed.iv, 'hex');
-            const tag = Buffer.from(parsed.tag, 'hex');
-            // Node 8 accepts truncated GCM tags; only a full 128-bit tag authenticates
-            if (key.length !== 32 || iv.length !== 12 || tag.length !== 16) {
-                this.log.warn('CloudPair: Malformed encrypted payload ignored');
-                return null;
-            }
-            const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-            decipher.setAuthTag(tag);
-            let dec = decipher.update(parsed.data, 'hex', 'utf8');
-            dec += decipher.final('utf8');
-            return JSON.parse(dec);
-        } catch (e) {
-            this.log.error('CloudPair: E2EE decryption failed (wrong key or tampering): ' + e.message);
-            return null;
-        }
+        if (!parsed || parsed.type !== 'copilot_encrypted') return null;
+        const inner = link.openFromPhone(this.secretKey, parsed);
+        if (!inner) this.log.warn('CloudPair: a message did not authenticate (wrong key or tampering): ignored');
+        return inner;
     }
 
-    handleIncomingMessage(rawMsg, replay) {
-        if (!rawMsg || typeof rawMsg !== 'string') return;
+    handleIncomingMessage(rawMsg, replay, ntfyTime) {
+        if (!rawMsg || typeof rawMsg !== 'string' || rawMsg.length > 8192) return;
         const trimmed = rawMsg.trim();
         if (trimmed.length < 3) return;
 
@@ -264,12 +232,18 @@ class CloudPairManager {
         // The ntfy channel is public: only messages that decrypt and authenticate with this
         // car's pairing key (AES-256-GCM) are acted upon; plaintext pair/unpair is dropped.
         if (!parsed || parsed.type !== 'copilot_encrypted') {
-            const own = parsed && (parsed.type === 'copilot_pair_ack' || parsed.type === 'copilot_unpaired');
+            const own = parsed && (parsed.type === 'copilot_car' || parsed.type === 'copilot_pair_ack' || parsed.type === 'copilot_unpaired');
             if (!own) this.log.warn('CloudPair: Ignoring unauthenticated plaintext message on pairing channel');
             return;
         }
-        parsed = this.decryptMessage(parsed);
-        if (!parsed || typeof parsed !== 'object') return;
+        const wire = parsed;
+        parsed = this.decryptMessage(wire);
+        if (!parsed) return;
+        // sent long before it reached the relay (a re-post), or seen already: not acted on
+        if (!this.fresh.accept(parsed, wire, ntfyTime)) {
+            this.log.warn('CloudPair: an old or repeated message on the channel: ignored');
+            return;
+        }
 
         // Disconnection event from phone
         if (parsed.type === 'phone_unpair') {
@@ -288,6 +262,15 @@ class CloudPairManager {
         // The owner's car profile (also on a replay: Vehicle.setProfile keeps only the newest)
         if (parsed.type === 'copilot_profile') {
             if (this.onProfile) this.onProfile(parsed.profile, parsed.time);
+            return;
+        }
+
+        // Phone notifications: subscribe / unsubscribe this phone, or ask for the car's push key.
+        // Subscribing is idempotent (newest per phone wins), so a replayed one changes nothing.
+        if (parsed.type === 'push_subscribe' || parsed.type === 'push_unsubscribe' || parsed.type === 'hello_request') {
+            if (!this.isPaired()) return;
+            if (parsed.type === 'hello_request' && replay) return;
+            if (this.onPush) this.onPush(parsed);
             return;
         }
 

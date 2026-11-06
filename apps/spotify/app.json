@@ -2,7 +2,7 @@
   "id": "spotify",
   "title": "Spotify",
   "description": "Spotify Connect cockpit player and library browser for BMW iDrive 7",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "vendor": "custom",
   "loggingId": "OASP",
   "iconGlyph": "music",

@@ -3,15 +3,25 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src https://ntfy.sh; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
+    <meta name="referrer" content="no-referrer">
+    <meta name="theme-color" content="#04060a">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="icons/icon-180.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <link rel="icon" href="icons/icon-192.png">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="iDrive Apps">
     <title>iDrive 7 Custom Apps (unofficial)</title>
     <script>
-        // Automatic channel router for QR code scans
+        // Automatic channel router for QR code scans (the key in #k= goes along)
         const p = new URLSearchParams(window.location.search);
         const ch = p.get('channel') || '';
-        if (ch.startsWith('bmw_copilot_')) {
-            window.location.replace('copilot.html' + window.location.search);
-        } else if (ch.startsWith('bmw_spot_')) {
-            window.location.replace('pair.html' + window.location.search);
+        if (/^bmw_copilot_[0-9a-f]{24}$/.test(ch)) {
+            window.location.replace('copilot.html' + window.location.search + window.location.hash);
+        } else if (/^bmw_spot_[0-9a-f]{24}$/.test(ch)) {
+            window.location.replace('pair.html' + window.location.search + window.location.hash);
         }
     </script>
     <style>
@@ -191,6 +201,75 @@
             background: #1ed760;
             color: #000000;
         }
+        .car-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #06080e;
+            border: 1px solid #16202f;
+            border-radius: 8px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+        }
+        .car-row .who { flex: 1; min-width: 0; }
+        .car-row .who b { display: block; font-size: 14px; color: #ffffff; }
+        .car-row .who span { font-size: 12px; color: #8a95a6; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 1px; }
+        .car-row a, .car-row button {
+            flex: none;
+            font-size: 12px;
+            font-weight: 700;
+            border-radius: 6px;
+            padding: 8px 10px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .car-row a { background: #004e8c; border: 1px solid #00a3e0; color: #ffffff; }
+        .car-row button { background: transparent; border: 1px solid #242c39; color: #8a95a6; }
+        .muted { font-size: 13px; color: #8a95a6; line-height: 1.5; }
+        .scanner {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.92);
+            z-index: 10;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            gap: 14px;
+        }
+        .scanner video {
+            width: 100%;
+            max-width: 420px;
+            aspect-ratio: 1;
+            object-fit: cover;
+            border-radius: 12px;
+            border: 2px solid #00a3e0;
+            background: #000;
+        }
+        .scanner p { color: #cbd5e1; font-size: 13px; text-align: center; max-width: 420px; line-height: 1.5; }
+        .paste-row { display: flex; gap: 6px; margin-top: 10px; }
+        .paste-row input {
+            flex: 1;
+            min-width: 0;
+            background: #06080e;
+            border: 1px solid #1a2333;
+            border-radius: 8px;
+            padding: 10px 12px;
+            color: #ffffff;
+            font-size: 13px;
+        }
+        .paste-row button {
+            flex: none;
+            background: #141a24;
+            border: 1px solid #242c39;
+            border-radius: 8px;
+            color: #00a3e0;
+            font-weight: 700;
+            font-size: 12px;
+            padding: 0 12px;
+            cursor: pointer;
+        }
         .footer {
             margin-top: 28px;
             text-align: center;
@@ -231,6 +310,31 @@
     </div>
 
     <div class="container">
+        <!-- My cars: the pairings this phone keeps (keys are non-extractable, in this browser only) -->
+        <div class="card" id="cardMyCars">
+            <div class="card-m-header">
+                <div class="st-light"></div>
+                <div class="st-dark"></div>
+                <div class="st-red"></div>
+                <div class="line"></div>
+            </div>
+            <div class="app-title-row">
+                <div class="app-title">My cars</div>
+                <div class="app-status">This phone</div>
+            </div>
+            <div id="carList"><p class="muted">Loading...</p></div>
+            <button class="btn-app" id="btnScan" type="button" onclick="openScanner()" style="margin-top: 6px;">Scan car QR</button>
+            <details style="margin-top: 10px;">
+                <summary style="font-size: 12px; color: #00a3e0; cursor: pointer; font-weight: 700;">No camera? Paste the pairing link ▾</summary>
+                <div class="paste-row">
+                    <input type="text" id="inputLink" placeholder="https://.../copilot.html?channel=...#k=..." autocomplete="off" autocapitalize="off" spellcheck="false">
+                    <button type="button" onclick="useLink(document.getElementById('inputLink').value)">Add</button>
+                </div>
+            </details>
+            <p class="muted" id="myCarsMsg" style="margin-top: 10px; display: none;"></p>
+            <p class="muted" id="installTip" style="margin-top: 10px; display: none;"></p>
+        </div>
+
         <!-- M-Copilot AI -->
         <div class="card">
             <div class="card-m-header">
@@ -303,6 +407,103 @@
             </div>
         </div>
     </div>
+
+    <div class="scanner" id="scanner">
+        <video id="scanVideo" muted playsinline></video>
+        <p id="scanMsg">Point the camera at the QR code on the car's screen (Spotify: Connect tab; M-Copilot: Pair phone).</p>
+        <button class="btn-app" type="button" onclick="closeScanner()" style="max-width: 420px;">Cancel</button>
+    </div>
+
+    <script src="carlink.js"></script>
+    <script>
+        const say = (text) => { const el = document.getElementById('myCarsMsg'); el.innerText = text || ''; el.style.display = text ? 'block' : 'none'; };
+
+        async function renderCars() {
+            const list = document.getElementById('carList');
+            const cars = await CarLink.listCars();
+            list.textContent = '';
+            if (!cars.length) {
+                const p = document.createElement('p');
+                p.className = 'muted';
+                p.style.marginBottom = '6px';
+                p.innerText = 'No cars on this phone yet. Scan the QR code an app shows on the car screen: the car\'s key stays on this phone, in this browser only.';
+                list.appendChild(p);
+                return;
+            }
+            for (const c of cars) {
+                const row = document.createElement('div');
+                row.className = 'car-row';
+                const who = document.createElement('div');
+                who.className = 'who';
+                const b = document.createElement('b');
+                b.textContent = CarLink.APPS[c.app].name;
+                const code = document.createElement('span');
+                code.textContent = c.code;
+                who.append(b, code);
+                const open = document.createElement('a');
+                open.href = CarLink.APPS[c.app].page + '?channel=' + encodeURIComponent(c.channel);
+                open.textContent = 'Open';
+                const forget = document.createElement('button');
+                forget.type = 'button';
+                forget.textContent = 'Forget';
+                forget.onclick = async () => {
+                    if (forget.dataset.sure !== '1') { forget.dataset.sure = '1'; forget.textContent = 'Sure?'; return; }
+                    // this phone's notifications for it stop too; the car itself stays paired
+                    await CarLink.unsubscribePush(c).catch(() => {});
+                    await CarLink.forgetCar(c.channel);
+                    say('Forgotten on this phone. The car stays paired until you unpair it on the car or on its page.');
+                    renderCars();
+                };
+                row.append(who, open, forget);
+                list.appendChild(row);
+            }
+        }
+
+        // only this site's own pairing links are accepted: a QR code can't send the phone elsewhere
+        async function useLink(text) {
+            const link = CarLink.parsePairingLink(text);
+            if (!link) { say('That is not a pairing code of these apps. Scan the QR code on the car screen.'); return false; }
+            const car = await CarLink.saveCar(link.channel, link.key);
+            if (!car) { say('This browser could not store the car\'s key (no WebCrypto).'); return false; }
+            window.location.href = link.page + '?channel=' + encodeURIComponent(link.channel);
+            return true;
+        }
+
+        let scanning = null;
+        async function openScanner() {
+            say('');
+            document.getElementById('scanner').style.display = 'flex';
+            document.getElementById('scanMsg').innerText = 'Point the camera at the QR code on the car\'s screen (Spotify: Connect tab; M-Copilot: Pair phone).';
+            try {
+                scanning = await CarLink.startScanner(document.getElementById('scanVideo'), (text) => {
+                    if (!CarLink.parsePairingLink(text)) {
+                        document.getElementById('scanMsg').innerText = 'That QR code is not a pairing code of these apps.';
+                        return false;
+                    }
+                    closeScanner();
+                    useLink(text);
+                    return true;
+                });
+            } catch (e) {
+                closeScanner();
+                say('The camera could not start: ' + (e && e.message ? e.message : e) + ' You can paste the pairing link instead.');
+            }
+        }
+        function closeScanner() {
+            if (scanning) { scanning.stop(); scanning = null; }
+            document.getElementById('scanner').style.display = 'none';
+        }
+
+        (async function init() {
+            await CarLink.migrateLegacy();
+            renderCars();
+            if (CarLink.isIOS() && !CarLink.isStandalone()) {
+                const tip = document.getElementById('installTip');
+                tip.innerText = 'iPhone: for notifications from your car, tap Share, then Add to Home Screen, open iDrive Apps from there and scan the car\'s QR code in it.';
+                tip.style.display = 'block';
+            }
+        })();
+    </script>
 
     <p class="disclaimer" style="max-width: 440px; margin: 10px auto 0; font-size: 11px; color: #64748b; line-height: 1.5; text-align: center;">Unofficial open-source hobby project. Not affiliated with or endorsed by BMW AG, Spotify AB or Google. Source code: <a href="https://github.com/hexlay/idrive7-custom-apps" style="color: #8a95a6;">github.com/hexlay/idrive7-custom-apps</a></p>
     <div class="footer">

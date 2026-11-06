@@ -56,3 +56,7 @@ wip/quick_code/quick_code_state.json
 /kit/renderd/core
 /apps/zf8hp/data/
 egs-snapshot*.json
+
+# phone notification subscriptions and the car's push key (apps/m_copilot/phone_push.js)
+copilot_push.json
+apps/m_copilot/copilot_push.json

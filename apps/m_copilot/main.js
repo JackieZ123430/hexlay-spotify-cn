@@ -25,6 +25,8 @@ const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
 const { AiBridge } = require('./ai');
 const { CloudPairManager } = require('./cloud_pair');
+const { PhoneNotifier } = require('./phone_push');
+const tlsDates = require('./tls_dates');
 const qrcodegen = require('./qrcodegen');
 
 const W = 1600, H = 520;
@@ -95,6 +97,18 @@ mgu.run({
         const onScreen = () => !ctx.ui.isVisible || ctx.ui.isVisible('MAIN');
         ai.isOnScreen = onScreen;
         cloudPair.isOnScreen = onScreen;
+
+        // Phone notifications (phone_push.js): new warning lights and service due, pushed by the car
+        // itself to the paired phones that turned them on, end-to-end encrypted. Unlike the rest,
+        // this keeps running in the background (two event-driven signal subscriptions, below).
+        const phone = new PhoneNotifier({
+            dataDir: ctx.dataDir, log, request: tlsDates.request,
+            tellPhone: (obj, title) => cloudPair.tellPhone(obj, title),
+            version: (ctx.spec && ctx.spec.version) || '',
+        });
+        cloudPair.onPush = (m) => phone.onPhoneMessage(m);
+        cloudPair.onServerTime = (ms) => phone.serverTime(ms);
+        let lastHello = 0;
 
         let showPairing = false;
         let isThinking = false;
@@ -318,6 +332,26 @@ mgu.run({
             },
         };
 
+        // Warning lights and the service list: watched all the time (they change rarely and push
+        // nothing while unchanged), so M-Copilot knows them on opening and can tell the phone.
+        // Everything else below is subscribed only while the screen is shown.
+        const WATCH = {};
+        ['de.bmw.infotainment.checkcontrol.CheckControlMaster', 'de.bmw.infotainment.KombiInterface_2'].forEach((iface) => {
+            WATCH[iface] = EXTRA[iface];
+            delete EXTRA[iface];
+        });
+        const ccBasic = WATCH['de.bmw.infotainment.checkcontrol.CheckControlMaster'].basicList;
+        WATCH['de.bmw.infotainment.checkcontrol.CheckControlMaster'].basicList = (v) => { ccBasic(v); phone.checkControl(ccActive, ccNames); };
+        const svcList = WATCH['de.bmw.infotainment.KombiInterface_2'].cbsDataServiceList;
+        WATCH['de.bmw.infotainment.KombiInterface_2'].cbsDataServiceList = (v) => { svcList(v); phone.service(telemetry.service); };
+        const watchers = [];
+        Object.keys(WATCH).forEach((iface) => {
+            signals.watch(iface, '1', WATCH[iface], log).then((s) => {
+                watchers.push(s);
+                if (s.error) log.info('M-Copilot: ' + iface.split('.').pop() + ' not watched: ' + s.error);
+            }).catch(() => {});
+        });
+
         // Real car driving signals, subscribed only while the screen is shown (startCar / stopCar)
         let car = null;
         function stopCar() {
@@ -448,11 +482,14 @@ mgu.run({
 
         cloudPair.onPaired = () => {
             showPairing = false;
+            phone.hello();          // the phone page can offer notifications right away
+            lastHello = Date.now();
             notify('AI paired from your phone: ' + providerName() + ' ready.');
             render(true).catch(() => {});
         };
 
         cloudPair.onUnpaired = () => {
+            phone.forgetAll();
             ai.config.geminiApiKey = null;
             ai.config.apiKey = null;
             ai.config.sessionToken = null;
@@ -1073,6 +1110,7 @@ mgu.run({
             cv.target(pairX, pairY, pairW, pairH, () => {
                 if (isPaired) {
                     cloudPair.notifyUnpair();
+                    phone.forgetAll();
                     ai.config.geminiApiKey = null;
                     ai.config.apiKey = null;
                     ai.config.sessionToken = null;
@@ -1256,6 +1294,9 @@ mgu.run({
             startCar();
             loadSampling(true);
             cloudPair.startPolling();
+            // a fresh hello on the channel (the relay keeps it 12 h) lets the phone page set up
+            // notifications even while the car is off; at most every 6 hours
+            if (ai.isConfigured() && Date.now() - lastHello > 6 * 3600 * 1000) { lastHello = Date.now(); phone.hello(); }
             ai.checkInternetConnection().catch(() => {});
             render(true).catch(() => {});
         }
@@ -1276,6 +1317,7 @@ mgu.run({
             if (exiting) return;
             exiting = true;
             try { background(); } catch (e) {}
+            try { phone.stop(); watchers.forEach((s) => s.shutdown()); } catch (e) {}
             process.exit(0);
         };
         process.on('SIGTERM', exitNow);

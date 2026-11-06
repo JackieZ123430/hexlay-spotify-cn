@@ -2,7 +2,7 @@
   "id": "m_copilot",
   "title": "M-Copilot",
   "description": "AI co-driver that answers with your car's own data: live readings, service list, fault memory, model and engine from the car, plus your tune and mods. Read-only.",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "vendor": "custom",
   "loggingId": "OAMC",
   "iconGlyph": "copilot",

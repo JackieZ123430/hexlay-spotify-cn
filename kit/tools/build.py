@@ -504,7 +504,7 @@ def build(app_id, language='en'):
     adir = os.path.join(APPS, app_id)
     fetch_assets(adir, spec.get('assets', []))
     for f in sorted(os.listdir(adir)):
-        if f.startswith('.') or f in ('node_modules', '__pycache__') or f.endswith('_auth.json'):
+        if f.startswith('.') or f in ('node_modules', '__pycache__') or f.endswith(('_auth.json', '_push.json')):
             continue   # editor/OS junk, local dependencies and local secrets never go into a package
         if f.endswith('.js'):
             shutil.copy(os.path.join(adir, f), os.path.join(src, 'javascript', 'app.js' if f == 'main.js' else f))

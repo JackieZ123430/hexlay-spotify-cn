@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src https://ntfy.sh; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src https://ntfy.sh; manifest-src 'self'; base-uri 'none'; form-action 'none'">
     <meta name="referrer" content="no-referrer">
     <meta name="theme-color" content="#04060a">
     <link rel="manifest" href="manifest.webmanifest">
@@ -306,7 +306,6 @@
                 </div>
             </details>
             <p class="muted" id="myCarsMsg" style="margin-top: 10px; display: none;"></p>
-            <p class="muted" id="installTip" style="margin-top: 10px; display: none;"></p>
         </div>
 
         <!-- M-Copilot AI -->
@@ -477,11 +476,6 @@
         (async function init() {
             await CarLink.migrateLegacy();
             renderCars();
-            if (CarLink.isIOS() && !CarLink.isStandalone()) {
-                const tip = document.getElementById('installTip');
-                tip.innerText = 'iPhone: for notifications from your car, tap Share, then Add to Home Screen, open iDrive Apps from there and scan the car\'s QR code in it.';
-                tip.style.display = 'block';
-            }
         })();
     </script>
 

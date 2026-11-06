@@ -25,7 +25,6 @@ const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
 const { AiBridge } = require('./ai');
 const { CloudPairManager } = require('./cloud_pair');
-const { PhoneNotifier } = require('./phone_push');
 const tlsDates = require('./tls_dates');
 const qrcodegen = require('./qrcodegen');
 
@@ -102,17 +101,22 @@ mgu.run({
         ai.isOnScreen = onScreen;
         cloudPair.isOnScreen = onScreen;
 
-        // Phone notifications (phone_push.js): new warning lights and service due, pushed by the car
-        // itself to the paired phones that turned them on, end-to-end encrypted. Unlike the rest,
-        // this keeps running in the background (two event-driven signal subscriptions, below).
-        const phone = new PhoneNotifier({
-            dataDir: ctx.dataDir, log, request: tlsDates.request,
-            tellPhone: (obj, title) => cloudPair.tellPhone(obj, title),
-            version: (ctx.spec && ctx.spec.version) || '',
-        });
-        cloudPair.onPush = (m) => phone.onPhoneMessage(m);
-        cloudPair.onServerTime = (ms) => phone.serverTime(ms);
+        /*
+         * The car's hello to the phone pages (encrypted, like everything the car tells the phone):
+         * paired, its version, and what the phone pages set - AI provider and model, car profile,
+         * never the AI key - so a page opened in another browser shows the same. Sent on pairing,
+         * when a page asks, after each change, and when opened at most every 6 hours (the relay
+         * keeps it 12 h, for a page opened while the car is off).
+         */
         let lastHello = 0;
+        function hello() {
+            lastHello = Date.now();
+            cloudPair.tellPhone({ type: 'car_hello', app: 'm_copilot', paired: true, version: (ctx.spec && ctx.spec.version) || '',
+                settings: { provider: providerId(), model: ai.config.model || '', profile: vehicle.profile || null } }, 'BMW M-Copilot');
+        }
+        cloudPair.onHelloRequest = () => hello();
+        // phone notifications were dropped in 1.0.17: the push keys and phone list they kept go
+        try { require('fs').unlinkSync(require('path').join(ctx.dataDir, 'copilot_push.json')); } catch (e) { /* none */ }
 
         let isThinking = false;
         let thinkTimer = null;
@@ -335,26 +339,6 @@ mgu.run({
             },
         };
 
-        // Warning lights and the service list: watched all the time (they change rarely and push
-        // nothing while unchanged), so M-Copilot knows them on opening and can tell the phone.
-        // Everything else below is subscribed only while the screen is shown.
-        const WATCH = {};
-        ['de.bmw.infotainment.checkcontrol.CheckControlMaster', 'de.bmw.infotainment.KombiInterface_2'].forEach((iface) => {
-            WATCH[iface] = EXTRA[iface];
-            delete EXTRA[iface];
-        });
-        const ccBasic = WATCH['de.bmw.infotainment.checkcontrol.CheckControlMaster'].basicList;
-        WATCH['de.bmw.infotainment.checkcontrol.CheckControlMaster'].basicList = (v) => { ccBasic(v); phone.checkControl(ccActive, ccNames); };
-        const svcList = WATCH['de.bmw.infotainment.KombiInterface_2'].cbsDataServiceList;
-        WATCH['de.bmw.infotainment.KombiInterface_2'].cbsDataServiceList = (v) => { svcList(v); phone.service(telemetry.service); };
-        const watchers = [];
-        Object.keys(WATCH).forEach((iface) => {
-            signals.watch(iface, '1', WATCH[iface], log).then((s) => {
-                watchers.push(s);
-                if (s.error) log.info('M-Copilot: ' + iface.split('.').pop() + ' not watched: ' + s.error);
-            }).catch(() => {});
-        });
-
         // Real car driving signals, subscribed only while the screen is shown (startCar / stopCar)
         let car = null;
         function stopCar() {
@@ -401,13 +385,15 @@ mgu.run({
         }
 
         /**
-         * Coming back on screen: values that are only sent on change may be old, so they are cleared.
-         * Not Check Control and the service list: those are watched all the time (WATCH below), so
-         * they are current - and their subscription would not send them again.
+         * Coming back on screen: values that are only sent on change may be old, so they are cleared,
+         * Check Control and the service list too: each subscription sends the current value again
+         * (its getter), and the warnings come as changes to the list kept here (ccActive).
          */
         let standingSince = 0, engineOnSince = 0, engineStartSeen = false, engineOffSeen = false;
         function clearLive() {
             standingSince = 0; engineOnSince = 0; engineStartSeen = false; engineOffSeen = false;
+            ccActive.clear();
+            ['checkControl', 'service', 'serviceNext'].forEach((k) => { telemetry[k] = null; });
             ['speed', 'rpm', 'gear', 'stage', 'torque', 'boost', 'mode', 'oilTemp', 'coolantTemp', 'ambient', 'gLat', 'gLong', 'tyres', 'tyreTargets', 'tyreTemps',
                 'fuelL', 'rangeKm', 'batteryPct', 'engine', 'msa', 'handbrake', 'powerPct', 'torquePct', 'awd', 'condition', 'programme', 'ac', 'hvTemp', 'hvVolt',
                 'moving'].forEach((k) => { telemetry[k] = null; });
@@ -429,6 +415,7 @@ mgu.run({
             if (!vehicle.setProfile(profile, time)) return;
             ai.resetHistory();
             notify(vehicle.profile ? 'Car profile updated from your phone.' : 'Car profile cleared.');
+            hello();                // the phone pages (other browsers too) show the car's new state
             render(true).catch(() => {});
         };
 
@@ -505,24 +492,23 @@ mgu.run({
         cloudPair.onModel = (provider, model, time) => {
             if (!ai.setModel(provider, model, time)) return;
             notify('AI model: ' + (model || 'default') + '.');
+            hello();
             render(true).catch(() => {});
         };
 
         cloudPair.onPaired = () => {
             page = 0;
-            phone.hello();          // the phone page can offer notifications right away
-            lastHello = Date.now();
+            hello();                // the phone page shows "Connected" and the car's settings
             notify('AI paired from your phone: ' + providerName() + ' ready.');
             render(true).catch(() => {});
         };
 
         /**
          * Disconnected from the phone: the AI key and everything the phone set go - the car
-         * profile, the AI model choice, the notifications, the conversation. What the car told about
+         * profile, the AI model choice, the conversation. What the car told about
          * itself (VIN, engine and gearbox units) stays. The phone page keeps its entries to send again.
          */
         function forgetPhone() {
-            phone.forgetAll();
             ai.config.geminiApiKey = null;
             ai.config.apiKey = null;
             ai.config.sessionToken = null;
@@ -558,9 +544,12 @@ mgu.run({
 
         /** The paired AI provider's name, for the status pill and messages. */
         const PROVIDERS = { gemini: 'Gemini', claude: 'Claude', openai: 'OpenAI', groq: 'Groq', openrouter: 'OpenRouter' };
-        function providerName() {
+        function providerId() {
             const p = ai.config.provider || (ai.config.mode === 'gemini' ? 'gemini' : ai.config.mode === 'claude' ? 'claude' : null);
-            return PROVIDERS[p] || 'AI';
+            return PROVIDERS[p] ? p : null;
+        }
+        function providerName() {
+            return PROVIDERS[providerId()] || 'AI';
         }
 
         function notify(msg) {
@@ -937,9 +926,7 @@ mgu.run({
                     cv.circle(x + 22, y + 16, 5, on ? '#2af575' : '#94a3b8');
                     cv.text(text, x + 38, y + 21, 14, on ? '#2af575' : '#94a3b8', { font: 'bold' });
                 };
-                pill(258 + sh, ai.hasInternet, ai.hasInternet ? 'Internet: online' : 'Internet: offline (phone hotspot?)');
-                const np = phone.phoneCount();
-                pill(298 + sh, np > 0, np ? 'Notifications: on for ' + np + ' phone' + (np === 1 ? '' : 's') : 'Notifications: off (turn on from the phone page)');
+                pill(278 + sh, ai.hasInternet, ai.hasInternet ? 'Internet: online' : 'Internet: offline (phone hotspot?)');
                 // disconnecting (or a new AI key) is the phone's: the car follows it live
                 cv.text('Disconnect or change the AI key on your phone.', cx, 380 + ex, 14, '#64748b', { align: 'center' });
             } else {
@@ -960,7 +947,7 @@ mgu.run({
                 const qs2 = Math.min(280, 180 + Math.round(ex * 0.8)), y2 = 96 + Math.max(0, Math.floor((410 + ex - 96 - qs2 - 92) / 2));
                 drawQr(cv, cloudPair.getPairingUrl(), 1130 - qs2 / 2, y2 + 10, qs2);
                 cv.text('Open the phone page for this car', 1130, y2 + qs2 + 48, 17, t.text, { align: 'center', font: 'bold' });
-                cv.text('Car profile, AI model, notifications, Disconnect', 1130, y2 + qs2 + 72, 14, '#94a3b8', { align: 'center' });
+                cv.text('Car profile, AI model, Disconnect', 1130, y2 + qs2 + 72, 14, '#94a3b8', { align: 'center' });
                 // the camera opens the browser; on iPhone the Home Screen app keeps its own cars
                 cv.text('Installed the phone app? Scan with its Scan car QR, not the camera.', 1130, y2 + qs2 + 94, 13, '#64748b', { align: 'center' });
             } else {
@@ -1286,7 +1273,7 @@ mgu.run({
             const miss = missingList();
             if (miss[iface] || (field && miss[iface + ' ' + field])) return { c: 'grey', v: 'not on this car (firmware)' };
             if (value !== null && value !== undefined && value !== '') return { c: 'green', v: String(value) };
-            const subs = [].concat(car ? car.subs : [], watchers);
+            const subs = car ? car.subs || [] : [];
             const sub = subs.find((x) => x && x.iface === iface);
             if (!car && !sub) return { c: 'amber', v: 'not subscribed' };
             if (sub && sub.error) return { c: 'red', v: 'error: ' + String(sub.error).slice(0, 24) };
@@ -1434,7 +1421,7 @@ mgu.run({
             // what the frame shows: unchanged, the frame isn't drawn again (a safety redraw every 2 s)
             const sig = [ai.hasInternet, ai.isConfigured(), showPhoneQr, showKeyboard, customQuery, activeCategory, selectedTopicIdx, currentPrompt, currentResponse,
                 dialogueScroll, canFollowUp, isThinking, telemetry.moving, vitalsLine(), statusMsg && now - statusTime < 3500 ? statusMsg : '', ai.modelLabel(), providerName(),
-                cv.extra || 0, page === 2 ? cloudPair.getPairingUrl() + phone.phoneCount() + JSON.stringify(vehicle.profile || {}) + (ai.config.model || '') : '', page, page === 1 ? Math.floor(now / 1000) + (checking || '') : ''].join('|');
+                cv.extra || 0, page === 2 ? cloudPair.getPairingUrl() + JSON.stringify(vehicle.profile || {}) + (ai.config.model || '') : '', page, page === 1 ? Math.floor(now / 1000) + (checking || '') : ''].join('|');
             if (!force && sig === lastSig && now - lastRenderTime < 2000) return;
             lastSig = sig;
             lastRenderTime = now;
@@ -1512,9 +1499,9 @@ mgu.run({
             startCar();
             loadSampling(true);
             cloudPair.startPolling();
-            // a fresh hello on the channel (the relay keeps it 12 h) lets the phone page set up
-            // notifications even while the car is off; at most every 6 hours
-            if (ai.isConfigured() && Date.now() - lastHello > 6 * 3600 * 1000) { lastHello = Date.now(); phone.hello(); }
+            // a fresh hello on the channel (the relay keeps it 12 h) shows the car's settings on a
+            // phone page opened while the car is off; at most every 6 hours
+            if (ai.isConfigured() && Date.now() - lastHello > 6 * 3600 * 1000) hello();
             ai.checkInternetConnection().catch(() => {});
             render(true).catch(() => {});
         }
@@ -1535,7 +1522,6 @@ mgu.run({
             if (exiting) return;
             exiting = true;
             try { background(); } catch (e) {}
-            try { phone.stop(); watchers.forEach((s) => s.shutdown()); } catch (e) {}
             process.exit(0);
         };
         process.on('SIGTERM', exitNow);

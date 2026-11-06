@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://ntfy.sh; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://ntfy.sh; manifest-src 'self'; base-uri 'none'; form-action 'none'">
     <meta name="referrer" content="no-referrer">
     <meta name="theme-color" content="#04060a">
     <link rel="manifest" href="manifest.webmanifest">
@@ -458,34 +458,6 @@
         <button class="btn-unpair" id="btnDisconnect" onclick="disconnectCar()">DISCONNECT THIS CAR</button>
     </div>
 
-    <!-- Phone notifications: the car pushes new warning lights and service due to this phone -->
-    <div class="card" id="cardNotify" style="display: none;">
-        <div class="card-m-header">
-            <div class="st-light"></div>
-            <div class="st-dark"></div>
-            <div class="st-red"></div>
-            <div class="line"></div>
-        </div>
-        <h2 style="font-size: 16px; font-weight: 800; color: #ffffff; margin-bottom: 6px;">PHONE NOTIFICATIONS</h2>
-        <p class="helper-text" style="margin-bottom: 12px;">
-            Your car tells this phone about new warning lights and service coming due. The car sends them itself,
-            encrypted for this phone only: no server of this project exists or sees them. The car has to be on and online to send.
-        </p>
-        <div class="pair-code" style="margin-bottom: 4px;">
-            <span>This phone</span>
-            <strong id="notifyState" style="color: #8a95a6; font-size: 13px; letter-spacing: 0;">Off</strong>
-        </div>
-        <button class="btn-connect" id="btnNotify" onclick="toggleNotifications()">TURN ON NOTIFICATIONS</button>
-        <p id="notifyMsg" class="helper-text" style="display: none; text-align: center; margin-top: 12px;"></p>
-        <div id="notifyIos" class="helper-text" style="display: none; margin-top: 12px; background: #06080e; border: 1px solid #1a2333; padding: 12px 14px; border-radius: 8px;">
-            <strong style="color: #ffffff;">On iPhone, notifications work in the installed app:</strong><br>
-            1. Tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.<br>
-            2. Open <strong>iDrive Apps</strong> from the Home Screen.<br>
-            3. Tap <strong>Scan car QR</strong> and scan the M-Copilot code on the car screen.<br>
-            4. Open the car there and turn notifications on.
-        </div>
-    </div>
-
     <!-- Car Profile (optional): who the car is, for better answers. Sent encrypted like the key. -->
     <div class="card" id="cardProfile" style="display: none;">
         <div class="card-m-header">
@@ -716,12 +688,16 @@
             if (stopListening) stopListening();
             stopListening = car ? CarLink.listen(car, onCarMessage) : null;
             // the car disconnected while this page was closed (the relay keeps 12 hours)
-            if (car) CarLink.recent(car).then((msgs) => { if (CarLink.lastWord(msgs) === 'unpaired') handleCarDisconnected(); }).catch(() => {});
+            // and what the car last said about its settings (a car that is off still shows them)
+            if (car) CarLink.recent(car).then((msgs) => {
+                if (CarLink.lastWord(msgs) === 'unpaired') { handleCarDisconnected(); return; }
+                const hello = msgs.filter((m) => m.type === 'car_hello' && m.settings).pop();
+                if (hello) applyCarSettings(hello);
+            }).catch(() => {});
             // ask the car whether it is paired (a paired car answers encrypted while M-Copilot is open)
             if (car) CarLink.sendToCar(car, { type: 'hello_request' }).catch(() => {});
             showProfileCard();
             showModelCard();
-            showNotifyCard();
         }
 
         // what the car says (only messages that authenticate with this car's key reach here)
@@ -729,7 +705,7 @@
             if (m.type === 'unpaired') handleCarDisconnected();
             else if (m.type === 'pair_ack') handleCarConnected();
             else if (m.type === 'car_hello') {
-                if (typeof m.vapid === 'string') CarLink.updateInfo(channel, { vapid: m.vapid, version: String(m.version || '').slice(0, 20) }).then((c) => { if (c) car = c; });
+                if (m.settings) applyCarSettings(m);
                 // a paired car: "Connected" (not while the driver is changing the key)
                 if (m.paired === true && document.getElementById('btnCancelChange').style.display !== 'block') handleCarConnected();
                 else if (m.paired === true) CarLink.confirmCar(channel);
@@ -775,10 +751,60 @@
             try {
                 if (!await CarLink.sendToCar(car, { type: 'copilot_model', provider: prov, model: model }, 'BMW M-Copilot AI Model')) { say(CarLink.RELAY_DOWN, false); return; }
                 try { localStorage.setItem('copilot_model_' + channel + '_' + prov, model); } catch (e) {}
+                markSent();
+                editing.model = false;
                 say('Saved. The car uses it within a minute while M-Copilot is open (the provider must be the one you paired).', true);
             } catch (e) {
                 say('Could not send: ' + e.message, false);
             }
+        }
+
+        /**
+         * What the car says it uses (its hello: AI provider, model, car profile; never the key) fills
+         * this page, so a page opened in another browser shows the same as the one that set it.
+         * Not over a form being edited, and not over what this browser sent after that hello
+         * (the car may not have read it yet: it says so in its next hello).
+         */
+        const SETTING_CHOICES = { tune: 'pfTune', tyres: 'pfTyres', fuel: 'pfFuel', use: 'pfUse', lang: 'pfLang', country: 'pfCountry' };
+        const editing = { profile: false, model: false };
+        let carSettingsAt = 0;
+        function applyCarSettings(hello) {
+            const st = hello.settings;
+            if (!st || typeof st !== 'object' || typeof hello.time !== 'number' || hello.time <= carSettingsAt) return;
+            let sentAt = 0;
+            try { sentAt = Number(localStorage.getItem('copilot_sent_at_' + channel)) || 0; } catch (e) {}
+            if (hello.time < sentAt) return;
+            carSettingsAt = hello.time;
+            const prov = PROVIDER_NAMES[st.provider] ? st.provider : null;
+            const model = typeof st.model === 'string' && /^[A-Za-z0-9._:\/-]{0,80}$/.test(st.model) ? st.model : '';
+            const profile = {};
+            if (st.profile && typeof st.profile === 'object') {
+                Object.keys(PROFILE_FIELDS).forEach((k) => { if (typeof st.profile[k] === 'string' && st.profile[k]) profile[k] = st.profile[k].slice(0, 160); });
+                if (profile.lang === 'en') delete profile.lang;         // English is the page's "" choice
+            }
+            try {
+                if (prov) {
+                    localStorage.setItem('copilot_provider_' + channel, prov);
+                    localStorage.setItem('copilot_model_' + channel + '_' + prov, model);
+                }
+                localStorage.setItem('copilot_profile_' + channel, JSON.stringify(profile));
+            } catch (e) { /* storage blocked: the fields still show it */ }
+            showProviderLine();
+            if (!editing.model) {
+                if (prov) document.getElementById('mdProvider').value = prov;
+                modelOptions();
+            }
+            if (!editing.profile) fillProfile(profile);
+        }
+        function fillProfile(p) {
+            Object.keys(PROFILE_FIELDS).forEach((k) => {
+                const el = document.getElementById(PROFILE_FIELDS[k]), v = p[k] || '';
+                // a choice the page doesn't list (the car keeps any country text) shows as not set
+                el.value = SETTING_CHOICES[k] && !Array.from(el.options).some((o) => o.value === v) ? '' : v;
+            });
+        }
+        function markSent() {
+            try { localStorage.setItem('copilot_sent_at_' + channel, String(Date.now())); } catch (e) {}
         }
 
         const PROFILE_FIELDS = { model: 'pfModel', tune: 'pfTune', power: 'pfPower', mods: 'pfMods', tyres: 'pfTyres', fuel: 'pfFuel', use: 'pfUse', lang: 'pfLang', country: 'pfCountry' };
@@ -790,7 +816,7 @@
             card.style.display = 'block';
             let saved = {};
             try { saved = JSON.parse(localStorage.getItem('copilot_profile_' + channel) || '{}') || {}; } catch (e) {}
-            Object.keys(PROFILE_FIELDS).forEach((k) => { if (saved[k]) document.getElementById(PROFILE_FIELDS[k]).value = saved[k]; });
+            fillProfile(saved);
         }
 
         async function sendProfile() {
@@ -805,100 +831,12 @@
             try {
                 if (!await CarLink.sendToCar(car, { type: 'copilot_profile', profile: profile }, 'BMW M-Copilot Car Profile')) { say(CarLink.RELAY_DOWN, false); return; }
                 try { localStorage.setItem('copilot_profile_' + channel, JSON.stringify(profile)); } catch (e) {}
+                markSent();
+                editing.profile = false;
                 say('Saved. The car picks it up within a minute while M-Copilot is open, or the next time you open it.', true);
             } catch (e) {
                 say('Could not send: ' + e.message, false);
             }
-        }
-
-        // ---------- phone notifications ----------
-        const notifySay = (text, ok) => {
-            const el = document.getElementById('notifyMsg');
-            el.innerText = text;
-            el.style.color = ok === false ? '#ff4d4d' : ok ? '#2fd27a' : '#8a95a6';
-            el.style.display = text ? 'block' : 'none';
-        };
-        let notifyBusy = false;
-
-        async function showNotifyCard() {
-            const card = document.getElementById('cardNotify');
-            const paired = localStorage.getItem('copilot_paired_' + channel) === 'true';
-            if (!channel || !car || !paired) { card.style.display = 'none'; return; }
-            card.style.display = 'block';
-            const ios = CarLink.isIOS() && !CarLink.isStandalone();
-            show('notifyIos', ios && !CarLink.pushSupported());
-            const btn = document.getElementById('btnNotify'), state = document.getElementById('notifyState');
-            if (!CarLink.pushSupported()) {
-                btn.style.display = 'none';
-                state.innerText = ios ? 'Needs the installed app' : 'Not available in this browser';
-                return;
-            }
-            btn.style.display = 'block';
-            let sub = null;
-            try { sub = await CarLink.pushSubscription(car); } catch (e) { sub = null; }
-            const on = !!sub && Notification.permission === 'granted';
-            state.innerText = on ? 'On for this phone' : (Notification.permission === 'denied' ? 'Blocked in the browser settings' : 'Off');
-            state.style.color = on ? '#2fd27a' : '#8a95a6';
-            btn.innerText = on ? 'TURN OFF NOTIFICATIONS' : 'TURN ON NOTIFICATIONS';
-            btn.dataset.on = on ? '1' : '';
-        }
-
-        async function toggleNotifications() {
-            if (notifyBusy || !car) return;
-            notifyBusy = true;
-            try {
-                if (document.getElementById('btnNotify').dataset.on) await notificationsOff(); else await notificationsOn();
-            } finally {
-                notifyBusy = false;
-                showNotifyCard();
-            }
-        }
-
-        async function notificationsOn() {
-            // asked first, straight from the tap (Safari only asks from a user gesture)
-            const perm = await Notification.requestPermission();
-            if (perm !== 'granted') { notifySay('Notifications were not allowed. Allow them for this site in the browser settings and try again.', false); return; }
-
-            // the car's notification key: known, still on the relay (12 h), or asked for
-            let vapid = car.info && car.info.vapid;
-            if (!vapid) {
-                notifySay('Looking for your car\'s notification key...');
-                const recent = await CarLink.recent(car).catch(() => []);
-                const hello = recent.filter((m) => m.type === 'car_hello' && typeof m.vapid === 'string').pop();
-                if (hello) vapid = hello.vapid;
-            }
-            if (!vapid) {
-                notifySay('Open M-Copilot on the car\'s screen (the car must be online). Waiting for it...');
-                const asked = CarLink.waitFor(car, ['car_hello'], 120000);
-                await CarLink.sendToCar(car, { type: 'hello_request' }, 'BMW M-Copilot');
-                const hello = await asked;
-                if (!hello || typeof hello.vapid !== 'string') { notifySay('The car didn\'t answer. Open M-Copilot on the car\'s screen, check that it is online, and try again.', false); return; }
-                vapid = hello.vapid;
-            }
-            car = (await CarLink.updateInfo(channel, { vapid })) || car;
-
-            let sub;
-            try { sub = await CarLink.subscribePush(car, vapid); } catch (e) { notifySay('This browser could not turn on notifications: ' + e.message, false); return; }
-
-            notifySay('Telling your car about this phone...');
-            const answer = CarLink.waitFor(car, ['push_ok', 'push_error'], 90000);
-            if (!await CarLink.sendToCar(car, { type: 'push_subscribe', sub: { endpoint: sub.endpoint, keys: sub.keys }, vapid, label: CarLink.deviceLabel() }, 'BMW M-Copilot')) {
-                notifySay(CarLink.RELAY_DOWN, false);
-                return;
-            }
-            const res = await answer;
-            if (res && res.type === 'push_ok') notifySay('Done. A test notification is on its way.', true);
-            else if (res && res.type === 'push_error' && res.reason === 'stale_key') {
-                await CarLink.updateInfo(channel, { vapid: null });
-                notifySay('The car has a new notification key. Tap the button again.', false);
-            } else if (res && res.type === 'push_error') notifySay('The car could not use this browser\'s notification service.', false);
-            else notifySay('Sent. The car switches notifications on the next time M-Copilot is open on its screen (within 12 hours).', true);
-        }
-
-        async function notificationsOff() {
-            const endpoint = await CarLink.unsubscribePush(car).catch(() => null);
-            if (endpoint) await CarLink.sendToCar(car, { type: 'push_unsubscribe', endpoint }, 'BMW M-Copilot').catch(() => {});
-            notifySay('Notifications are off for this phone.', true);
         }
 
         // the code shown on the car finds a car this phone already has (the key is only in the QR code)
@@ -925,7 +863,7 @@
         }
 
         // The car disconnected: this phone forgets it completely - its entry in My cars, its key,
-        // notifications and everything saved for it. Connecting again is a new pairing (its new QR code).
+        // and everything saved for it. Connecting again is a new pairing (its new QR code).
         function handleCarDisconnected(text) {
             if (!channel) return;
             const code = CarLink.shortCode(channel);
@@ -933,7 +871,7 @@
             if (car) CarLink.forget(car, false).catch(() => {});
             else { CarLink.clearPageState(channel); CarLink.forgetCar(channel).catch(() => {}); }
             car = null;
-            ['cardSuccess', 'cardPairing', 'cardNotify', 'cardProfile', 'cardModel'].forEach((id) => show(id, false));
+            ['cardSuccess', 'cardPairing', 'cardProfile', 'cardModel'].forEach((id) => show(id, false));
             show('cardNoVehicle', true);
             const alertBox = document.getElementById('disconnectNotice');
             alertBox.style.display = 'block';
@@ -975,7 +913,6 @@
             show('cardPairing', false);
             show('cardSuccess', true);
             showProviderLine();
-            showNotifyCard();
         }
 
         /**
@@ -1062,6 +999,12 @@
                 err.style.display = 'block';
             }
         }
+
+        // a form being edited isn't overwritten by the car's settings (applyCarSettings)
+        ['input', 'change'].forEach((ev) => {
+            document.getElementById('cardProfile').addEventListener(ev, () => { editing.profile = true; });
+            document.getElementById('cardModel').addEventListener(ev, () => { editing.model = true; });
+        });
 
         (async function init() {
             car = await CarLink.carFromAddress('copilot', channel);

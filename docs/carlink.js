@@ -38,12 +38,6 @@
     const toHex = (a) => Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
     const fromHex = (h) => new Uint8Array(h.match(/.{2}/g).map((b) => parseInt(b, 16)));
     const randomHex = (n) => toHex(crypto.getRandomValues(new Uint8Array(n)));
-    const b64u = (buf) => btoa(String.fromCharCode.apply(null, new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    const fromB64u = (s) => {
-        const t = s.replace(/-/g, '+').replace(/_/g, '/');
-        const bin = atob(t + '==='.slice((t.length + 3) % 4));
-        return Uint8Array.from(bin, (c) => c.charCodeAt(0));
-    };
 
     function appOf(channel) {
         if (typeof channel !== 'string') return null;
@@ -193,7 +187,7 @@
     function browserCopyNote() {
         if (!openedFromQr || !isIOS() || isStandalone()) return '';
         return 'Opened in the browser. If you added iDrive Apps to your Home Screen, it keeps its own cars: ' +
-            'open it and tap Scan car QR to have this car there too (notifications need the app).';
+            'open it and tap Scan car QR to have this car there too.';
     }
 
     /** A scanned / pasted pairing link -> { app, channel, key, page } when it is one of ours, else null. */
@@ -425,63 +419,30 @@
         return { stop };
     }
 
-    // ---------- notifications (Web Push) ----------
+    // ---------- device ----------
     const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const isStandalone = () => (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
-    const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && window.isSecureContext;
-    const swUrl = () => new URL('sw.js', carlinkSrc).href;
-    // one service worker registration per car (its own scope), so each car's push key has its own subscription
-    const scopeFor = (car) => new URL('n/' + car.channel + '/', carlinkSrc).href;
 
-    async function pushSubscription(car) {
-        if (!pushSupported()) return null;
-        const reg = await navigator.serviceWorker.getRegistration(scopeFor(car));
-        return reg ? reg.pushManager.getSubscription() : null;
+    /*
+     * Phone notifications were dropped (M-Copilot 1.0.17). Pages before that registered a worker
+     * per car (scope n/<channel>/) with a push subscription: both are removed once, here.
+     */
+    function dropOldNotifications() {
+        if (!('serviceWorker' in navigator) || !navigator.serviceWorker.getRegistrations) return;
+        navigator.serviceWorker.getRegistrations().then((regs) => regs.forEach((reg) => {
+            if (!/\/n\/bmw_[a-z]+_[0-9a-f]{24}\/$/.test(reg.scope)) return;
+            Promise.resolve(reg.pushManager && reg.pushManager.getSubscription())
+                .then((sub) => sub && sub.unsubscribe()).catch(() => {})
+                .then(() => reg.unregister()).catch(() => {});
+        })).catch(() => {});
     }
-
-    // the car's worker controls no page, so navigator.serviceWorker.ready never fires for it
-    function activeWorker(reg) {
-        if (reg.active) return Promise.resolve(reg.active);
-        const w = reg.installing || reg.waiting;
-        if (!w) return Promise.reject(new Error('The notification worker did not start.'));
-        return new Promise((resolve, reject) => {
-            const t = setTimeout(() => reject(new Error('The notification worker did not start.')), 15000);
-            w.addEventListener('statechange', () => {
-                if (w.state === 'activated') { clearTimeout(t); resolve(w); }
-                if (w.state === 'redundant') { clearTimeout(t); reject(new Error('The notification worker did not start.')); }
-            });
-        });
-    }
-
-    async function subscribePush(car, vapidB64u) {
-        const key = fromB64u(vapidB64u);
-        if (key.length !== 65 || key[0] !== 4) throw new Error('The car sent an invalid notification key.');
-        const reg = await navigator.serviceWorker.register(swUrl(), { scope: scopeFor(car) });
-        await activeWorker(reg);
-        let sub = await reg.pushManager.getSubscription();
-        if (sub) {
-            const cur = sub.options && sub.options.applicationServerKey ? b64u(sub.options.applicationServerKey) : null;
-            if (cur && cur !== b64u(key)) { await sub.unsubscribe(); sub = null; }
-        }
-        if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
-        return sub.toJSON();
-    }
-
-    async function unsubscribePush(car) {
-        const reg = pushSupported() ? await navigator.serviceWorker.getRegistration(scopeFor(car)) : null;
-        if (!reg) return null;
-        const sub = await reg.pushManager.getSubscription();
-        const endpoint = sub ? sub.endpoint : null;
-        if (sub) await sub.unsubscribe().catch(() => {});
-        await reg.unregister().catch(() => {});
-        return endpoint;
-    }
+    dropOldNotifications();
 
     // ---------- forgetting a car ----------
     /** What the pages keep about a car besides its key: the paired flags, Copilot's profile, provider and models. */
     function clearPageState(channel) {
         try {
-            ['bmw_spot_paired_', 'copilot_paired_', 'copilot_profile_', 'copilot_provider_'].forEach((p) => localStorage.removeItem(p + channel));
+            ['bmw_spot_paired_', 'copilot_paired_', 'copilot_profile_', 'copilot_provider_', 'copilot_sent_at_'].forEach((p) => localStorage.removeItem(p + channel));
             for (let i = localStorage.length - 1; i >= 0; i--) {
                 const k = localStorage.key(i);
                 if (k && k.indexOf('copilot_model_' + channel + '_') === 0) localStorage.removeItem(k);
@@ -490,31 +451,19 @@
     }
 
     /**
-     * Forget a car on this phone: its notifications, what the pages kept and its key.
+     * Forget a car on this phone: what the pages kept and its key.
      * disconnect: first ask the car to unpair (Spotify logs out, M-Copilot drops its AI key; both
      * make a new QR code). The relay keeps the request 12 h, so a car that is off does it the
      * next time its app reads the channel. Resolves { told }: the relay took the request.
      */
     async function forget(car, disconnect) {
         let told = false;
-        const endpoint = await unsubscribePush(car).catch(() => null);
-        if (car && car.toCar) {
-            try {
-                if (disconnect) told = await sendToCar(car, { type: 'phone_unpair' }, 'BMW car link');
-                else if (endpoint) await sendToCar(car, { type: 'push_unsubscribe', endpoint }, 'BMW car link');
-            } catch (e) { told = false; }
+        if (car && car.toCar && disconnect) {
+            try { told = await sendToCar(car, { type: 'phone_unpair' }, 'BMW car link'); } catch (e) { told = false; }
         }
         clearPageState(car.channel);
         await forgetCar(car.channel);
         return { told };
-    }
-
-    /** A rough device name for the car's list of phones; nothing that identifies a person. */
-    function deviceLabel() {
-        const ua = navigator.userAgent;
-        if (isIOS()) return /iPad/.test(ua) ? 'iPad' : 'iPhone';
-        if (/Android/.test(ua)) return 'Android phone';
-        return 'Browser';
     }
 
     window.CarLink = {
@@ -525,6 +474,6 @@
         /** Why the last sendToCar failed, for the page to show. */
         get RELAY_DOWN() { return lastFailure; },
         startScanner,
-        isIOS, isStandalone, pushSupported, pushSubscription, subscribePush, unsubscribePush, deviceLabel,
+        isIOS, isStandalone,
     };
 })();

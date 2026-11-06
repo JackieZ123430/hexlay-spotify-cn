@@ -57,6 +57,6 @@ wip/quick_code/quick_code_state.json
 /apps/zf8hp/data/
 egs-snapshot*.json
 
-# phone notification subscriptions and the car's push key (apps/m_copilot/phone_push.js)
+# left by M-Copilot before 1.0.17 (phone notifications: subscriptions and the car's push key)
 copilot_push.json
 apps/m_copilot/copilot_push.json

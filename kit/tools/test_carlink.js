@@ -2,13 +2,12 @@
 
 // The phone <-> car link end to end, without network, phone or car: the real page library
 // (docs/carlink.js, WebCrypto) against the real car modules (kit/runtime/link_crypto.js,
-// webpush.js, apps/*/cloud_pair.js, apps/m_copilot/phone_push.js). Checks that:
+// apps/*/cloud_pair.js). Checks that:
 //   - each side opens what the other sealed, and nothing else (tampering, plaintext, its own
 //     messages, another car's key, re-posted or repeated messages);
 //   - only this site's own pairing links are accepted;
 //   - the pairing managers act only on authentic, fresh messages;
-//   - notifications: subscribe / unsubscribe, warning lights and service due told once,
-//     a gone subscription forgotten, a clock-rejected token retried, unpair forgets all.
+//   - the relay's daily quota is said as it is, and the car's hello fits one relay message.
 //   node kit/tools/test_carlink.js
 
 const assert = require('assert');
@@ -58,8 +57,6 @@ Module._resolveFilename = function (request, parent, ...rest) {
 require.cache['fake-tls'] = { id: 'fake-tls', filename: 'fake-tls', loaded: true, exports: fakeTls };
 
 const link = require('../runtime/link_crypto');
-const wp = require('../runtime/webpush');
-const { PhoneNotifier } = require('../../apps/m_copilot/phone_push');
 const { RelayStream } = require('../runtime/relay_stream');
 const { EventEmitter } = require('events');
 const CopilotPair = require('../../apps/m_copilot/cloud_pair').CloudPairManager;
@@ -232,18 +229,29 @@ async function main() {
     const ai = { config: { channel: chC, secretKey: key, paired: true }, saveConfig() {}, isConfigured: () => true, saveCredentials(p) { ai.saved = p; } };
     const cp = new CopilotPair({ log: quiet }, ai);
     assert.strictEqual(cp.channel, chC, 'saved pairing kept');
-    const pushes = [];
-    cp.onPush = (m) => pushes.push(m);
+    let hellos = 0;
+    cp.onHelloRequest = () => { hellos++; };
     const send = async (obj, t) => { await CL.sendToCar(car, obj); const w = page.posts.pop().init.body; cp.handleIncomingMessage(w, false, t === undefined ? nowSec() : t); return w; };
-    const w1 = await send({ type: 'push_subscribe', sub: {} });
-    assert.strictEqual(pushes.length, 1, 'push_subscribe reaches the notifier');
+    const w1 = await send({ type: 'hello_request' });
+    assert.strictEqual(hellos, 1, 'hello_request reaches the car app');
     cp.handleIncomingMessage(w1, false, nowSec());
-    assert.strictEqual(pushes.length, 1, 'the same message again: dropped');
+    assert.strictEqual(hellos, 1, 'the same message again: dropped');
     await send({ type: 'hello_request' }, nowSec() - 3600);
-    assert.strictEqual(pushes.length, 1, 'a re-post an hour late: dropped');
+    assert.strictEqual(hellos, 1, 'a re-post an hour late: dropped');
+    await send({ type: 'push_subscribe', sub: {} });
+    assert.strictEqual(hellos, 1, 'an older page\'s notification set-up: ignored');
     cp.handleIncomingMessage(JSON.stringify({ type: 'copilot_encrypted', iv: 'aa', tag: 'bb', data: 'cc' }), false, nowSec());
-    cp.handleIncomingMessage(JSON.stringify({ type: 'push_subscribe' }), false, nowSec());
-    assert.strictEqual(pushes.length, 1, 'malformed / plaintext: nothing');
+    cp.handleIncomingMessage(JSON.stringify({ type: 'hello_request' }), false, nowSec());
+    assert.strictEqual(hellos, 1, 'malformed / plaintext: nothing');
+    // the largest hello the car sends (main.js: every profile text full of 4-byte characters) fits
+    // ntfy's 4096-byte message (a bigger one would become an attachment the page can't read)
+    const car4 = '\u{1F697}';
+    const bigHello = link.sealForPhone(key, 'copilot_car', { type: 'car_hello', app: 'm_copilot', paired: true, version: '1.0.17',
+        settings: { provider: 'openrouter', model: 'x'.repeat(80), profile: { model: car4.repeat(60), power: car4.repeat(40), mods: car4.repeat(160), country: car4.repeat(40),
+            tune: 'stage2plus', tyres: 'semislick', fuel: 'ron100', use: 'spirited', lang: 'pt' } } });
+    assert(JSON.stringify(bigHello).length < 4096, 'the largest hello fits one relay message (' + JSON.stringify(bigHello).length + ')');
+    const openedHello = await CL.openFromCar(car, { message: JSON.stringify(bigHello), time: nowSec() });
+    assert(openedHello && openedHello.settings && openedHello.settings.profile.lang === 'pt', 'and the page opens it with the settings');
     let profile = null;
     cp.onProfile = (p) => { profile = p; };
     await send({ type: 'copilot_profile', profile: { tune: 'stock' } });
@@ -312,72 +320,6 @@ async function main() {
     assert(rs.retryTimer, 'after a 429 it waits before trying again');
     rs.stop();
     assert(!rs.running && !rs.retryTimer, 'stopped: no retry left');
-
-    // ---- notifications ----
-    const told = [];
-    const pushDir = path.join(tmp, 'push');
-    fs.mkdirSync(pushDir);
-    const pn = new PhoneNotifier({ dataDir: pushDir, log: quiet, request: fakeTls.request, tellPhone: (o) => told.push(o), version: '9.9', settleMs: 5 });
-    pn.hello();
-    const hello = told.pop();
-    assert(hello.type === 'car_hello' && wp.validVapidKeys(pn.state.vapid) && hello.vapid === pn.state.vapid.publicKey, 'hello carries the car\'s push key');
-    const ua = require('crypto').createECDH('prime256v1');
-    ua.generateKeys();
-    const sub = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc123', keys: { p256dh: wp.b64u(ua.getPublicKey()), auth: wp.b64u(require('crypto').randomBytes(16)) } };
-    pn.onPhoneMessage({ type: 'push_subscribe', sub, vapid: 'not-the-key', time: Date.now() });
-    assert(told.some((m) => m.type === 'push_error' && m.reason === 'stale_key') && told.pop().type === 'car_hello', 'a subscription for another key is refused, and the current key re-sent');
-    told.length = 0;
-    pn.onPhoneMessage({ type: 'push_subscribe', sub: Object.assign({}, sub, { endpoint: 'https://evil.example/push' }), vapid: hello.vapid, time: Date.now() });
-    assert.strictEqual(told.pop().reason, 'unsupported', 'an unknown push service is refused');
-    requests.length = 0;
-    pn.onPhoneMessage({ type: 'push_subscribe', sub, vapid: hello.vapid, label: 'iPhone', time: Date.now() });
-    assert.strictEqual(told.pop().type, 'push_ok', 'subscribed');
-    assert.strictEqual(pn.phoneCount(), 1);
-    assert.strictEqual((fs.statSync(path.join(pushDir, 'copilot_push.json')).mode & 0o777).toString(8), '600', 'push state readable by the app only');
-    await new Promise((r) => setTimeout(r, 20));
-    const test = requests.pop();
-    assert.strictEqual(test.opts.hostname, 'fcm.googleapis.com', 'the test notification goes to the push service');
-    assert(/^vapid t=[\w-]+\.[\w-]+\.[\w-]+, k=/.test(test.opts.headers.Authorization) && test.opts.headers['Content-Encoding'] === 'aes128gcm', 'VAPID + aes128gcm');
-    assert(!test.body.toString('latin1').includes('Notifications are on'), 'the notification is not readable on the way');
-
-    // warning light: told once, with its text
-    const active = new Map([[123, true]]), names = new Map([[123, 'Engine oil level low']]);
-    requests.length = 0;
-    pn.checkControl(active, names);
-    await new Promise((r) => setTimeout(r, 30));
-    assert.strictEqual(requests.length, 1, 'a new warning is pushed');
-    pn.checkControl(active, names);
-    await new Promise((r) => setTimeout(r, 30));
-    assert.strictEqual(requests.length, 1, 'the same warning: not again the same day');
-    // service due: once per item and state
-    pn.service([{ name: 'Engine oil', state: 'due soon', way: '1500 km' }, { name: 'Brake fluid', state: 'OK' }]);
-    pn.service([{ name: 'Engine oil', state: 'due soon', way: '1400 km' }]);
-    await new Promise((r) => setTimeout(r, 30));
-    assert.strictEqual(requests.length, 2, 'service due told once');
-    // a token the service rejects (car clock): retried once with the service's time
-    let n403 = 0;
-    respond = () => (n403++ === 0 ? { status: 403, date: Date.now() + 5 * 86400e3 } : { status: 201 });
-    pn.service([{ name: 'Brake pads', state: 'overdue' }]);
-    await new Promise((r) => setTimeout(r, 30));
-    assert.strictEqual(n403, 2, 'retried after the clock fix');
-    assert(Math.abs(pn.clockOffset - 5 * 86400e3) < 5000, 'clock offset learned from the push service');
-    // a subscription that has ended is forgotten
-    respond = () => ({ status: 410 });
-    pn.service([{ name: 'Spark plugs', state: 'overdue' }]);
-    await new Promise((r) => setTimeout(r, 30));
-    assert.strictEqual(pn.phoneCount(), 0, 'a gone subscription is dropped');
-    // unsubscribe and unpair
-    respond = () => ({ status: 201 });
-    pn.onPhoneMessage({ type: 'push_subscribe', sub, vapid: hello.vapid, time: Date.now() });
-    pn.onPhoneMessage({ type: 'push_unsubscribe', endpoint: sub.endpoint, time: Date.now() });
-    assert.strictEqual(pn.phoneCount(), 0, 'unsubscribed');
-    pn.onPhoneMessage({ type: 'push_subscribe', sub, vapid: hello.vapid, time: Date.now() });
-    const oldKey = pn.state.vapid.publicKey;
-    pn.forgetAll();
-    assert(pn.phoneCount() === 0 && pn.vapidPublicKey() !== oldKey, 'unpair forgets every phone and makes a new key');
-    const saved = fs.readFileSync(path.join(pushDir, 'copilot_push.json'), 'utf8');
-    assert(!/vin|WBA|lat|lon/i.test(saved.replace(/"(publicKey|privateKey)":"[^"]+"/g, '')), 'nothing about the car or driver in the push state');
-    pn.stop();
 
     fs.rmSync(tmp, { recursive: true, force: true });
     console.log('carlink: all checks passed');

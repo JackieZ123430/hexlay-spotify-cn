@@ -11,7 +11,7 @@
  *   4. Mobile browser encrypts user's API key with AES-GCM before relaying.
  *   5. Only this specific car can decrypt and store the API credentials.
  *   6. Multi-car safe: each vehicle has an independent channel, encryption key, and storage.
- *   7. What the car tells the phone (paired, its notification key) is encrypted too,
+ *   7. What the car tells the phone (paired, its settings) is encrypted too,
  *      with its own key, and re-posted old messages are dropped (kit/link_crypto.js).
  */
 const tlsDates = require('./tls_dates');
@@ -67,9 +67,7 @@ class CloudPairManager {
 
         this.onPaired = null;
         this.onUnpaired = null;
-        // phone notifications (phone_push.js): the phone's requests, and the relay's clock
-        this.onPush = null;          // (message) for push_subscribe / push_unsubscribe / hello_request
-        this.onServerTime = null;    // (ms) from each poll's Date header
+        this.onHelloRequest = null;  // a phone page asks for the car's hello (main.js: paired, settings)
     }
 
     getPairingUrl() {
@@ -139,7 +137,6 @@ class CloudPairManager {
             this.handleIncomingMessage(item.message, replay, item.time);
         }, (ms) => {
             if (this.openServerTime === null) this.openServerTime = ms;
-            if (this.onServerTime) this.onServerTime(ms);
         });
     }
 
@@ -200,14 +197,14 @@ class CloudPairManager {
             return;
         }
 
-        // Phone notifications: subscribe / unsubscribe this phone, or ask for the car's push key.
-        // Subscribing is idempotent (newest per phone wins), so a replayed one changes nothing.
-        if (parsed.type === 'push_subscribe' || parsed.type === 'push_unsubscribe' || parsed.type === 'hello_request') {
-            if (!this.isPaired()) return;
-            if (parsed.type === 'hello_request' && replay) return;
-            if (this.onPush) this.onPush(parsed);
+        // A phone page asks for the car's hello (not an old request read again from the relay).
+        // push_subscribe / push_unsubscribe from phone pages before 1.0.17 are ignored.
+        if (parsed.type === 'hello_request') {
+            if (!this.isPaired() || replay) return;
+            if (this.onHelloRequest) this.onHelloRequest();
             return;
         }
+        if (parsed.type === 'push_subscribe' || parsed.type === 'push_unsubscribe') return;
 
         // Credentials Pairing Event
         if (parsed.geminiApiKey || parsed.apiKey || parsed.sessionToken) {

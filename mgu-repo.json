@@ -11,37 +11,9 @@
       "args": ["{id}"],
       "sdk": "oap-sdk",
       "output": "dist/{id}@{version}.tgz",
-      "network": ["doom", "spotify", "m_copilot"],
+      "network": ["spotify", "m_copilot"],
       "shared": ["kit/runtime", "kit/platform", "kit/localization", "kit/tools/build.py", "kit/tools/pack_data.py",
         "kit/tools/localize.py", "kit/tools/locale-revisions.json", "kit/tools/oapgen", "oap-sdk"]
     }
-  },
-  "tools": [
-    {
-      "id": "idrive7-renderd",
-      "path": "kit/renderd/prebuilt",
-      "title": "GPU renderer",
-      "description": "The apps' own GPU renderer (mgu-render): draws them at 60 fps, beside the MGU Store's Renderer; installed with the apps",
-      "provides": "renderer",
-      "mguHmi": ["ID7"]
-    },
-    {
-      "id": "mgu-inputgate",
-      "path": "kit/renderd/prebuilt",
-      "version": "1.0.0",
-      "title": "Controller gate",
-      "description": "Lets the apps have the iDrive controller (tabs, page buttons, settings, Doom); loads into the HMI at the next start",
-      "needs": ["renderer"],
-      "optional": false,
-      "mguHmi": ["ID7"],
-      "preload": {
-        "library": "mgu-inputgate.so",
-        "unit": "hmi.service",
-        "process": "HmiMain3D",
-        "strikes": 2,
-        "checkAfterSeconds": 120,
-        "healthySeconds": 60
-      }
-    }
-  ]
+  }
 }

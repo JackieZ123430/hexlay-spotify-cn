@@ -517,7 +517,7 @@ mgu.run({
         };
 
         /**
-         * Disconnected (here or from the phone): the AI key and everything the phone set go - the car
+         * Disconnected from the phone: the AI key and everything the phone set go - the car
          * profile, the AI model choice, the notifications, the conversation. What the car told about
          * itself (VIN, engine and gearbox units) stays. The phone page keeps its entries to send again.
          */
@@ -912,17 +912,6 @@ mgu.run({
             cv.roundRect(ox - 10, oy - 10, real + 20, real + 20, 10, '#ffffff');
             for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.getModule(c, r)) cv.fillRect(ox + c * px, oy + r * px, px, px, '#000000');
         }
-        function disconnect() {
-            cloudPair.notifyUnpair();
-            forgetPhone();
-            cachedQr = null;
-            cachedQrUrl = null;
-            cloudPair.reset();
-            cloudPair.startPolling();
-            confirmAt = 0;
-            showPhoneQr = false;
-            notify('AI disconnected. Scan the QR code to pair again.');
-        }
         const LANG_NAMES = { ka: 'Georgian', de: 'German', fr: 'French', es: 'Spanish', it: 'Italian', nl: 'Dutch', pt: 'Portuguese', tr: 'Turkish', pl: 'Polish' };
         function drawConnect(cv, t) {
             const ex = cv.extra || 0, paired = ai.isConfigured(), now = Date.now();
@@ -951,16 +940,8 @@ mgu.run({
                 pill(258 + sh, ai.hasInternet, ai.hasInternet ? 'Internet: online' : 'Internet: offline (phone hotspot?)');
                 const np = phone.phoneCount();
                 pill(298 + sh, np > 0, np ? 'Notifications: on for ' + np + ' phone' + (np === 1 ? '' : 's') : 'Notifications: off (turn on from the phone page)');
-                // Disconnect: quiet until needed, and asks again
-                const asking = now - confirmAt < 5000;
-                const dw = 360, dx = cx - dw / 2, dy = 352 + ex, dh = 44;
-                cv.roundRect(dx, dy, dw, dh, 10, asking ? withAlpha('#e1001a', 0.35) : '#1a1215');
-                cv.strokeRoundRect(dx, dy, dw, dh, 10, 1, withAlpha('#e1001a', asking ? 1 : 0.7));
-                cv.text(asking ? 'TAP AGAIN TO DISCONNECT' : 'DISCONNECT / CHANGE AI KEY', cx, dy + 28, 14, asking ? '#ffffff' : '#ff5c6c', { align: 'center', font: 'bold', spacing: 1 });
-                cv.target(dx, dy, dw, dh, () => {
-                    if (Date.now() - confirmAt < 5000) disconnect(); else confirmAt = Date.now();
-                    render(true);
-                }, 'btn_disconnect', 12);
+                // disconnecting (or a new AI key) is the phone's: the car follows it live
+                cv.text('Disconnect or change the AI key on your phone.', cx, 380 + ex, 14, '#64748b', { align: 'center' });
             } else {
                 // the QR code grows into the room a taller page has (no bar), the block centred in the panel
                 const qs = Math.min(320, 210 + Math.round(ex * 0.9)), top = 92, bottom = 52 + 458 + ex - 12;
@@ -979,7 +960,7 @@ mgu.run({
                 const qs2 = Math.min(280, 180 + Math.round(ex * 0.8)), y2 = 96 + Math.max(0, Math.floor((410 + ex - 96 - qs2 - 70) / 2));
                 drawQr(cv, cloudPair.getPairingUrl(), 1130 - qs2 / 2, y2 + 10, qs2);
                 cv.text('Open the phone page for this car', 1130, y2 + qs2 + 48, 17, t.text, { align: 'center', font: 'bold' });
-                cv.text('Car profile, AI model and notifications', 1130, y2 + qs2 + 72, 14, '#94a3b8', { align: 'center' });
+                cv.text('Car profile, AI model, notifications, Disconnect', 1130, y2 + qs2 + 72, 14, '#94a3b8', { align: 'center' });
             } else {
                 const p = vehicle.profile || {};
                 const lines = Vehicle.profileLines(p).filter((l) => !/^Country|^Model \(owner\)/.test(l));
@@ -1443,14 +1424,13 @@ mgu.run({
         /* ---------- Adaptive Pacing Render Loop ---------- */
         let lastSig = '';
         let page = ai.isConfigured() ? 0 : 2;   // 0 the co-driver, 1 Data check, 2 Connect (first, until paired)
-        let confirmAt = 0;                  // Disconnect asks again: the second tap within 5 s disconnects
         let showPhoneQr = false;            // Connect: the phone page's QR in place of the settings list
         async function render(force = false) {
             const now = Date.now();
             if (!force && now - lastRenderTime < 250) return;
             const cv = ctx.canvas(W, H);
             // what the frame shows: unchanged, the frame isn't drawn again (a safety redraw every 2 s)
-            const sig = [ai.hasInternet, ai.isConfigured(), showPhoneQr, now - confirmAt < 5000, showKeyboard, customQuery, activeCategory, selectedTopicIdx, currentPrompt, currentResponse,
+            const sig = [ai.hasInternet, ai.isConfigured(), showPhoneQr, showKeyboard, customQuery, activeCategory, selectedTopicIdx, currentPrompt, currentResponse,
                 dialogueScroll, canFollowUp, isThinking, telemetry.moving, vitalsLine(), statusMsg && now - statusTime < 3500 ? statusMsg : '', ai.modelLabel(), providerName(),
                 cv.extra || 0, page === 2 ? cloudPair.getPairingUrl() + phone.phoneCount() + JSON.stringify(vehicle.profile || {}) + (ai.config.model || '') : '', page, page === 1 ? Math.floor(now / 1000) + (checking || '') : ''].join('|');
             if (!force && sig === lastSig && now - lastRenderTime < 2000) return;
@@ -1520,7 +1500,6 @@ mgu.run({
         ctx.onTab((i) => {
             page = i === 1 || i === 2 ? i : 0;
             showKeyboard = false;
-            confirmAt = 0;
             return render(true);
         });
 

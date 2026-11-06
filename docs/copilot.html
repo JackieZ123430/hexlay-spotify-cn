@@ -999,7 +999,7 @@
             btn.innerText = 'DISCONNECT THIS CAR';
             handleCarDisconnected(r.told
                 ? 'Car ' + code + ' is disconnected: it drops your AI key and shows a new QR code (within a minute while M-Copilot is open, or the next time it is opened). This phone forgot it.'
-                : 'This phone forgot car ' + code + ', but the car could not be told (no internet?). Disconnect it on the car: M-Copilot, Connect tab.');
+                : 'This phone forgot car ' + code + ', but the car could not be told (no internet?). To try again: on the car, M-Copilot, Connect tab, tap Show QR for the phone page, scan it, then Disconnect.');
         }
 
         async function connectCopilot() {

@@ -310,17 +310,23 @@ mgu.run({
             notify('Spotify Disconnected.');
             render().catch(() => {});
         };
-        cloudPair.startPolling();
-        // background: no internet checks, slow pairing polls
+        // background: no internet checks, no player polls and no relay stream (its keepalives would
+        // wake the app all drive); what the phone sent meanwhile is read when the screen is back
+        // (the relay keeps 12 h), as M-Copilot does
         const onScreen = () => !ui.isVisible || ui.isVisible('MAIN');
         spotify.isOnScreen = onScreen;
-        cloudPair.isOnScreen = onScreen;
+        if (ui.onVisible) ui.onVisible((name, visible) => {
+            if (name !== 'MAIN') return;
+            if (visible) cloudPair.startPolling(); else cloudPair.stopPolling();
+        });
+        if (onScreen()) cloudPair.startPolling();
 
         // Default to Online mode (demo !== 'on')
         // If not authenticated, open directly on the Connect tab!
         // read each time: the demo setting can change while the app runs
         const isOnlineMode = () => settings.get('demo') !== 'on';
         let page = (isOnlineMode() && !spotify.isAuthenticated()) ? 3 : 0;
+        let showPhoneQr = false;        // Connect, paired: the phone page's QR code in place of the account card
         // the demo switched on or off (Settings, or the offline screen's button): its data in or out
         settings.onChange((k, v) => {
             if (k !== 'demo') return;
@@ -1025,7 +1031,9 @@ mgu.run({
             const cEx = cv.extra || 0;
             G.panelExact(cv, t, 24, 44, 580, 396 + cEx, spotify.isAuthenticated() ? 'Spotify Account Status' : 'Scan to Connect Phone');
 
-            if (spotify.isAuthenticated()) {
+            const authed = spotify.isAuthenticated();
+            if (!authed) showPhoneQr = false;
+            if (authed && !showPhoneQr) {
                 // Connected Card
                 const GREEN = '#1ed760';
                 cv.roundRect(48, 98, 532, 284, 14, '#0a1612');
@@ -1063,19 +1071,14 @@ mgu.run({
                 const nLiked = spotify.likedTotal || (spotify.likedSongs || []).length;
                 cv.text(nPl + ' playlist' + (nPl === 1 ? '' : 's') + '   |   ' + nLiked + ' liked song' + (nLiked === 1 ? '' : 's'), cx, 294, 14, '#64748b', { align: 'center' });
 
-                // Disconnect Button: quiet until needed
-                const dcX = 164, dcY = 316, dcW = 300, dcH = 42;
-                cv.roundRect(dcX, dcY, dcW, dcH, 10, '#1a1215');
-                cv.strokeRoundRect(dcX, dcY, dcW, dcH, 10, 1, withAlpha('#e1001a', 0.7));
-                cv.text('DISCONNECT / SWITCH ACCOUNT', dcX + dcW / 2, dcY + 26, 13, '#ff5c6c', { align: 'center', font: 'bold', spacing: 1 });
-
-                cv.target(dcX, dcY, dcW, dcH, () => {
-                    cloudPair.notifyUnpair();
-                    spotify.logout();
-                    cachedQr = null;
-                    cloudPair.reset();
-                    cloudPair.startPolling();
-                }, 'btn_logout', 15);
+                // disconnecting or switching account is the phone's: the car follows it live. The
+                // phone page's QR code puts this car on a phone again (a new phone, cleared browser)
+                const qbX = 164, qbY = 316, qbW = 300, qbH = 42;
+                cv.roundRect(qbX, qbY, qbW, qbH, 10, '#0f1a14');
+                cv.strokeRoundRect(qbX, qbY, qbW, qbH, 10, 1, withAlpha(GREEN, 0.6));
+                cv.text('SHOW QR FOR THE PHONE PAGE', qbX + qbW / 2, qbY + 26, 13, GREEN, { align: 'center', font: 'bold', spacing: 1 });
+                cv.target(qbX, qbY, qbW, qbH, () => { showPhoneQr = true; render().catch(() => {}); }, 'btn_phone_qr', 15);
+                cv.text('Disconnect or switch account on your phone.', cx, 404, 13, '#64748b', { align: 'center' });
             } else {
                 // Real Cloud Pairing QR Code
                 const qrx = 224, qry = 100, qrsz = 180;
@@ -1099,9 +1102,16 @@ mgu.run({
                 }
 
                 const cx = 314;
-                cv.text('Scan with phone to connect Spotify', cx, 320, 17, t.text, { align: 'center', font: 'bold' });
+                cv.text(authed ? 'Scan to open this car on your phone' : 'Scan with phone to connect Spotify', cx, 320, 17, t.text, { align: 'center', font: 'bold' });
                 cv.text('PAIRING CODE: ' + cloudPair.getShortCode(), cx, 344, 14, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
                 cv.text('https://hexlay.github.io/idrive7-custom-apps/pair.html', cx, 364, 11, '#64748b', { align: 'center' });
+                if (authed) {
+                    const bbX = 164, bbY = 384, bbW = 300, bbH = 40;
+                    cv.roundRect(bbX, bbY, bbW, bbH, 10, '#004e3a');
+                    cv.strokeRoundRect(bbX, bbY, bbW, bbH, 10, 1.5, '#1ed760');
+                    cv.text('BACK TO THE ACCOUNT', bbX + bbW / 2, bbY + 26, 13, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+                    cv.target(bbX, bbY, bbW, bbH, () => { showPhoneQr = false; render().catch(() => {}); }, 'btn_phone_qr_back', 15);
+                }
             }
 
             // Right: Spotify Connect Target Devices
@@ -1261,7 +1271,7 @@ mgu.run({
 
         /* ---------- HMI Button & Touch Interactions ---------- */
         ui.onClick('BTN_PAGE', () => { page = (page + 1) % PAGES.length; return render(); });
-        ctx.onTab((idx) => { page = idx; return render(); });
+        ctx.onTab((idx) => { page = idx; showPhoneQr = false; return render(); });
 
         // Start 60 fps render loop and render initial frame
         // 30 fps while music plays (spectrum, progress), 10 fps otherwise; taps redraw at once

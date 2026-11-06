@@ -11,7 +11,7 @@
  *   4. Mobile browser encrypts Spotify access/refresh tokens with AES-GCM before relaying.
  *   5. Only this specific car can decrypt and store the driver's Spotify tokens.
  *   6. Multi-car safe: each vehicle has an independent channel, encryption key, and storage.
- *   7. What the car tells the phone (paired, unpaired) is encrypted too, with its own key, and
+ *   7. What the car tells the phone (paired) is encrypted too, with its own key, and
  *      re-posted old messages are dropped (kit/link_crypto.js).
  */
 const fs = require('fs');
@@ -129,12 +129,6 @@ class CloudPairManager {
         } catch (e) {
             this.log.warn('CloudPair: could not reach the relay: ' + e.message);
         }
-    }
-
-    /** Before the pairing is dropped (still with the old key, which the phone has). */
-    notifyUnpair() {
-        this.tellPhone({ type: 'unpaired' }, 'BMW Spotify Unpaired');
-        this.log.info('CloudPair: told the phone about the unpair');
     }
 
     notifyAck() {

@@ -431,7 +431,7 @@
                 btns.querySelectorAll('button').forEach((b) => { b.disabled = true; });
                 const r = await CarLink.forget(c, true);
                 say(r.told ? 'Disconnected. The car does it within a minute while the app runs, or the next time the app is opened (within 12 hours).'
-                    : 'This phone forgot the car, but the car could not be reached (no internet?). Disconnect it on its own screen: the app\'s Connect tab.');
+                    : 'This phone forgot the car, but the car could not be reached (no internet?). To try again: on the car, the app\'s Connect tab, tap Show QR for the phone page, scan it, then Disconnect.');
                 renderCars();
             });
             mk('Cancel', '', () => { box.remove(); hide.forEach((el) => { el.style.display = ''; }); });

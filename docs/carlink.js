@@ -230,16 +230,19 @@
         return obj;
     }
 
-    /** Encrypt obj for the car and post it; resolves true when the relay took it. */
     /**
      * Encrypt obj for the car and post it; resolves true when the relay took it. The relay can be
      * briefly unreachable (Safari: "Load failed"), so a network error, 429 or 5xx is tried again,
      * 3 attempts over about 6 s. A repeat that did arrive is harmless: the car keeps the newest.
+     * ntfy.sh's daily message quota (250 a day per internet address, shared by every phone,
+     * computer and car on that Wi-Fi) is not tried again: it lasts until the quota resets.
+     * Why it failed is in CarLink.RELAY_DOWN afterwards.
      */
     async function sendToCar(car, obj, title) {
         const wire = await sealForCar(car, obj);
         if (!wire) return false;
         const body = JSON.stringify(wire);
+        lastFailure = UNREACHABLE;
         for (let attempt = 0; attempt < 3; attempt++) {
             if (attempt) await new Promise((r) => setTimeout(r, attempt === 1 ? 1500 : 4000));
             try {
@@ -247,12 +250,44 @@
                 // request instead of two (a rate-limited preflight is what made Safari say "Load failed")
                 const res = await fetch(RELAY + car.channel, { method: 'POST', body, referrerPolicy: 'no-referrer' });
                 if (res.ok) return true;
-                if (res.status !== 429 && res.status < 500) return false;
+                if (res.status === 429 && await isDailyQuota(res)) {
+                    lastFailure = await quotaText();
+                    return false;
+                }
+                if (res.status !== 429 && res.status < 500) {
+                    lastFailure = 'The relay (ntfy.sh) refused the message (HTTP ' + res.status + '), so nothing was sent.';
+                    return false;
+                }
             } catch (e) { /* unreachable: try again */ }
         }
         return false;
     }
-    const RELAY_DOWN = 'Couldn\'t reach the relay (ntfy.sh) after 3 tries, so nothing was sent. Check the phone\'s internet connection and tap again.';
+    const UNREACHABLE = 'Couldn\'t reach the relay (ntfy.sh) after 3 tries, so nothing was sent. Check the phone\'s internet connection and tap again.';
+    let lastFailure = UNREACHABLE;
+
+    /** A 429 that is the daily message quota (ntfy error 42908), not the short burst limit. */
+    async function isDailyQuota(res) {
+        try {
+            const j = await res.json();
+            return !!j && (j.code === 42908 || /daily message quota/i.test(String(j.error || '')));
+        } catch (e) { return false; }
+    }
+
+    /** What to tell the person when the quota is used up, with the reset time when ntfy.sh says it. */
+    async function quotaText() {
+        let when = 'within 24 hours';
+        try {
+            // a plain GET (no message spent): the anonymous limits of this internet address
+            const res = await fetch(RELAY + 'v1/account', { referrerPolicy: 'no-referrer' });
+            const at = res.ok ? ((await res.json()).stats || {}).reset_at : 0;
+            if (typeof at === 'number' && at * 1000 > Date.now()) {
+                when = 'at ' + new Date(at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            }
+        } catch (e) { /* keep the general wording */ }
+        return 'The relay (ntfy.sh) has used up its free daily limit of 250 messages for this internet connection ' +
+            '(everything on this Wi-Fi counts toward it), so nothing was sent. Turn Wi-Fi off to send over mobile data, ' +
+            'or try again after the limit resets ' + when + '.';
+    }
 
     /** Live messages from the car: onMsg(obj) for each authentic one. Returns a stop function. */
     function listen(car, onMsg) {
@@ -471,7 +506,9 @@
     window.CarLink = {
         APPS, appOf, validChannel, validKeyHex, shortCode, randomHex,
         getCar, listCars, confirmCar, forgetCar, forget, clearPageState, saveCar, updateInfo, carFromAddress, migrateLegacy, parsePairingLink, lastWord, dropIfUnpaired,
-        sendToCar, RELAY_DOWN, openFromCar, listen, recent, waitFor,
+        sendToCar, openFromCar, listen, recent, waitFor,
+        /** Why the last sendToCar failed, for the page to show. */
+        get RELAY_DOWN() { return lastFailure; },
         startScanner,
         isIOS, isStandalone, pushSupported, pushSubscription, subscribePush, unsubscribePush, deviceLabel,
     };

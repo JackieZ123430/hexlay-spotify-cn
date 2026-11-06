@@ -372,6 +372,38 @@
         return endpoint;
     }
 
+    // ---------- forgetting a car ----------
+    /** What the pages keep about a car besides its key: the paired flags, Copilot's profile, provider and models. */
+    function clearPageState(channel) {
+        try {
+            ['bmw_spot_paired_', 'copilot_paired_', 'copilot_profile_', 'copilot_provider_'].forEach((p) => localStorage.removeItem(p + channel));
+            for (let i = localStorage.length - 1; i >= 0; i--) {
+                const k = localStorage.key(i);
+                if (k && k.indexOf('copilot_model_' + channel + '_') === 0) localStorage.removeItem(k);
+            }
+        } catch (e) { /* storage blocked */ }
+    }
+
+    /**
+     * Forget a car on this phone: its notifications, what the pages kept and its key.
+     * disconnect: first ask the car to unpair (Spotify logs out, M-Copilot drops its AI key; both
+     * make a new QR code). The relay keeps the request 12 h, so a car that is off does it the
+     * next time its app reads the channel. Resolves { told }: the relay took the request.
+     */
+    async function forget(car, disconnect) {
+        let told = false;
+        const endpoint = await unsubscribePush(car).catch(() => null);
+        if (car && car.toCar) {
+            try {
+                if (disconnect) told = await sendToCar(car, { type: 'phone_unpair' }, 'BMW car link');
+                else if (endpoint) await sendToCar(car, { type: 'push_unsubscribe', endpoint }, 'BMW car link');
+            } catch (e) { told = false; }
+        }
+        clearPageState(car.channel);
+        await forgetCar(car.channel);
+        return { told };
+    }
+
     /** A rough device name for the car's list of phones; nothing that identifies a person. */
     function deviceLabel() {
         const ua = navigator.userAgent;
@@ -382,7 +414,7 @@
 
     window.CarLink = {
         APPS, appOf, validChannel, validKeyHex, shortCode, randomHex,
-        getCar, listCars, forgetCar, saveCar, updateInfo, carFromAddress, migrateLegacy, parsePairingLink,
+        getCar, listCars, forgetCar, forget, clearPageState, saveCar, updateInfo, carFromAddress, migrateLegacy, parsePairingLink,
         sendToCar, openFromCar, listen, recent, waitFor,
         startScanner,
         isIOS, isStandalone, pushSupported, pushSubscription, subscribePush, unsubscribePush, deviceLabel,

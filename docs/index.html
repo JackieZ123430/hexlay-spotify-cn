@@ -211,7 +211,12 @@
             padding: 10px 12px;
             margin-bottom: 8px;
         }
+        .car-row { flex-wrap: wrap; }
         .car-row .who { flex: 1; min-width: 0; }
+        .forget-choice { flex-basis: 100%; border-top: 1px solid #16202f; padding-top: 10px; margin-top: 2px; }
+        .forget-choice p { font-size: 12px; color: #cbd5e1; line-height: 1.5; margin-bottom: 8px; }
+        .forget-choice div { display: flex; flex-wrap: wrap; gap: 6px; }
+        .car-row button.danger { border-color: #e1001a; color: #ff6b6b; background: rgba(225, 0, 26, 0.12); }
         .car-row .who b { display: block; font-size: 14px; color: #ffffff; }
         .car-row .who span { font-size: 12px; color: #8a95a6; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 1px; }
         .car-row a, .car-row button {
@@ -446,17 +451,38 @@
                 const forget = document.createElement('button');
                 forget.type = 'button';
                 forget.textContent = 'Forget';
-                forget.onclick = async () => {
-                    if (forget.dataset.sure !== '1') { forget.dataset.sure = '1'; forget.textContent = 'Sure?'; return; }
-                    // this phone's notifications for it stop too; the car itself stays paired
-                    await CarLink.unsubscribePush(c).catch(() => {});
-                    await CarLink.forgetCar(c.channel);
-                    say('Forgotten on this phone. The car stays paired until you unpair it on the car or on its page.');
-                    renderCars();
-                };
+                forget.onclick = () => askForget(row, c, [open, forget]);
                 row.append(who, open, forget);
                 list.appendChild(row);
             }
+        }
+
+        // Forget: disconnect the car too (it logs out / drops its AI key and makes a new QR code),
+        // or only this phone (the car stays paired and keeps working)
+        function askForget(row, c, hide) {
+            if (row.querySelector('.forget-choice')) return;
+            hide.forEach((el) => { el.style.display = 'none'; });
+            const box = document.createElement('div');
+            box.className = 'forget-choice';
+            const p = document.createElement('p');
+            p.innerText = c.app === 'spotify'
+                ? 'Disconnect the car too? It logs out of Spotify and shows a new QR code. "Only this phone" leaves the car signed in.'
+                : 'Disconnect the car too? It drops your AI key, stops notifying your phones and shows a new QR code. "Only this phone" leaves the car paired.';
+            const btns = document.createElement('div');
+            const mk = (label, cls, fn) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; if (cls) b.className = cls; b.onclick = fn; btns.appendChild(b); return b; };
+            const done = async (disconnect) => {
+                btns.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+                const r = await CarLink.forget(c, disconnect);
+                say(!disconnect ? 'Forgotten on this phone. The car stays paired: to sign it out, use its own screen.'
+                    : r.told ? 'Forgotten, and the car was told to disconnect. It does so within a minute while the app runs, or the next time the app is opened (within 12 hours).'
+                    : 'Forgotten on this phone, but the car could not be reached (no internet?). Disconnect it on its own screen.');
+                renderCars();
+            };
+            mk('Forget & disconnect car', 'danger', () => done(true));
+            mk('Only this phone', '', () => done(false));
+            mk('Cancel', '', () => { box.remove(); hide.forEach((el) => { el.style.display = ''; }); });
+            box.append(p, btns);
+            row.appendChild(box);
         }
 
         // only this site's own pairing links are accepted: a QR code can't send the phone elsewhere

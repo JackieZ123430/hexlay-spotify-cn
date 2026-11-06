@@ -158,6 +158,24 @@ async function main() {
     assert.strictEqual(page2.localStorage.length + page2.sessionStorage.length, 0, 'plain-text keys wiped');
     assert.strictEqual((await page2.CarLink.listCars()).length, 2, 'both cars kept');
 
+    // ---- forgetting a car: only this phone, or disconnecting the car too ----
+    const chF = 'bmw_copilot_' + link.nonce(12), keyF = link.nonce(32);
+    const carF = await CL.saveCar(chF, keyF);
+    ['copilot_paired_', 'copilot_profile_', 'copilot_provider_'].forEach((p) => page.localStorage.setItem(p + chF, 'x'));
+    page.localStorage.setItem('copilot_model_' + chF + '_gemini', 'x');
+    page.localStorage.setItem('copilot_paired_' + chC, 'true');
+    page.posts.length = 0;
+    await CL.forget(carF, false);
+    assert.strictEqual(page.posts.length, 0, 'only this phone: nothing sent to the car');
+    assert.strictEqual(await CL.getCar(chF), null, 'the key is gone');
+    assert(!Array.from({ length: page.localStorage.length }, (_, i) => page.localStorage.key(i)).some((k) => k.indexOf(chF) >= 0), 'what the pages kept about it is gone');
+    assert.strictEqual(page.localStorage.getItem('copilot_paired_' + chC), 'true', 'other cars untouched');
+    const carF2 = await CL.saveCar(chF, keyF);
+    const r = await CL.forget(carF2, true);
+    const unpair = link.openFromPhone(keyF, JSON.parse(page.posts.pop().init.body));
+    assert(r.told && unpair && unpair.type === 'phone_unpair', 'forget & disconnect sends the car an authentic unpair');
+    assert.strictEqual(await CL.getCar(chF), null, 'and forgets the key');
+
     // ---- M-Copilot's pairing manager ----
     const ai = { config: { channel: chC, secretKey: key, paired: true }, saveConfig() {}, isConfigured: () => true, saveCredentials(p) { ai.saved = p; } };
     const cp = new CopilotPair({ log: quiet }, ai);

@@ -760,7 +760,15 @@
             // leftovers of older versions: the plain-text key copies and the unused pairing channel
             try { localStorage.removeItem('bmw_spot_channel'); } catch (e) {}
             car = await CarLink.carFromAddress('spotify', channel);
-            if (!channel) {
+            if (channel && !car) {
+                // forgotten here, or paired in another browser: no "Connected" without the car's key
+                CarLink.clearPageState(channel);
+                show('cardNoVehicle', true);
+                show('cardPairing', false);
+                show('cardSuccess', false);
+                showStatus('This phone no longer has car ' + CarLink.shortCode(channel) + ' (it was forgotten here, or paired in another browser). Scan the QR code on the car screen to add it again.', true);
+                channel = '';
+            } else if (!channel) {
                 await CarLink.migrateLegacy();
                 show('cardNoVehicle', true);
                 show('cardPairing', false);

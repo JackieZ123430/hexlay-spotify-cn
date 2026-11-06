@@ -362,7 +362,7 @@
         <div style="background: #06080e; border: 1px solid #1a2333; padding: 14px; border-radius: 8px; font-size: 13px; color: #cbd5e1; margin-bottom: 18px; text-align: left;">
             <strong style="color: #00f0ff; display: block; margin-bottom: 4px;">How to pair:</strong>
             1. Open <strong>M-Copilot</strong> on your BMW iDrive screen.<br>
-            2. Tap <strong>PAIR PHONE / QR CODE</strong>.<br>
+            2. Press <strong>Pair Phone</strong> on the bottom button bar (an already paired car stays paired).<br>
             3. Point your smartphone camera at the displayed QR code.
         </div>
         <a class="btn-connect" href="index.html" style="display: block; text-align: center; text-decoration: none;">MY CARS &amp; QR SCANNER</a>
@@ -997,7 +997,17 @@
 
         (async function init() {
             car = await CarLink.carFromAddress('copilot', channel);
-            if (!channel) {
+            if (channel && !car) {
+                // forgotten here, or paired in another browser: no "Connected" without the car's key
+                CarLink.clearPageState(channel);
+                show('cardNoVehicle', true);
+                show('cardPairing', false);
+                show('cardSuccess', false);
+                const notice = document.getElementById('disconnectNotice');
+                notice.innerText = 'This phone no longer has car ' + CarLink.shortCode(channel) + ' (it was forgotten here, or paired in another browser). On the car, press Pair Phone and scan the QR code to add it again.';
+                notice.style.display = 'block';
+                channel = '';
+            } else if (!channel) {
                 show('cardNoVehicle', true);
                 show('cardPairing', false);
                 show('cardSuccess', false);

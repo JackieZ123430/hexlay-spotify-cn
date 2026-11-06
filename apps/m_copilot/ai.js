@@ -50,7 +50,8 @@ class AiBridge {
         // re-checked only while the app is on screen (main.js sets isOnScreen)
         if (!this.isOnScreen) this.isOnScreen = () => true;
         setInterval(() => {
-            if (this.isOnScreen()) this.checkInternetConnection().catch(() => {});
+            // an answer in the last 30 s already showed the uplink works
+            if (this.isOnScreen() && Date.now() - (this.lastReplyAt || 0) > 30000) this.checkInternetConnection().catch(() => {});
         }, 15000);
     }
 
@@ -360,10 +361,19 @@ class AiBridge {
         else if (d.error) faults = 'Fault memory: could not be read (' + d.error + ').';
         else {
             const units = d.units.filter((u) => u.codes.length);
-            const fault = (c) => (typeof c === 'string' ? c : c.code + (c.text ? ' "' + c.text + '"' : ' (no text known)'));
+            // ISO 14229 status byte: bit 0 failing now, 1 failed this drive, 2 pending, 3 confirmed (stored), 7 warning lamp
+            const state = (b) => {
+                if (typeof b !== 'number') return '';
+                const l = [(b & 0x01) ? 'ACTIVE NOW' : (b & 0x02) ? 'occurred during this drive, not active now' : 'not active now'];
+                if (b & 0x08) l.push('stored'); else if (b & 0x04) l.push('pending (seen once, not confirmed)');
+                if (b & 0x80) l.push('warning lamp requested');
+                return ' [' + l.join(', ') + ']';
+            };
+            const fault = (c) => (typeof c === 'string' ? c : c.code + state(c.status) + (c.text ? ' "' + c.text + '"' : ' (no text known)'));
             faults = 'Fault memory (read ' + Math.max(0, Math.round((Date.now() - d.at) / 60000)) + ' min ago from ' + d.answered + ' control units): '
                 + (units.length ? d.total + ' stored fault(s):\n' + units.map((u) => '- ' + u.name + ': ' + u.codes.map(fault).join('; ')).join('\n')
                     + '\nThe quoted texts are BMW\'s own fault descriptions: explain what they mean for the driver. A code without a text: do not guess its meaning.'
+                    + ' Lead with ACTIVE NOW faults and those with the warning lamp: they matter now. Faults not active now happened earlier and may be old.'
                     : 'no stored faults.');
         }
 
@@ -396,9 +406,14 @@ class AiBridge {
             tuned ? 'The car is tuned: take the higher load into account (fuel, oil, cooling, clutch or gearbox torque limits) and say where a tune changes the stock advice.'
                 : 'Unless the profile says the car is tuned, assume factory specifications.',
             'Give numbers for this car\'s engine and gearbox when you know them; say when a figure depends on the exact model.',
+            t.vehicle && t.vehicle.profile && t.vehicle.profile.country
+                ? 'The car is driven in ' + t.vehicle.profile.country + ': where fuels, inspections, tyre rules, laws or climate differ by country, answer for ' + t.vehicle.profile.country + '.' : '',
             'Where the advice itself risks damage or a crash, say so in a few words. No general disclaimers.',
             fahr || miles || pUnit !== 'bar' ? 'The car is set to ' + [pUnit, fahr ? 'degrees F' : 'degrees C', miles ? 'miles' : 'km'].join(', ') + ': give every number in these units, as the readings above are.' : '',
-            'Answer in plain text for a car screen: at most 6 short lines, no markdown, no tables, under 110 words. Start with the answer, not a preamble.',
+            t.moving === true ? 'The car is moving: answer in at most 3 short lines, under 45 words, the essentials only (the driver can ask for more when parked). Plain text, no markdown.'
+                : t.moving === false ? 'The car is standing: answer in plain text for a car screen, at most 8 short lines, no markdown, no tables, under 160 words.'
+                : 'Answer in plain text for a car screen: at most 6 short lines, no markdown, no tables, under 110 words.',
+            'Start with the answer, not a preamble.',
             LANGUAGES[t.vehicle && t.vehicle.profile && t.vehicle.profile.lang] ? 'Answer in ' + LANGUAGES[t.vehicle.profile.lang] + '.' : '',
         ].filter((l) => l !== '').join('\n');
     }
@@ -455,6 +470,10 @@ class AiBridge {
     /** POST json to https://host/path (kept-alive connection); resolves { status, json, raw } or { error }. */
     _post(host, pathStr, headers, bodyObj, opts) {
         const body = JSON.stringify(bodyObj);
+        // a connection idle for a while may be dead (the hotspot reconnected): start afresh rather than
+        // wait for a timeout on it; quick follow-up questions still reuse it
+        if (this.lastPostAt && Date.now() - this.lastPostAt > 90000) { try { this.agent.destroy(); } catch (e) {} this.agent = tlsDates.agent(); }
+        this.lastPostAt = Date.now();
         const u = opts && opts.url;
         return new Promise((resolve) => {
             let done = false;
@@ -475,6 +494,8 @@ class AiBridge {
                     res.on('end', () => {
                         let json = null;
                         try { json = JSON.parse(data); } catch (e) {}
+                        this.lastReplyAt = Date.now();
+                        this.hasInternet = true;
                         finish({ status: res.statusCode, json, raw: data });
                     });
                     res.on('error', (e) => finish({ error: e.message }));

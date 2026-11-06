@@ -503,6 +503,77 @@
             <option value="touring">Long trips</option>
         </select>
 
+        <label for="pfCountry">Country you drive in</label>
+        <select id="pfCountry">
+            <option value="">Not set</option>
+            <option value="Georgia">Georgia</option>
+            <option value="Armenia">Armenia</option>
+            <option value="Azerbaijan">Azerbaijan</option>
+            <option value="Turkey">Turkey</option>
+            <option value="Ukraine">Ukraine</option>
+            <option value="Kazakhstan">Kazakhstan</option>
+            <option value="Germany">Germany</option>
+            <option value="Austria">Austria</option>
+            <option value="Switzerland">Switzerland</option>
+            <option value="United Kingdom">United Kingdom</option>
+            <option value="Ireland">Ireland</option>
+            <option value="France">France</option>
+            <option value="Belgium">Belgium</option>
+            <option value="Netherlands">Netherlands</option>
+            <option value="Luxembourg">Luxembourg</option>
+            <option value="Italy">Italy</option>
+            <option value="Spain">Spain</option>
+            <option value="Portugal">Portugal</option>
+            <option value="Poland">Poland</option>
+            <option value="Czechia">Czechia</option>
+            <option value="Slovakia">Slovakia</option>
+            <option value="Hungary">Hungary</option>
+            <option value="Romania">Romania</option>
+            <option value="Bulgaria">Bulgaria</option>
+            <option value="Greece">Greece</option>
+            <option value="Croatia">Croatia</option>
+            <option value="Slovenia">Slovenia</option>
+            <option value="Serbia">Serbia</option>
+            <option value="Lithuania">Lithuania</option>
+            <option value="Latvia">Latvia</option>
+            <option value="Estonia">Estonia</option>
+            <option value="Finland">Finland</option>
+            <option value="Sweden">Sweden</option>
+            <option value="Norway">Norway</option>
+            <option value="Denmark">Denmark</option>
+            <option value="Iceland">Iceland</option>
+            <option value="Israel">Israel</option>
+            <option value="United Arab Emirates">United Arab Emirates</option>
+            <option value="Saudi Arabia">Saudi Arabia</option>
+            <option value="Qatar">Qatar</option>
+            <option value="Kuwait">Kuwait</option>
+            <option value="Bahrain">Bahrain</option>
+            <option value="Oman">Oman</option>
+            <option value="Egypt">Egypt</option>
+            <option value="South Africa">South Africa</option>
+            <option value="Morocco">Morocco</option>
+            <option value="India">India</option>
+            <option value="China">China</option>
+            <option value="Hong Kong">Hong Kong</option>
+            <option value="Taiwan">Taiwan</option>
+            <option value="Japan">Japan</option>
+            <option value="South Korea">South Korea</option>
+            <option value="Singapore">Singapore</option>
+            <option value="Malaysia">Malaysia</option>
+            <option value="Thailand">Thailand</option>
+            <option value="Indonesia">Indonesia</option>
+            <option value="Philippines">Philippines</option>
+            <option value="Australia">Australia</option>
+            <option value="New Zealand">New Zealand</option>
+            <option value="United States">United States</option>
+            <option value="Canada">Canada</option>
+            <option value="Mexico">Mexico</option>
+            <option value="Brazil">Brazil</option>
+            <option value="Argentina">Argentina</option>
+            <option value="Chile">Chile</option>
+        </select>
+        <p class="helper-text">For local fuels, inspections, tyre rules and climate in the answers.</p>
+
         <label for="pfLang">Answer language</label>
         <select id="pfLang">
             <option value="">English</option>
@@ -678,7 +749,7 @@
             }
         }
 
-        const PROFILE_FIELDS = { model: 'pfModel', tune: 'pfTune', power: 'pfPower', mods: 'pfMods', tyres: 'pfTyres', fuel: 'pfFuel', use: 'pfUse', lang: 'pfLang' };
+        const PROFILE_FIELDS = { model: 'pfModel', tune: 'pfTune', power: 'pfPower', mods: 'pfMods', tyres: 'pfTyres', fuel: 'pfFuel', use: 'pfUse', lang: 'pfLang', country: 'pfCountry' };
 
         // the profile card needs the car's key (it came with the QR code)
         function showProfileCard() {

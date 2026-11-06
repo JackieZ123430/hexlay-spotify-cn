@@ -105,7 +105,7 @@ function decodeVin(vin) {
 }
 
 // owner profile fields: free texts (length-capped) and choices (only these values)
-const PROFILE_TEXT = { model: 60, power: 40, mods: 160 };
+const PROFILE_TEXT = { model: 60, power: 40, mods: 160, country: 40 };
 const PROFILE_CHOICE = {
     tune: ['stock', 'stage1', 'stage2', 'stage2plus', 'custom'],
     tyres: ['summer', 'allseason', 'winter', 'semislick', 'runflat'],
@@ -141,6 +141,7 @@ function profileLines(p) {
     if (p.tyres) l.push('Tyres: ' + PROFILE_WORDS.tyres[p.tyres]);
     if (p.fuel) l.push('Fuel used: ' + PROFILE_WORDS.fuel[p.fuel]);
     if (p.use) l.push('Mostly used for: ' + PROFILE_WORDS.use[p.use]);
+    if (p.country) l.push('Country: ' + p.country);
     return l;
 }
 

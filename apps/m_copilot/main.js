@@ -99,16 +99,18 @@ mgu.run({
         let showPairing = false;
         let isThinking = false;
         let thinkTimer = null;
+        let thinkStart = 0;
         let lastRenderTime = 0;
         let dialogueScroll = 0;
         let dialogueRows = { count: 0, visible: 11 };
         let dialogueAcc = 0;
+        let rowH = 26;                      // the dialogue's line height (bigger while moving)
         ctx.onScroll((dy) => {
             const max = Math.max(0, dialogueRows.count - dialogueRows.visible);
             dialogueAcc += dy;
-            const rows = dialogueAcc > 0 ? Math.floor(dialogueAcc / 26) : Math.ceil(dialogueAcc / 26);
+            const rows = dialogueAcc > 0 ? Math.floor(dialogueAcc / rowH) : Math.ceil(dialogueAcc / rowH);
             if (!rows) return (dy > 0 && dialogueScroll < max) || (dy < 0 && dialogueScroll > 0);
-            dialogueAcc -= rows * 26;
+            dialogueAcc -= rows * rowH;
             const next = Math.max(0, Math.min(max, dialogueScroll + rows)), moved = next !== dialogueScroll;
             dialogueScroll = next;
             render(true).catch(() => {});
@@ -119,6 +121,8 @@ mgu.run({
         let selectedTopicIdx = 0;
         let showKeyboard = false;
         let customQuery = '';
+        const QUERY_MAX = 160;
+        const tail = (s, n) => (s.length > n ? '…' + s.slice(-(n - 1)) : s);
 
         let currentPrompt = TOPIC_CATEGORIES[0].topics[0].title;
         let currentResponse = 'M-Copilot ready. Select a category & topic chip or ask a custom question.';
@@ -132,7 +136,7 @@ mgu.run({
             tyres: null, tyreTargets: null, tyreTemps: null, fuelL: null, rangeKm: null, batteryPct: null,
             engine: null, msa: null, handbrake: null, odoKm: null, avgCons: null, powerPct: null, torquePct: null,
             awd: null, condition: null, service: null, serviceNext: null, checkControl: null, programme: null, ac: null, hvTemp: null, hvVolt: null,
-            engineSnap: null, dtcScan: null, vehicle: null, units: {}, drive: null,
+            engineSnap: null, dtcScan: null, vehicle: null, units: {}, drive: null, moving: null,
         };
         const Vehicle = require('./vehicle');
         const vehicle = new Vehicle({ dataDir: ctx.dataDir, log });
@@ -334,36 +338,29 @@ mgu.run({
             // kit/car feeds a simulator while no car answers: that must never reach the AI as the car's state
             if (data.demo) return;
             driveFeed(data);
-            {
-                let changed = false;
-                if (data.speed !== undefined && Math.round(data.speed) !== telemetry.speed) {
-                    telemetry.speed = Math.round(data.speed);
-                    changed = true;
-                }
-                if (data.rpm !== undefined && Math.round(data.rpm) !== telemetry.rpm) {
-                    telemetry.rpm = Math.round(data.rpm);
-                    changed = true;
-                }
-                if (data.oil !== undefined && Math.round(data.oil) !== telemetry.oilTemp) {
-                    telemetry.oilTemp = Math.round(data.oil);
-                    changed = true;
-                }
-                if (data.coolant !== undefined && Math.round(data.coolant) !== telemetry.coolantTemp) {
-                    telemetry.coolantTemp = Math.round(data.coolant);
-                    changed = true;
-                }
-                if (data.gLat !== undefined) telemetry.gLat = data.gLat;
-                if (data.gLong !== undefined) telemetry.gLong = data.gLong;
-                if (data.gear !== undefined) telemetry.gear = data.gear;
-                if (data.stage !== undefined) telemetry.stage = data.stage;
-                if (data.torque !== undefined) telemetry.torque = Math.round(data.torque);
-                if (data.condition !== undefined) telemetry.condition = data.condition;
-
-                // When idle and data changed, gently refresh without pegging CPU
-                if (changed && !isThinking && onScreen() && (Date.now() - lastRenderTime > 400)) {
-                    render().catch(() => {});
-                }
+            // moving or parked (with a gap, so stop-and-go doesn't flicker): answer length and text size follow it
+            if (typeof data.speed === 'number') {
+                telemetry.moving = data.speed > 8 ? true : data.speed < 3 ? false : telemetry.moving;
+                telemetry.speed = Math.round(data.speed);
             }
+            if (typeof data.rpm === 'number') telemetry.rpm = Math.round(data.rpm);
+            if (typeof data.oil === 'number') telemetry.oilTemp = Math.round(data.oil);
+            if (typeof data.coolant === 'number') telemetry.coolantTemp = Math.round(data.coolant);
+            if (data.gLat !== undefined) telemetry.gLat = data.gLat;
+            if (data.gLong !== undefined) telemetry.gLong = data.gLong;
+            if (data.gear !== undefined) telemetry.gear = data.gear;
+            if (data.stage !== undefined) telemetry.stage = data.stage;
+            if (typeof data.torque === 'number') telemetry.torque = Math.round(data.torque);
+            if (data.condition !== undefined) telemetry.condition = data.condition;
+            // no redraw from here: the loop redraws when something on screen changed (render)
+        }
+
+        /** Coming back on screen: values that are only sent on change may be old, so they are cleared. */
+        function clearLive() {
+            ['speed', 'rpm', 'gear', 'stage', 'torque', 'boost', 'mode', 'oilTemp', 'coolantTemp', 'ambient', 'gLat', 'gLong', 'tyres', 'tyreTargets', 'tyreTemps',
+                'fuelL', 'rangeKm', 'batteryPct', 'engine', 'msa', 'handbrake', 'powerPct', 'torquePct', 'awd', 'condition', 'programme', 'ac', 'hvTemp', 'hvVolt',
+                'moving', 'checkControl'].forEach((k) => { telemetry[k] = null; });
+            ccActive.clear();
         }
 
         // the owner's car profile from the phone page (model, tune, mods, tyres, fuel, use)
@@ -392,7 +389,7 @@ mgu.run({
         function driveFeed(d) {
             const now = Date.now();
             if (!drive || now - drive.last > 15 * 60 * 1000) drive = driveNew();
-            const dt = Math.min(1000, now - drive.last);
+            const dt = Math.min(3000, now - drive.last);       // a steady cruise sends few updates
             drive.last = now;
             const sp = d.speed, rpm = d.rpm;
             if (typeof sp === 'number' && sp >= 0 && sp < 400) { drive.km += sp * dt / 3600000; drive.vmax = hi(drive.vmax, sp); }
@@ -496,9 +493,10 @@ mgu.run({
             isThinking = active;
             if (isThinking) {
                 if (!thinkTimer) {
+                    thinkStart = Date.now();
                     thinkTimer = setInterval(() => {
                         if (onScreen()) render(true).catch(() => {});
-                    }, 40); // 25 fps while thinking, on screen only
+                    }, 500); // the seconds counter, on screen only
                 }
             } else {
                 if (thinkTimer) {
@@ -529,11 +527,16 @@ mgu.run({
             return steady();
         }
 
-        let diag = null;
-        async function diagLink() {
+        // the diagnostic link: made once, and again (at most every 30 s) when it could not be made - the
+        // head unit's diagnostic service may not be up yet right after it starts
+        let diag = null, diagMaking = null, diagAt = 0;
+        function diagLink() {
+            if (diag && !(diag.error && Date.now() - diagAt > 30000)) return Promise.resolve(diag);
+            if (diagMaking) return diagMaking;
             const { Diag } = require('./kit/diag');
-            if (!diag) diag = await new Diag(signals, log).init();
-            return diag;
+            diagAt = Date.now();
+            diagMaking = new Diag(signals, log).init().then((d) => { diag = d; diagMaking = null; return d; }, (e) => { diagMaking = null; throw e; });
+            return diagMaking;
         }
 
         /** Once per car: the VIN (if MainApp didn't pass it) and the engine / gearbox unit types. */
@@ -614,7 +617,7 @@ mgu.run({
                 const found = [];
                 res.forEach((uds, addr) => {
                     const p = parseDtcReply(uds, [0x02, 0x0C]);
-                    found.push({ addr, codes: p.ok ? p.dtcs.map((x) => x.code) : [] });
+                    found.push({ addr, codes: p.ok ? p.dtcs : [] });
                 });
                 // the texts: for the units with faults, their exact type first (once per unit, kept)
                 const T = require('./dtc_text');
@@ -623,7 +626,7 @@ mgu.run({
                 const units = found.map((u) => {
                     total += u.codes.length;
                     return { addr: u.addr, name: T.unitName(u.addr, ids) || ECU[u.addr] || ('ECU 0x' + u.addr.toString(16).toUpperCase()),
-                        codes: u.codes.map((code) => ({ code, text: T.describe(u.addr, code, ids) })) };
+                        codes: u.codes.map((x) => ({ code: x.code, status: x.status, text: T.describe(u.addr, x.code, ids) })) };
                 });
                 telemetry.dtcScan = { at: Date.now(), answered: units.length, total, units };
                 log.info('M-Copilot: fault memory read: ' + units.length + ' units, ' + total + ' faults');
@@ -635,7 +638,7 @@ mgu.run({
 
         const simulated = (d) => {
             const r = (v) => (typeof v === 'number' && isFinite(v) ? Math.round(v) : null);
-            return Object.assign({}, telemetry, { demo: true, speed: r(d.speed), rpm: r(d.rpm), oilTemp: r(d.oil), coolantTemp: r(d.coolant),
+            return Object.assign({}, telemetry, { demo: true, moving: typeof d.speed === 'number' ? d.speed > 8 : null, speed: r(d.speed), rpm: r(d.rpm), oilTemp: r(d.oil), coolantTemp: r(d.coolant),
                 torque: r(d.torque), gear: typeof d.gear === 'number' ? d.gear : null, gLat: d.gLat, gLong: d.gLong });
         };
 
@@ -880,7 +883,7 @@ mgu.run({
             cv.strokeRoundRect(kx, qBoxY, kw, qBoxH, 8, 1.5, '#00a3e0');
 
             const hasText = !!customQuery.trim();
-            const displayText = hasText ? (customQuery + '_') : 'Type your question with touch keyboard or tap a preset below...';
+            const displayText = hasText ? tail(customQuery, 100) + '_' : 'Type your question with touch keyboard or tap a preset below...';
             cv.text(displayText, kx + 18, qBoxY + 30, 15, hasText ? '#ffffff' : '#64748b', { font: hasText ? 'bold' : 'normal' });
 
             // Clear button inside input bar
@@ -941,7 +944,7 @@ mgu.run({
                     cv.text(k, kxPos + keyW / 2, ry + 25, 16, '#ffffff', { align: 'center', font: 'bold' });
 
                     cv.target(kxPos, ry, keyW, keyH, () => {
-                        customQuery += k;
+                        if (customQuery.length < QUERY_MAX) customQuery += k;
                         render(true);
                     }, 'kb_k_' + rIdx + '_' + cIdx, 6);
                 });
@@ -967,7 +970,7 @@ mgu.run({
             cv.strokeRoundRect(spX, aY, spW, aH, 8, 1, '#1e2d42');
             cv.text('SPACEBAR', spX + spW / 2, aY + 27, 14, '#cbd5e1', { align: 'center', font: 'bold' });
             cv.target(spX, aY, spW, aH, () => {
-                customQuery += ' ';
+                if (customQuery.length < QUERY_MAX) customQuery += ' ';
                 render(true);
             }, 'kb_act_space', 8);
 
@@ -1049,7 +1052,7 @@ mgu.run({
             cv.strokeRoundRect(inputX, inputY, inputW, inputH, 8, showKeyboard ? 1.5 : 1, showKeyboard ? '#00f0ff' : '#1e2d42');
 
             const hasCustom = !!customQuery.trim();
-            const inputLabel = hasCustom ? (customQuery + (showKeyboard ? '_' : '')) : (showKeyboard ? 'Typing custom question..._' : 'Ask Custom Question...');
+            const inputLabel = hasCustom ? (tail(customQuery, 40) + (showKeyboard ? '_' : '')) : (showKeyboard ? 'Typing custom question..._' : 'Ask Custom Question...');
             cv.text(inputLabel, inputX + 16, inputY + 27, 14, hasCustom ? '#ffffff' : (showKeyboard ? '#00f0ff' : '#94a3b8'), { font: (hasCustom || showKeyboard) ? 'bold' : 'normal' });
             cv.target(inputX, inputY, inputW, inputH, () => {
                 showKeyboard = !showKeyboard;
@@ -1121,9 +1124,12 @@ mgu.run({
                 });
             }
 
-            // Render Response text with wrap and scroll
-            const lines = wrapLines(currentResponse, 88);
-            const maxVisibleLines = 11 + Math.floor(dEx / 26) - (chips ? 2 : 0);
+            // Render Response text with wrap and scroll: bigger while the car is moving (a glance, not a read)
+            const big = telemetry.moving === true, lineH = big ? 34 : 26, size = big ? 21 : 16;
+            rowH = lineH;
+            const shown = isThinking ? currentResponse + '  ' + Math.floor((Date.now() - thinkStart) / 1000) + ' s' : currentResponse;
+            const lines = wrapLines(shown, big ? 66 : 88);
+            const maxVisibleLines = Math.floor((rh - 24 - (chips ? chipH + 18 : 0)) / lineH);
             dialogueRows = { count: lines.length, visible: maxVisibleLines };
             cv.scroll = true;
             const maxScroll = Math.max(0, lines.length - maxVisibleLines);
@@ -1131,7 +1137,7 @@ mgu.run({
 
             const visible = lines.slice(dialogueScroll, dialogueScroll + maxVisibleLines);
             visible.forEach((line, idx) => {
-                const ly = ry + 36 + idx * 26;
+                const ly = ry + 36 + idx * lineH;
                 let col = '#e2e8f0';
                 let isBold = false;
 
@@ -1142,7 +1148,7 @@ mgu.run({
                     col = '#ffffff';
                 } else if (/^\d+\./.test(line)) col = '#ffffff';
 
-                cv.text(line, rx + 24, ly, 16, col, { font: isBold ? 'bold' : 'normal' });
+                cv.text(line, rx + 24, ly, size, col, { font: isBold ? 'bold' : 'normal' });
             });
 
             // Scrollbar & Page indicator when content exceeds card
@@ -1173,16 +1179,21 @@ mgu.run({
         }
 
         /* ---------- Adaptive Pacing Render Loop ---------- */
+        let lastSig = '';
         async function render(force = false) {
             const now = Date.now();
-            const minInterval = isThinking ? 40 : 250;
-            if (!force && (now - lastRenderTime < minInterval)) {
-                return;
-            }
+            if (!force && now - lastRenderTime < 250) return;
+            const cv = ctx.canvas(W, H);
+            // what the frame shows: unchanged, the frame isn't drawn again (a safety redraw every 2 s)
+            const sig = [ai.hasInternet, ai.isConfigured(), showPairing, showKeyboard, customQuery, activeCategory, selectedTopicIdx, currentPrompt, currentResponse,
+                dialogueScroll, canFollowUp, isThinking, telemetry.moving, vitalsLine(), statusMsg && now - statusTime < 3500 ? statusMsg : '', ai.modelLabel(), providerName(),
+                cv.extra || 0, showPairing || !ai.isConfigured() ? cloudPair.getPairingUrl() : ''].join('|');
+            if (!force && sig === lastSig && now - lastRenderTime < 2000) return;
+            lastSig = sig;
             lastRenderTime = now;
 
             const t = ctx.theme();
-            const cv = ctx.canvas(W, H).clear(t.bg);
+            cv.clear(t.bg);
 
             // Mandatory Online & Config Checks
             if (!ai.hasInternet) {
@@ -1241,6 +1252,7 @@ mgu.run({
         // Run low-frequency idle loop (4 fps) to minimize CPU/GPU load by >85%
         // ---- lifecycle: nothing runs while M-Copilot is not on screen; everything stops on exit
         function foreground() {
+            clearLive();
             startCar();
             loadSampling(true);
             cloudPair.startPolling();

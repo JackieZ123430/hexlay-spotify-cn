@@ -42,6 +42,21 @@ class EngineSnapshot {
     /** candidates with the short timeout */
     static quick(list) { return (list || []).map((c) => Object.assign({ timeoutMs: TIMEOUT_MS }, c)); }
 
+    /**
+     * DidReader.value with the time budget checked before each candidate (a silent unit costs a
+     * candidate's timeout each, and a value can have four): the one that answered last goes first.
+     */
+    static async within(rd, name, list, ok) {
+        const l = EngineSnapshot.quick(list), start = rd.pick[name] || 0;
+        for (let k = 0; k < l.length; k++) {
+            if (!ok()) return null;
+            const i = (start + k) % l.length;
+            const v = await rd.read(l[i]);
+            if (v !== null) { rd.pick[name] = i; return v; }
+        }
+        return null;
+    }
+
     read(opts) {
         if (this.last && Date.now() - this.last.at < CACHE_MS) return Promise.resolve(this.last);
         if (this.busy) return this.busy;
@@ -55,7 +70,7 @@ class EngineSnapshot {
         const values = {};
         const one = async (name, list, rd) => {
             if (!list || !list.length || (this.fails[name] || 0) >= GIVE_UP || !ok()) return null;
-            const v = await (rd || this.rd).value(name, EngineSnapshot.quick(list));
+            const v = await EngineSnapshot.within(rd || this.rd, name, list, ok);
             this.fails[name] = v === null ? (this.fails[name] || 0) + 1 : 0;
             return v;
         };
@@ -108,7 +123,7 @@ class EngineSnapshot {
             const baro = this.baro !== null ? this.baro : 101.3, d = this.dme;
             for (const k of ['boostTarget', 'boostActual', 'iat', 'timing']) {
                 if (!ok() || !d[k] || (this.fails[k] || 0) >= GIVE_UP) continue;
-                const v = await this.rd.value(k, EngineSnapshot.quick(d[k]));
+                const v = await EngineSnapshot.within(this.rd, k, d[k], ok);
                 this.fails[k] = v === null ? (this.fails[k] || 0) + 1 : 0;
                 if (v === null) continue;
                 out[k] = k === 'boostTarget' || k === 'boostActual' ? (v - baro) / 100 : v;

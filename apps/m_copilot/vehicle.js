@@ -154,7 +154,9 @@ class Vehicle {
         try { this.cache = JSON.parse(fs.readFileSync(this.file, 'utf8')) || {}; } catch (e) { /* first start */ }
         this.profile = null; this.profileAt = 0;
         try { const p = JSON.parse(fs.readFileSync(this.profileFile, 'utf8')); this.profile = cleanProfile(p.profile); this.profileAt = p.time || 0; } catch (e) { /* none yet */ }
-        this.vin = vinFromLaunch(opts.argv || process.argv, opts.env || process.env) || (VIN_RE.test(this.cache.vin || '') ? this.cache.vin : null);
+        const launched = vinFromLaunch(opts.argv || process.argv, opts.env || process.env);
+        this.vin = launched || (VIN_RE.test(this.cache.vin || '') ? this.cache.vin : null);
+        this.vinFrom = launched ? 'MainApp' : this.vin ? 'saved from the engine unit' : null;     // for the Data check page
         this.engineType = null;          // 'petrol' / 'diesel' / 'hybrid' / 'electric' (Vehicle2.statusVehiclePartType)
         this.busy = null;
         this.tried = false;
@@ -168,13 +170,18 @@ class Vehicle {
      * Ask the car what the start arguments didn't tell (VIN, engine and gearbox unit types): once
      * per VIN, while steady() says the car is in a steady state. diag = a kit/diag Diag (available).
      */
-    identify(diag, steady) {
+    identify(diag, steady, asleep) {
         if (this.busy) return this.busy;
         const sameCar = this.cache.vin && this.vin && this.cache.vin === this.vin;
         if (this.tried || (this.vin && sameCar && this.cache.units)) return Promise.resolve();
         if (!diag || !diag.available || (steady && !steady())) return Promise.resolve();
+        // parked without ignition the units sleep: not asked (their silence would look like "none")
+        if (asleep && asleep()) return Promise.resolve();
+        if (Date.now() < (this.retryAt || 0)) return Promise.resolve();
+        let replied = false;            // any unit answered at all (a refusal too)
         const read = async (ecu, did) => {
             const r = await diag.physical(ecu, 0x22, [did >> 8, did & 0xFF], 3000);
+            if (r) replied = true;
             return r && r[0] === 0x62 ? r.slice(3) : null;
         };
         this.busy = (async () => {
@@ -182,7 +189,7 @@ class Vehicle {
                 if (!this.vin) {
                     const b = await read(0x12, 0xF190);
                     const v = b ? String.fromCharCode.apply(null, b.slice(0, 17)).toUpperCase() : '';
-                    if (VIN_RE.test(v)) this.vin = v;
+                    if (VIN_RE.test(v)) { this.vin = v; this.vinFrom = 'engine unit (22 F190)'; }
                 }
                 const units = {};
                 let complete = true;
@@ -193,6 +200,8 @@ class Vehicle {
                     if (idx && UNITS[ecu][idx]) units[ecu] = UNITS[ecu][idx];
                 }
                 if (!complete) return;
+                // nothing answered (asleep, or the link not ready): not final, asked again in 2 minutes
+                if (!replied) { this.retryAt = Date.now() + 120000; return; }
                 this.tried = true;
                 this.cache = { vin: this.vin, units };
                 this._save();
@@ -215,6 +224,9 @@ class Vehicle {
         try { fs.writeFileSync(this.profileFile, JSON.stringify({ time, profile: this.profile })); } catch (e) { this.log.warn('car_profile.json: ' + e.message); }
         return true;
     }
+
+    /** The engine / gearbox unit types found for this car: { 0x12: name, 0x18: name } (Data check page). */
+    unitTypes() { return (this.vin && this.cache.vin === this.vin && this.cache.units) || this.cache.units || {}; }
 
     /** Identity lines for the AI (no serial number). */
     lines() {
@@ -239,6 +251,8 @@ const ENGINE_TYPES = {
     DIESEL_KONVENTIONELL: 'diesel', ELEKTROMOTOR: 'electric', HYBRIDMOTOR: 'hybrid', 4: 'petrol', 5: 'petrol', 6: 'diesel', 7: 'diesel',
 };
 Vehicle.engineTypeOf = (raw) => (raw !== undefined && raw !== null && Object.prototype.hasOwnProperty.call(ENGINE_TYPES, raw) ? ENGINE_TYPES[raw] : null);
+/** What the installer left out on this unit (kit/missing-interfaces.json, written by the build on the car): { key: why }. */
+Vehicle.missingAtInstall = () => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'kit', 'missing-interfaces.json'), 'utf8')) || {}; } catch (e) { return {}; } };
 Vehicle.vinFromLaunch = vinFromLaunch;
 Vehicle.decodeVin = decodeVin;
 Vehicle.cleanProfile = cleanProfile;

@@ -275,20 +275,32 @@ class AiBridge {
         add('Gear selector', t.stage || (num(t.gear) ? (t.gear > 0 ? 'D' : null) : null), (v) => v + (num(t.gear) && t.gear > 0 ? ' (gear ' + t.gear + ')' : ''));
         add('Engine torque', t.torque, (v) => r0(v) + ' Nm');
         add('Power / torque, % of the engine maximum (sport display)', num(t.powerPct) && num(t.torquePct) ? [t.powerPct, t.torquePct] : null, (v) => r0(v[0]) + ' % / ' + r0(v[1]) + ' %', true);
-        add('Boost (sport display)', t.boost, (v) => P(v, true), true);
+        add('Boost (sport display)', t.engineNow === 'off' ? null : t.boost, (v) => P(v, true), true);
         add('Driving mode', t.mode, (v) => v);
         add('M xDrive setting', t.awd, (v) => v, true);
         add('Auto start-stop', t.msa, (v) => v, true);
         add('Parking brake', t.handbrake, (v) => v, true);
         add('Engine oil temperature', t.oilTemp, (v) => T(v));
         add('Coolant temperature', t.coolantTemp, (v) => T(v));
-        add('Engine oil level', t.oilLevel, (v) => v);
-        add('Outside temperature', t.ambient, (v) => T(v, true));
+        add('Engine oil level', t.oilLevel, (v) => v + (/measuring/.test(v) ? '' : t.engineNow === 'off'
+            ? ' (the last measurement: BMW measures it with the engine running and warm, on level ground)'
+            : t.engineNow === 'on' && num(t.oilTemp) && t.oilTemp < 70 ? ' (engine still cold: the measurement may not be updated yet)' : ''));
+        add('Outside temperature', t.ambient, (v) => T(v, true) + (num(t.standingMin) && t.standingMin >= 10
+            ? ' (the car has stood for ' + r0(t.standingMin) + ' min: the sensor may read high from sun or engine heat)' : ''));
         add('Lateral / longitudinal acceleration', num(t.gLat) && num(t.gLong) ? [t.gLat, t.gLong] : null, (v) => r2(v[0]) + ' g / ' + r2(v[1]) + ' g');
         const corners = (o, fmt) => (o && ['fl', 'fr', 'rl', 'rr'].every((k) => num(o[k])) ? 'FL ' + fmt(o.fl) + ', FR ' + fmt(o.fr) + ', RL ' + fmt(o.rl) + ', RR ' + fmt(o.rr) : null);
         add('Tyre pressures', corners(t.tyres, (v) => Pn(v)), (v) => v + ' ' + pUnit);
         add('Tyre pressure targets (set in the car)', corners(t.tyreTargets, (v) => Pn(v)), (v) => v + ' ' + pUnit);
         add('Tyre temperatures', corners(t.tyreTemps, (v) => T(v).split(' ')[0]), (v) => v + (fahr ? ' F' : ' C'), true);
+        // the targets are cold pressures: warm tyres read higher, so say which they are
+        const tt = t.tyreTemps && ['fl', 'fr', 'rl', 'rr'].map((k) => t.tyreTemps[k]).filter(num);
+        const warmBy = tt && tt.length && num(t.ambient) ? tt.reduce((a, b) => a + b, 0) / tt.length - t.ambient : null;
+        const drove = t.drive && t.drive.km > 3 && t.drive.min < 45;
+        if (t.tyres) {
+            add('Tyres', num(warmBy) ? (warmBy > 8 ? 'warm (about ' + r0(fahr ? warmBy * 9 / 5 : warmBy) + (fahr ? ' F' : ' C') + ' above the outside air)' : 'cold (near the outside temperature)')
+                : drove ? 'probably warm (driven ' + D(t.drive.km) + ' just now)' : null,
+                (v) => v + (/warm/.test(v) ? '; the targets are cold pressures, warm tyres read about 0.2-0.3 bar (3-4 psi) higher' : ''), true);
+        }
         add('Fuel in the tank', t.fuelL, VOL);
         add('Range', t.rangeKm, D);
         add('Average consumption (trip computer)', t.avgCons, (v) => r1(v.value) + ' ' + v.unit, true);
@@ -300,21 +312,25 @@ class AiBridge {
         add('High-voltage battery voltage', t.hvVolt, (v) => r0(v) + ' V', true);
 
         // the engine unit's own values, read when the question was asked (engine_snapshot.js)
-        const es = t.engineSnap && t.engineSnap.values, eng = [];
+        const es = t.engineSnap && t.engineSnap.values, eng = [], engOff = !!(t.engineSnap && t.engineSnap.engine === 'off');
         if (es) {
             const e = (label, v, fmt) => { if (v !== undefined && v !== null && !(typeof v === 'number' && !isFinite(v))) eng.push(label + ': ' + fmt(v)); };
             e('Boost actual / target', num(es.boostActual) && num(es.boostTarget) ? [es.boostActual, es.boostTarget] : null, (v) => Pn(v[0], true) + ' / ' + P(v[1], true));
             if (!(num(es.boostActual) && num(es.boostTarget))) e('Boost (engine unit)', es.boostActual, (v) => P(v, true));
             e('Outside air pressure', es.baro, (v) => r0(v) + ' kPa');
-            e('Intake air temperature', es.iat, (v) => T(v));
+            e(engOff ? 'Intake air temperature (engine off: heat soak or the air around it, not running intake air)' : 'Intake air temperature', es.iat, (v) => T(v));
             e('Air charge (load) actual / target', num(es.loadActual) && num(es.loadTarget) ? [es.loadActual, es.loadTarget] : null, (v) => r0(v[0]) + ' / ' + r0(v[1]) + ' %');
             e('Ignition timing', es.timing, (v) => r1(v) + ' deg');
-            e('High-pressure fuel (rail)', es.hpfp, (v) => (pUnit === 'psi' ? r0(v * 14.5038) + ' psi' : r0(v) + ' bar'));
+            e(engOff ? 'High-pressure fuel (rail, engine off: the pressure left in it)' : 'High-pressure fuel (rail)', es.hpfp, (v) => (pUnit === 'psi' ? r0(v * 14.5038) + ' psi' : r0(v) + ' bar'));
             e('Low-pressure fuel', es.lpfp, (v) => P(v));
             e('Engine oil temperature (engine unit)', es.oil, (v) => T(v));
             e('Gearbox oil temperature', es.gearboxOil, (v) => T(v));
-            e('12 V system voltage', es.v12, (v) => r2(v) + ' V');
-            e('Misfires this driving cycle, per cylinder', Array.isArray(es.misfire) ? es.misfire : null, (v) => v.map((n, i) => (i + 1) + ': ' + (n === null ? '?' : n)).join(', '));
+            e(engOff ? '12 V battery voltage, engine off (resting: about 12.4-12.7 V is a healthy charged battery)' : t.engineSnap.engine === 'on'
+                ? '12 V system voltage, engine running (the alternator charging: about 13.5-14.8 V)' : '12 V system voltage', es.v12, (v) => r2(v) + ' V');
+            const run = num(t.engineRunMin) ? (t.engineRunFromStart ? 'engine running for ' + r0(t.engineRunMin) + ' min since its start' : 'engine running at least ' + r0(t.engineRunMin) + ' min')
+                : 'how long the engine has run is not known';
+            e('Misfires this driving cycle, per cylinder (' + run + '; few minutes of running say little)', Array.isArray(es.misfire) ? es.misfire : null,
+                (v) => v.map((n, i) => (i + 1) + ': ' + (n === null ? '?' : n)).join(', '));
             e('High-voltage battery charge', es.hvSoc, (v) => r0(v) + ' %');
             e('High-voltage battery health (SOH)', es.hvSoh, (v) => r0(v) + ' %');
         }
@@ -370,7 +386,8 @@ class AiBridge {
                 return ' [' + l.join(', ') + ']';
             };
             const fault = (c) => (typeof c === 'string' ? c : c.code + state(c.status) + (c.text ? ' "' + c.text + '"' : ' (no text known)'));
-            faults = 'Fault memory (read ' + Math.max(0, Math.round((Date.now() - d.at) / 60000)) + ' min ago from ' + d.answered + ' control units): '
+            faults = (d.partial ? 'Read with the car parked and the ignition off: control units that were asleep did not answer, so this may be only part of the car. Say so, and suggest switching the ignition on (the engine can stay off) and asking again for a full read.\n' : '')
+                + 'Fault memory (read ' + Math.max(0, Math.round((Date.now() - d.at) / 60000)) + ' min ago from ' + d.answered + ' control units): '
                 + (units.length ? d.total + ' stored fault(s):\n' + units.map((u) => '- ' + u.name + ': ' + u.codes.map(fault).join('; ')).join('\n')
                     + '\nThe quoted texts are BMW\'s own fault descriptions: explain what they mean for the driver. A code without a text: do not guess its meaning.'
                     + ' Lead with ACTIVE NOW faults and those with the warning lamp: they matter now. Faults not active now happened earlier and may be old.'
@@ -393,10 +410,12 @@ class AiBridge {
                 : 'Live data from this car, read just now. These are the only readings you have; use them when you talk about the car\'s current state:',
             known.length ? known.map((l) => '- ' + l).join('\n') : '- (no live data yet)',
             missing.length ? 'Not available right now: ' + missing.join(', ') + '. If an answer depends on one of these, say you do not have it. Never estimate or invent a reading.' : '',
-            eng.length ? 'Engine control unit, read just now (' + Math.max(0, Math.round((Date.now() - t.engineSnap.at) / 1000)) + ' s ago):\n' + eng.map((l) => '- ' + l).join('\n')
+            eng.length ? 'Engine control unit, read just now (' + Math.max(0, Math.round((Date.now() - t.engineSnap.at) / 1000)) + ' s ago' + (engOff ? ', ENGINE OFF: boost, load, timing and misfires are not read' : '') + '):\n' + eng.map((l) => '- ' + l).join('\n')
                 + '\nUse these for questions about boost, heat soak, knock, fuelling, misfires or tune health: compare actual with target and say what a gap means.'
                 : 'Engine control unit values (boost target, intake air, timing, fuel pressure, misfires): not read for this question.',
-            drv.length ? 'This drive so far (' + Math.round(dr.min) + ' min, ' + D(dr.km || 0) + ', recorded while M-Copilot was on screen):\n' + drv.map((l) => '- ' + l).join('\n')
+            drv.length ? 'This drive so far (' + Math.round(dr.min) + ' min, ' + D(dr.km || 0) + (num(dr.seenMin) && dr.seenMin < dr.min * 0.8
+                ? '; recorded only while M-Copilot was on screen, ' + Math.round(dr.seenMin) + ' of those ' + Math.round(dr.min) + ' min: the rest is not known'
+                : ', recorded while M-Copilot was on screen') + '):\n' + drv.map((l) => '- ' + l).join('\n')
                 + '\nUse these for questions about how the drive went, warm-up, heat soak and how hard the car was driven.' : '',
             service,
             next,

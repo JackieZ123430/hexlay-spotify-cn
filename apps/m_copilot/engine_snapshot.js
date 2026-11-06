@@ -58,13 +58,23 @@ class EngineSnapshot {
     }
 
     read(opts) {
-        if (this.last && Date.now() - this.last.at < CACHE_MS) return Promise.resolve(this.last);
+        // kept 20 s, unless the engine started or stopped since (its values then mean something else)
+        if (this.last && Date.now() - this.last.at < CACHE_MS && this.last.engine === ((opts && opts.engine) || null)) return Promise.resolve(this.last);
         if (this.busy) return this.busy;
         this.busy = this._read(opts || {}).then((r) => { this.busy = null; if (r) this.last = r; return r; }, (e) => { this.busy = null; this.log.warn('M-Copilot: engine snapshot: ' + (e.message || e)); return this.last; });
         return this.busy;
     }
 
+    /** Every 10 minutes the values given up on are asked again (a refusal under load, a unit slow to wake). */
+    _refresh() {
+        if (Date.now() - (this.failsAt || 0) < 600000) return;
+        this.failsAt = Date.now();
+        this.fails = {};
+        this.hvMissing = false;
+    }
+
     async _read(opts) {
+        this._refresh();
         const until = Date.now() + (opts.budgetMs || 3500);
         const ok = () => Date.now() < until && (!opts.steady || opts.steady());
         const values = {};
@@ -80,11 +90,15 @@ class EngineSnapshot {
         if (b !== null) this.baro = b;
         const baro = this.baro !== null ? this.baro : 101.3;
         if (b !== null) values.baro = b;
-        const bt = await one('boostTarget', d.boostTarget), ba = await one('boostActual', d.boostActual);
-        if (bt !== null) values.boostTarget = (bt - baro) / 100;
-        if (ba !== null) values.boostActual = (ba - baro) / 100;
-        if (ba === null) { const m = await one('boost', d.boost); if (m !== null) values.boostActual = (m - baro) / 100; }
-        for (const k of ['iat', 'loadTarget', 'loadActual', 'timing', 'hpfp', 'lpfp']) {
+        // engine off: boost, load, timing and misfires mean nothing (boost = the outside air): not asked
+        const running = opts.engine !== 'off';
+        if (running) {
+            const bt = await one('boostTarget', d.boostTarget), ba = await one('boostActual', d.boostActual);
+            if (bt !== null) values.boostTarget = (bt - baro) / 100;
+            if (ba !== null) values.boostActual = (ba - baro) / 100;
+            if (ba === null) { const m = await one('boost', d.boost); if (m !== null) values.boostActual = (m - baro) / 100; }
+        }
+        for (const k of running ? ['iat', 'loadTarget', 'loadActual', 'timing', 'hpfp', 'lpfp'] : ['iat', 'hpfp', 'lpfp']) {
             const v = await one(k, d[k]);
             if (v !== null) values[k] = v;
         }
@@ -93,7 +107,7 @@ class EngineSnapshot {
         if (opts.needOil) { const o = await one('oil', d.oil); if (o !== null) values.oil = o; }
         const v12 = await one('v12', this.battery.v12);
         if (v12 !== null) values.v12 = v12;
-        if (ok() && d.misfire) {
+        if (running && ok() && d.misfire) {
             const m = await this._misfire(ok);
             if (m) values.misfire = m;
         }
@@ -105,7 +119,7 @@ class EngineSnapshot {
             const soh = await one('hvSoh', this.battery.soh, this.hv);
             if (soh !== null) values.hvSoh = soh;
         }
-        return { at: Date.now(), values };
+        return { at: Date.now(), values, engine: opts.engine || null };
     }
 
     /**
@@ -115,6 +129,7 @@ class EngineSnapshot {
      */
     async sample(opts) {
         if (this.busy || this.sampling) return null;
+        this._refresh();
         this.sampling = true;
         try {
             const until = Date.now() + ((opts && opts.budgetMs) || 900);
@@ -132,6 +147,30 @@ class EngineSnapshot {
         } finally {
             this.sampling = false;
         }
+    }
+
+    /**
+     * For the Data check page: per value, what the last read gave - { name, value, via, why }.
+     * via: the identifier that answered ('DID 580B', 'OBD 0F'); why: the latest refusal or silence.
+     */
+    report() {
+        const v = (this.last && this.last.values) || {}, d = this.dme, b = this.battery;
+        const rows = [['boostActual', d.boostActual || d.boost, this.rd], ['boostTarget', d.boostTarget, this.rd], ['baro', d.baro, this.rd], ['iat', d.iat, this.rd],
+            ['loadActual', d.loadActual, this.rd], ['loadTarget', d.loadTarget, this.rd], ['timing', d.timing, this.rd], ['hpfp', d.hpfp, this.rd], ['lpfp', d.lpfp, this.rd],
+            ['gearboxOil', d.egs, this.rd, 'egs'], ['oil', d.oil, this.rd], ['v12', b.v12, this.rd], ['misfire', null, this.rd], ['hvSoc', b.soc, this.hv], ['hvSoh', b.soh, this.hv]];
+        const label = (c) => (c.obd ? 'OBD ' + String(c.obd).toUpperCase() : 'DID ' + c.did);
+        return rows.map(([name, list, rd, key]) => {
+            key = key || name;
+            const out = { name, value: v[name], via: null, why: null, fails: this.fails[key] || 0 };
+            if (list && list.length) {
+                if (out.value !== undefined) out.via = label(list[rd.pick[key] || 0] || list[0]);
+                let last = null;
+                list.forEach((c) => { const r = rd.raws[rd.key(Object.assign({ timeoutMs: TIMEOUT_MS }, c))]; if (r && !r.ok && (!last || r.t > last.t)) last = r; });
+                if (last) out.why = last.why;
+            }
+            if (name === 'misfire' && this.misMode !== null) out.via = this.misMode ? 'UDS F6A2..' : 'OBD 06 A2..';
+            return out;
+        });
     }
 
     /** misfires per cylinder in this driving cycle (OBD 06, MIDs A2.. = cylinder 1..), as M Vitals reads them */

@@ -5,11 +5,11 @@
  *   - One screen: the phone pairing QR code until an AI key is paired, then the co-driver.
  *   - Pairing over the internet (ntfy relay, end-to-end encrypted with the car's own key): the phone
  *     page sends the AI key, and optionally the owner's car profile (model, tune, mods, tyres, fuel).
- *   - 20 topic chips in 4 categories, worded for a stock daily car as well as a tuned one:
- *       CHECK     health check, warning lights / fault memory, service due, tyres, 12 V battery
- *       DRIVE     ready for full power, fuel and range, weather grip, how was that drive, cool-down
- *       PERFORM   launch, track day prep, tune health, heat soak, mods and upgrade path
- *       KNOW-HOW  oil spec, gearbox care, fuel and octane, known weak points, long trip prep
+ *   - 24 topic chips in 4 categories, worded for a stock daily car as well as a tuned one:
+ *       CHECK     health check, warning lights / fault memory, service due, tyres, brakes, 12 V battery
+ *       DRIVE     ready for full power, fuel and range, weather grip, how was that drive, running hot, cool-down
+ *       PERFORM   launch, track day prep, tune health, heat soak, gearbox and clutch load, mods
+ *       KNOW-HOW  oil spec, gearbox care, fuel and octane, known weak points, due at this mileage, trip prep
  *     plus an on-screen keyboard for any question (follow-up questions keep the context).
  *   - What the AI is told (ai.js buildVehicleContext): only what the car reported - live driving
  *     signals, temperatures, tyres, fuel, odometer, the cluster's service list, the fault memory
@@ -30,7 +30,7 @@ const tlsDates = require('./tls_dates');
 const qrcodegen = require('./qrcodegen');
 
 const W = 1600, H = 520;
-const PAGES = ['M-Copilot', 'Data check'];
+const PAGES = ['M-Copilot', 'Data check', 'Connect'];
 
 // Topic chips. Each question leans on what the car reports (the AI gets it with every question) and
 // on the car profile, so the same chip fits a stock daily car and a tuned one. faults: read the
@@ -45,6 +45,7 @@ const TOPIC_CATEGORIES = [
             { title: 'Warning Lights & Faults', faults: true, query: 'Which warning messages is my car showing and what is stored in its fault memory, in which units? How serious is it, and can I keep driving normally?' },
             { title: 'Service Due', query: 'From my car\'s service list: what is due next and when, what does each item involve for my engine, and what can I check or do myself?' },
             { title: 'Tyres & Pressures', query: 'Compare my tyre pressures and temperatures with the targets set in the car, taking the outside temperature and my tyre type into account. Should I adjust anything, cold or hot?' },
+            { title: 'Brakes & Pads', query: 'How are my brakes from the service list (front and rear pads, brake fluid due date), and which warning signs can I check myself before the next service?' },
             { title: '12V Battery & Start-Stop', query: 'How is my 12 V battery from its charge level, and what does that mean for auto start-stop, short trips and the car standing for a few days?' },
         ],
     },
@@ -57,6 +58,7 @@ const TOPIC_CATEGORIES = [
             { title: 'Fuel & Range', query: 'How far can I go on the fuel I have, how does my consumption look, and what would make the biggest difference to it on this trip?' },
             { title: 'Weather & Grip', query: 'With the outside temperature and my tyres as they are now, how much grip should I expect, is there a risk of ice or cold tyres, and what should I change in how I drive?' },
             { title: 'How Was That Drive?', query: 'Look at this drive so far: how hard was the car driven, was the engine warm before it was pushed, any heat soak, boost falling short or timing pulled? Anything to change next time?' },
+            { title: 'Running Hot? What Now', query: 'Look at my temperatures right now: is anything running too hot (coolant, oil, gearbox, intake air)? If so, exactly what should I do on the road right now to protect the engine?' },
             { title: 'Cool-Down & Parking', query: 'After how I have been driving, should I let the engine idle or drive gently before switching off? Use the oil and coolant temperatures and say why it matters for my engine and tune.' },
         ],
     },
@@ -69,6 +71,7 @@ const TOPIC_CATEGORIES = [
             { title: 'Track Day Prep', query: 'Get my car ready for a track day: tyre pressures cold and hot for my tyres, brake fluid and pads from the service list, oil level and cooling, and the settings to use. Use my readings.' },
             { title: 'Tune Health Check', query: 'Look at my boost, torque and temperatures for signs of heat soak, an engine running too hard or a weak point of my tune. For a stock car, say what is normal for it and what headroom it has.' },
             { title: 'Heat Soak & Cooling', query: 'Are my oil and coolant temperatures OK for hard driving right now? At what temperatures does my engine pull power, and how do I manage heat on back-to-back pulls or laps?' },
+            { title: 'Gearbox & Clutch Load', query: 'With my engine\'s torque and my tune, how close is my gearbox (and its clutch or torque converter) to its limits, what does its oil temperature say right now, and how do I avoid hurting it?' },
             { title: 'Mods & Upgrade Path', query: 'For my car and its current modifications, what is the most sensible next upgrade, what supporting parts does it need, and what does it risk (reliability, warranty, inspection)?' },
         ],
     },
@@ -81,6 +84,7 @@ const TOPIC_CATEGORIES = [
             { title: 'Gearbox Care', query: 'What gearbox does my car have, when should its fluid be changed (BMW says lifetime; what is realistic for my use and tune), and what is an adaptation reset for?' },
             { title: 'Fuel & Octane', query: 'Which fuel should my engine and tune run on, what happens on lower octane (knock, timing pulled, power), and is an ethanol blend an option?' },
             { title: 'Known Weak Points', query: 'What are the known weak points of my engine and model at my mileage, what are their early signs, and what should I check or replace before it fails?' },
+            { title: 'Due at This Mileage', query: 'At my mileage and the car\'s age, what maintenance is due or coming up beyond the service list (spark plugs, coolant, gearbox and differential oil, brake fluid, belts), and roughly when?' },
             { title: 'Long Trip Prep', query: 'I am about to go on a long trip: check my readings (oil level, tyres, fuel, battery, service list, faults if read) and tell me what to sort out before leaving.' },
         ],
     },
@@ -91,6 +95,14 @@ mgu.run({
         const { ui, settings, log, signals } = ctx;
         const ai = new AiBridge(ctx);
         const cloudPair = new CloudPairManager(ctx, ai);
+        // this car's id for the phone page (random, survives a disconnect, never derived from the VIN)
+        cloudPair.carId = (() => {
+            const f = require('path').join(ctx.dataDir, 'car_id.json'), fs = require('fs');
+            try { const id = JSON.parse(fs.readFileSync(f, 'utf8')).id; if (/^[0-9a-f]{16}$/.test(id)) return id; } catch (e) { /* first start */ }
+            const id = require('crypto').randomBytes(8).toString('hex');
+            try { fs.writeFileSync(f, JSON.stringify({ id })); } catch (e) { /* kept for this run */ }
+            return id;
+        })();
         // Foreground only: vehicle data, pairing polls, internet checks and the thinking animation
         // run while the screen is shown. The pairing itself (keys, channel) is kept; messages the
         // phone sends meanwhile wait on the channel and are read when the app is opened again.
@@ -110,7 +122,6 @@ mgu.run({
         cloudPair.onServerTime = (ms) => phone.serverTime(ms);
         let lastHello = 0;
 
-        let showPairing = false;
         let isThinking = false;
         let thinkTimer = null;
         let thinkStart = 0;
@@ -506,25 +517,41 @@ mgu.run({
         };
 
         cloudPair.onPaired = () => {
-            showPairing = false;
+            page = 0;
             phone.hello();          // the phone page can offer notifications right away
             lastHello = Date.now();
             notify('AI paired from your phone: ' + providerName() + ' ready.');
             render(true).catch(() => {});
         };
 
-        cloudPair.onUnpaired = () => {
+        /**
+         * Disconnected (here or from the phone): the AI key and everything the phone set go - the car
+         * profile, the AI model choice, the notifications, the conversation. What the car told about
+         * itself (VIN, engine and gearbox units) stays. The phone page keeps its entries to send again.
+         */
+        function forgetPhone() {
             phone.forgetAll();
             ai.config.geminiApiKey = null;
             ai.config.apiKey = null;
             ai.config.sessionToken = null;
             ai.config.paired = false;
+            ai.config.model = null;
+            ai.config.modelAt = 0;
+            ai.config.geminiModel = null;
+            ai.lastModel = null;
             ai.saveConfig();
+            ai.resetHistory();
+            vehicle.clearProfile();
+            canFollowUp = false;
+        }
+
+        cloudPair.onUnpaired = () => {
+            forgetPhone();
             cachedQr = null;
             cachedQrUrl = null;
             cloudPair.reset();
             cloudPair.startPolling();
-            showPairing = true;
+            page = 2;
             notify('Phone disconnected AI. Scan QR code to re-pair.');
             render(true).catch(() => {});
         };
@@ -724,7 +751,7 @@ mgu.run({
                 return;
             }
             if (!ai.isConfigured()) {
-                showPairing = true;
+                page = 2;
                 render(true).catch(() => {});
                 return;
             }
@@ -885,58 +912,106 @@ mgu.run({
             }, 'btn_retry_net', 10);
         }
 
-        /* ---------- Setup Screen: Copilot Setup / Cloud Pairing ---------- */
-        function drawSetupRequired(cv, t) {
-            G.panelExact(cv, t, 40, 52, 1520, 458 + (cv.extra || 0), 'M-Copilot Cloud Pairing & Setup');
-
-            cv.roundRect(80, 110, 1440, 358 + (cv.extra || 0), 16, '#090e15');
-            cv.strokeRoundRect(80, 110, 1440, 358 + (cv.extra || 0), 16, 2, '#00a3e0');
-
-            // Left QR Card
-            const qr = getPairingQr();
-            if (qr) {
-                const qrx = 120, qry = 135, qrsz = 210;
-                const modCount = qr.size;
-                const modPx = Math.floor(qrsz / modCount);
-                const actualSz = modPx * modCount;
-                const ox = qrx + Math.floor((qrsz - actualSz) / 2);
-                const oy = qry + Math.floor((qrsz - actualSz) / 2);
-
-                cv.roundRect(ox - 10, oy - 10, actualSz + 20, actualSz + 20, 10, '#ffffff');
-                for (let r = 0; r < modCount; r++) {
-                    for (let c = 0; c < modCount; c++) {
-                        if (qr.getModule(c, r)) {
-                            cv.fillRect(ox + c * modPx, oy + r * modPx, modPx, modPx, '#000000');
-                        }
-                    }
-                }
-
-                cv.text(`PAIRING CODE: ${cloudPair.getShortCode()}`, 225, 385, 17, '#00f0ff', { align: 'center', font: 'num' });
-            }
-
-            // Right Instructions
-            const ix = 390;
-            cv.text('AI PROVIDER SETUP', ix, 170, 24, '#00a3e0', { font: 'bold', spacing: 1 });
-            cv.text('Pair Google Gemini (free tier), Claude, OpenAI, Groq or OpenRouter from your phone.', ix, 206, 17, '#ffffff');
-            cv.text('Scan the QR code with your phone. Zero-Knowledge E2EE ensures 100% privacy.', ix, 234, 16, '#94a3b8');
-            cv.text('Each car has an isolated encryption key and an independent pairing session.', ix, 258, 16, '#94a3b8');
-
-            // Status indicator
-            cv.roundRect(ix, 290, 380, 36, 8, withAlpha('#00a3e0', 0.15));
-            cv.strokeRoundRect(ix, 290, 380, 36, 8, 1, '#00a3e0');
-            cv.text('WAITING FOR PHONE PAIRING...', ix + 190, 314, 15, '#00f0ff', { align: 'center', font: 'bold' });
-
-            // If already configured and opened via Re-pair, show Back button
-            if (ai.isConfigured()) {
-                const bBackX = ix, bBackY = 345, bBackW = 260, bBackH = 46;
-                cv.roundRect(bBackX, bBackY, bBackW, bBackH, 10, '#004e8c');
-                cv.strokeRoundRect(bBackX, bBackY, bBackW, bBackH, 10, 1.5, '#00a3e0');
-                cv.text('BACK TO CO-DRIVER', bBackX + bBackW / 2, bBackY + 29, 16, '#ffffff', { align: 'center', font: 'bold' });
-                cv.target(bBackX, bBackY, bBackW, bBackH, () => {
-                    showPairing = false;
+        /* ---------- Connect: pairing the phone, and what is set from it (as Spotify's Connect tab) ---------- */
+        function drawQr(cv, url, x, y, size) {
+            const qr = getPairingQr(url);
+            if (!qr) return;
+            const n = qr.size, px = Math.floor(size / n), real = px * n, ox = x + Math.floor((size - real) / 2), oy = y + Math.floor((size - real) / 2);
+            cv.roundRect(ox - 10, oy - 10, real + 20, real + 20, 10, '#ffffff');
+            for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.getModule(c, r)) cv.fillRect(ox + c * px, oy + r * px, px, px, '#000000');
+        }
+        function disconnect() {
+            cloudPair.notifyUnpair();
+            forgetPhone();
+            cachedQr = null;
+            cachedQrUrl = null;
+            cloudPair.reset();
+            cloudPair.startPolling();
+            confirmAt = 0;
+            showPhoneQr = false;
+            notify('AI disconnected. Scan the QR code to pair again.');
+        }
+        const LANG_NAMES = { ka: 'Georgian', de: 'German', fr: 'French', es: 'Spanish', it: 'Italian', nl: 'Dutch', pt: 'Portuguese', tr: 'Turkish', pl: 'Polish' };
+        function drawConnect(cv, t) {
+            const ex = cv.extra || 0, paired = ai.isConfigured(), now = Date.now();
+            // left: connected, or the pairing QR
+            G.panelExact(cv, t, 40, 52, 640, 458 + ex, paired ? 'AI Connection' : 'Scan to Connect Your Phone');
+            const cx = 360;
+            if (paired) {
+                const C = '#00a3e0';
+                cv.roundRect(64, 100, 592, 330 + ex, 14, '#0a1218');
+                cv.strokeRoundRect(64, 100, 592, 330 + ex, 14, 1.5, withAlpha(C, 0.55));
+                const by = 150;
+                cv.circle(cx, by, 36, withAlpha(C, 0.12));
+                cv.arc(cx, by, 30, 32, 0, 360, withAlpha(C, 0.45));
+                cv.circle(cx, by, 25, C);
+                cv.polyline([[cx - 11, by + 1], [cx - 4, by + 8], [cx + 11, by - 8]], 4.5, '#04101a');
+                cv.text('CONNECTED TO ' + providerName().toUpperCase(), cx, 212, 20, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+                const ml = ai.modelLabel();
+                cv.text('Model: ' + (ml || ai.config.model || 'default') + (ml ? ' (answered last)' : ''), cx, 238, 16, '#cbd5e1', { align: 'center' });
+                const pill = (y, on, text) => {
+                    const w = 440, x = cx - w / 2;
+                    cv.roundRect(x, y, w, 32, 16, withAlpha(on ? '#2af575' : '#ffffff', on ? 0.12 : 0.06));
+                    cv.circle(x + 22, y + 16, 5, on ? '#2af575' : '#94a3b8');
+                    cv.text(text, x + 38, y + 21, 14, on ? '#2af575' : '#94a3b8', { font: 'bold' });
+                };
+                pill(258, ai.hasInternet, ai.hasInternet ? 'Internet: online' : 'Internet: offline (phone hotspot?)');
+                const np = phone.phoneCount();
+                pill(298, np > 0, np ? 'Notifications: on for ' + np + ' phone' + (np === 1 ? '' : 's') : 'Notifications: off (turn on from the phone page)');
+                // Disconnect: quiet until needed, and asks again
+                const asking = now - confirmAt < 5000;
+                const dw = 360, dx = cx - dw / 2, dy = 352 + ex, dh = 44;
+                cv.roundRect(dx, dy, dw, dh, 10, asking ? withAlpha('#e1001a', 0.35) : '#1a1215');
+                cv.strokeRoundRect(dx, dy, dw, dh, 10, 1, withAlpha('#e1001a', asking ? 1 : 0.7));
+                cv.text(asking ? 'TAP AGAIN TO DISCONNECT' : 'DISCONNECT / CHANGE AI KEY', cx, dy + 28, 14, asking ? '#ffffff' : '#ff5c6c', { align: 'center', font: 'bold', spacing: 1 });
+                cv.target(dx, dy, dw, dh, () => {
+                    if (Date.now() - confirmAt < 5000) disconnect(); else confirmAt = Date.now();
                     render(true);
-                }, 'btn_back_copilot', 10);
+                }, 'btn_disconnect', 12);
+            } else {
+                drawQr(cv, cloudPair.getPairingUrl(), cx - 105, 104, 210);
+                cv.text('Scan with your phone to connect an AI', cx, 360, 18, t.text, { align: 'center', font: 'bold' });
+                cv.text('PAIRING CODE: ' + cloudPair.getShortCode(), cx, 386, 15, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
+                cv.text('Google Gemini (free), Claude, OpenAI, Groq or OpenRouter', cx, 410, 14, '#94a3b8', { align: 'center' });
+                cv.text('hexlay.github.io/idrive7-custom-apps/copilot.html', cx, 432, 12, '#64748b', { align: 'center' });
             }
+
+            // right: what is set from the phone (the only place it can be changed)
+            G.panelExact(cv, t, 700, 52, 860, 458 + ex, 'Set From Your Phone');
+            if (showPhoneQr && paired) {
+                drawQr(cv, cloudPair.getPairingUrl(), 1130 - 90, 116, 180);
+                cv.text('Open the phone page for this car', 1130, 344, 17, t.text, { align: 'center', font: 'bold' });
+                cv.text('Car profile, AI model and notifications', 1130, 368, 14, '#94a3b8', { align: 'center' });
+            } else {
+                const p = vehicle.profile || {};
+                const lines = Vehicle.profileLines(p).filter((l) => !/^Country|^Model \(owner\)/.test(l));
+                const rows = [['Model', p.model || 'not set']].concat(lines.map((l) => { const i = l.indexOf(': '); return [l.slice(0, i), l.slice(i + 2)]; }));
+                rows.push(['Country', p.country || 'not set'], ['Answer language', LANG_NAMES[p.lang] || 'English'], ['AI model', ai.config.model || 'default']);
+                rows.slice(0, 10).forEach(([k, v], i) => {
+                    const y = 134 + i * 26;
+                    cv.text(k, 730, y, 14, t.dim);
+                    cv.text(v.length > 52 ? v.slice(0, 51) + '…' : v, 1530, y, 14, /not set|default/.test(v) ? t.dim : '#e2e8f0', { align: 'right' });
+                });
+                cv.text('Change these on the phone page: Your car and AI model.', 730, 408 + ex, 13, '#64748b');
+            }
+            if (paired) {
+                const bw = 300, bx = 1130 - bw / 2, by = 424 + ex, bh = 40;
+                cv.roundRect(bx, by, bw, bh, 10, '#004e8c');
+                cv.strokeRoundRect(bx, by, bw, bh, 10, 1.5, '#00a3e0');
+                cv.text(showPhoneQr ? 'BACK TO THE SETTINGS' : 'SHOW QR FOR THE PHONE PAGE', 1130, by + 26, 13, '#ffffff', { align: 'center', font: 'bold' });
+                cv.target(bx, by, bw, bh, () => { showPhoneQr = !showPhoneQr; render(true); }, 'btn_phone_qr', 10);
+            }
+        }
+        /** The co-driver before an AI is paired: where to pair. */
+        function drawNeedsConnect(cv, t) {
+            G.panelExact(cv, t, 40, 52, 1520, 458 + (cv.extra || 0), '');
+            cv.text('M-COPILOT NEEDS AN AI KEY FROM YOUR PHONE', 800, 210, 24, '#00a3e0', { align: 'center', font: 'bold', spacing: 1 });
+            cv.text('Pair once on the Connect tab: scan its QR code with your phone and choose a provider (Google Gemini is free).', 800, 248, 16, '#cbd5e1', { align: 'center' });
+            const bw = 320, bx = 800 - bw / 2, by = 290, bh = 50;
+            cv.roundRect(bx, by, bw, bh, 10, '#004e8c');
+            cv.strokeRoundRect(bx, by, bw, bh, 10, 1.5, '#00a3e0');
+            cv.text('OPEN CONNECT', 800, by + 32, 17, '#ffffff', { align: 'center', font: 'bold' });
+            cv.target(bx, by, bw, bh, () => { page = 2; render(true); }, 'btn_open_connect', 10);
         }
 
         /* ---------- On-Screen Touch Keyboard (Panel 2) ---------- */
@@ -1078,17 +1153,14 @@ mgu.run({
             // Panel 1 (Left): Quick Topics & Custom Query Action (No header text)
             G.panelExact(cv, t, 40, 52, 440, 458 + (cv.extra || 0), '');
 
-            // Category Selector Tabs Bar (Moved up to y=66)
-            const tabY = 66, tabH = 28;
+            // category tabs
+            const ex = cv.extra || 0;
+            const tabY = 64, tabH = 34;
             TOPIC_CATEGORIES.forEach((cat, cIdx) => {
-                const tabW = 96;
-                const tabX = 60 + cIdx * 101;
-                const isCurCat = activeCategory === cIdx;
-
-                cv.roundRect(tabX, tabY, tabW, tabH, 6, isCurCat ? '#004e8c' : t.track);
-                cv.strokeRoundRect(tabX, tabY, tabW, tabH, 6, 1, isCurCat ? '#00a3e0' : t.panelEdge);
-                cv.text(cat.name, tabX + tabW / 2, tabY + 19, 11, isCurCat ? '#00f0ff' : '#94a3b8', { align: 'center', font: isCurCat ? 'bold' : 'normal' });
-
+                const tabW = 96, tabX = 60 + cIdx * 101, isCurCat = activeCategory === cIdx;
+                cv.roundRect(tabX, tabY, tabW, tabH, 7, isCurCat ? '#004e8c' : t.track);
+                cv.strokeRoundRect(tabX, tabY, tabW, tabH, 7, 1, isCurCat ? '#00a3e0' : t.panelEdge);
+                cv.text(cat.name, tabX + tabW / 2, tabY + 22, 12, isCurCat ? '#00f0ff' : '#94a3b8', { align: 'center', font: isCurCat ? 'bold' : 'normal' });
                 cv.target(tabX, tabY, tabW, tabH, () => {
                     activeCategory = cIdx;
                     selectedTopicIdx = 0;
@@ -1097,70 +1169,32 @@ mgu.run({
                 }, 'cat_' + cIdx, 6);
             });
 
-            // 5 Topic Chips for selected category (Moved up to y=104, auto-sends prompt on click)
+            // the question box at the bottom, the topic chips filling the room above it (taller on bigger screens)
+            const inputH = 60, inputX = 60, inputW = 400, inputY = 52 + 458 + ex - 14 - inputH;
+            const chipTop = 110, step = Math.floor((inputY - 12 - chipTop) / topics.length), topicH = Math.min(64, step - 6);
             topics.forEach((p, idx) => {
-                const py = 104 + idx * 42;
-                const isSelected = selectedTopicIdx === idx;
-                const isCur = currentPrompt === p.title;
-
-                cv.roundRect(60, py, 400, 36, 8, isSelected ? withAlpha('#00a3e0', 0.22) : t.track);
-                cv.strokeRoundRect(60, py, 400, 36, 8, isSelected ? 1.5 : 1, isSelected ? '#00a3e0' : t.panelEdge);
-
-                cv.circle(80, py + 18, 4.5, isCur ? '#00f0ff' : (isSelected ? '#00a3e0' : t.dim));
-                cv.text(p.title, 98, py + 23, 14, isSelected ? '#ffffff' : '#cbd5e1', { font: isSelected ? 'bold' : 'normal' });
-
-                // Auto-sends prompt immediately upon clicking topic chip
-                cv.target(60, py, 400, 36, () => {
+                const py = chipTop + idx * step;
+                const isSelected = selectedTopicIdx === idx, isCur = currentPrompt === p.title;
+                cv.roundRect(60, py, 400, topicH, 9, isSelected ? withAlpha('#00a3e0', 0.22) : t.track);
+                cv.strokeRoundRect(60, py, 400, topicH, 9, isSelected ? 1.5 : 1, isSelected ? '#00a3e0' : t.panelEdge);
+                cv.circle(82, py + topicH / 2, 5, isCur ? '#00f0ff' : (isSelected ? '#00a3e0' : t.dim));
+                cv.text(p.title, 102, py + topicH / 2 + 5, 15, isSelected ? '#ffffff' : '#cbd5e1', { font: isSelected ? 'bold' : 'normal' });
+                cv.target(60, py, 400, topicH, () => {
                     selectedTopicIdx = idx;
                     showKeyboard = false;
                     askCopilot(p.query, p.title, { fresh: true, faults: !!p.faults });
                 }, 'chip_' + idx, 8);
             });
 
-            // Custom Text Input Button (Replaces redundant Ask button, opens on-screen keyboard)
-            const inputW = 400, inputH = 44, inputX = 60, inputY = 320;
-            cv.roundRect(inputX, inputY, inputW, inputH, 8, showKeyboard ? withAlpha('#00a3e0', 0.25) : '#0b111a');
-            cv.strokeRoundRect(inputX, inputY, inputW, inputH, 8, showKeyboard ? 1.5 : 1, showKeyboard ? '#00f0ff' : '#1e2d42');
-
+            cv.roundRect(inputX, inputY, inputW, inputH, 10, showKeyboard ? withAlpha('#00a3e0', 0.25) : '#0b111a');
+            cv.strokeRoundRect(inputX, inputY, inputW, inputH, 10, showKeyboard ? 1.5 : 1, showKeyboard ? '#00f0ff' : '#1e2d42');
             const hasCustom = !!customQuery.trim();
-            const inputLabel = hasCustom ? (tail(customQuery, 40) + (showKeyboard ? '_' : '')) : (showKeyboard ? 'Typing custom question..._' : 'Ask Custom Question...');
-            cv.text(inputLabel, inputX + 16, inputY + 27, 14, hasCustom ? '#ffffff' : (showKeyboard ? '#00f0ff' : '#94a3b8'), { font: (hasCustom || showKeyboard) ? 'bold' : 'normal' });
+            const inputLabel = hasCustom ? (tail(customQuery, 38) + (showKeyboard ? '_' : '')) : (showKeyboard ? 'Typing custom question..._' : 'Ask Custom Question...');
+            cv.text(inputLabel, inputX + 18, inputY + inputH / 2 + 6, 16, hasCustom ? '#ffffff' : (showKeyboard ? '#00f0ff' : '#94a3b8'), { font: (hasCustom || showKeyboard) ? 'bold' : 'normal' });
             cv.target(inputX, inputY, inputW, inputH, () => {
                 showKeyboard = !showKeyboard;
                 render(true);
             }, 'btn_custom_input', 10);
-
-            // Dynamic Pair vs Unpair/Re-pair Button
-            const isPaired = ai.isConfigured();
-            const pairW = 400, pairH = 40, pairX = 60, pairY = 376;
-            const pairBg = isPaired ? withAlpha('#e1001a', 0.12) : withAlpha('#00a3e0', 0.12);
-            const pairBorder = isPaired ? '#e1001a' : '#00a3e0';
-            const pairTextCol = isPaired ? '#ff6b6b' : '#00a3e0';
-            const pairLabel = isPaired ? 'UNPAIR / RE-PAIR' : 'PAIR PHONE / QR CODE';
-
-            cv.roundRect(pairX, pairY, pairW, pairH, 8, pairBg);
-            cv.strokeRoundRect(pairX, pairY, pairW, pairH, 8, 1.5, pairBorder);
-            cv.text(pairLabel, pairX + pairW / 2, pairY + 25, 14, pairTextCol, { align: 'center', font: 'bold', spacing: 1 });
-            cv.target(pairX, pairY, pairW, pairH, () => {
-                if (isPaired) {
-                    cloudPair.notifyUnpair();
-                    phone.forgetAll();
-                    ai.config.geminiApiKey = null;
-                    ai.config.apiKey = null;
-                    ai.config.sessionToken = null;
-                    ai.config.paired = false;
-                    ai.saveConfig();
-                    cachedQr = null;
-                    cachedQrUrl = null;
-                    cloudPair.reset();
-                    cloudPair.startPolling();
-                    showPairing = true;
-                    notify('AI Unpaired. Scan QR code to re-pair.');
-                } else {
-                    showPairing = true;
-                }
-                render(true);
-            }, 'btn_pair_unpair', 8);
 
             // Panel 2 (Right): Interactive Touch Keyboard OR Dialogue Stream
             if (showKeyboard) {
@@ -1408,15 +1442,17 @@ mgu.run({
 
         /* ---------- Adaptive Pacing Render Loop ---------- */
         let lastSig = '';
-        let page = 0;                       // 0 the co-driver, 1 the Data check page
+        let page = ai.isConfigured() ? 0 : 2;   // 0 the co-driver, 1 Data check, 2 Connect (first, until paired)
+        let confirmAt = 0;                  // Disconnect asks again: the second tap within 5 s disconnects
+        let showPhoneQr = false;            // Connect: the phone page's QR in place of the settings list
         async function render(force = false) {
             const now = Date.now();
             if (!force && now - lastRenderTime < 250) return;
             const cv = ctx.canvas(W, H);
             // what the frame shows: unchanged, the frame isn't drawn again (a safety redraw every 2 s)
-            const sig = [ai.hasInternet, ai.isConfigured(), showPairing, showKeyboard, customQuery, activeCategory, selectedTopicIdx, currentPrompt, currentResponse,
+            const sig = [ai.hasInternet, ai.isConfigured(), showPhoneQr, now - confirmAt < 5000, showKeyboard, customQuery, activeCategory, selectedTopicIdx, currentPrompt, currentResponse,
                 dialogueScroll, canFollowUp, isThinking, telemetry.moving, vitalsLine(), statusMsg && now - statusTime < 3500 ? statusMsg : '', ai.modelLabel(), providerName(),
-                cv.extra || 0, showPairing || !ai.isConfigured() ? cloudPair.getPairingUrl() : '', page, page === 1 ? Math.floor(now / 1000) + (checking || '') : ''].join('|');
+                cv.extra || 0, page === 2 ? cloudPair.getPairingUrl() + phone.phoneCount() + JSON.stringify(vehicle.profile || {}) + (ai.config.model || '') : '', page, page === 1 ? Math.floor(now / 1000) + (checking || '') : ''].join('|');
             if (!force && sig === lastSig && now - lastRenderTime < 2000) return;
             lastSig = sig;
             lastRenderTime = now;
@@ -1427,10 +1463,12 @@ mgu.run({
             // Mandatory Online & Config Checks (the Data check page works without internet or pairing)
             if (page === 1) {
                 drawDataCheck(cv, t);
+            } else if (page === 2) {
+                drawConnect(cv, t);
             } else if (!ai.hasInternet) {
                 drawNoInternet(cv, t);
-            } else if (!ai.isConfigured() || showPairing) {
-                drawSetupRequired(cv, t);
+            } else if (!ai.isConfigured()) {
+                drawNeedsConnect(cv, t);
             } else {
                 drawMainCopilot(cv, t, now);
             }
@@ -1469,15 +1507,15 @@ mgu.run({
         });
 
         ui.onClick('BTN_REPAIR', () => {
-            showPairing = !showPairing;
+            page = 2;
             showKeyboard = false;
             return render(true);
         });
 
         ctx.onTab((i) => {
-            page = i === 1 ? 1 : 0;
-            showPairing = false;
+            page = i === 1 || i === 2 ? i : 0;
             showKeyboard = false;
+            confirmAt = 0;
             return render(true);
         });
 

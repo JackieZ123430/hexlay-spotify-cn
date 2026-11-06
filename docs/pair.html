@@ -626,6 +626,7 @@
 
         function handleCarDisconnected() {
             localStorage.removeItem('bmw_spot_paired_' + channel);
+            CarLink.forgetCar(channel).catch(() => {});      // its channel and key are dead: out of My cars
             show('cardSuccess', false);
             show('cardPairing', true);
             showStatus('Vehicle ' + CarLink.shortCode(channel) + ' was disconnected. Scan its new QR code to pair again.', false);

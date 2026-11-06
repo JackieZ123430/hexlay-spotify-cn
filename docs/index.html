@@ -402,6 +402,15 @@
                 forget.onclick = () => askForget(row, c, [open, forget]);
                 row.append(who, open, forget);
                 list.appendChild(row);
+                // a car that disconnected while this page was closed: its entry is dead, so it goes
+                CarLink.dropIfUnpaired(c).then((gone) => {
+                    if (!gone) return;
+                    row.textContent = '';
+                    const note = document.createElement('p');
+                    note.className = 'muted';
+                    note.innerText = CarLink.APPS[c.app].name + ' ' + c.code + ' was disconnected from the car. Scan its new QR code to pair again.';
+                    row.appendChild(note);
+                }).catch(() => {});
             }
         }
 

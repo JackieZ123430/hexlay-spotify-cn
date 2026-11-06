@@ -215,6 +215,13 @@ class Vehicle {
         return this.busy;
     }
 
+    /** Disconnected: what the phone set goes with it (the car's own identity stays). */
+    clearProfile() {
+        this.profile = null;
+        this.profileAt = 0;
+        try { fs.unlinkSync(this.profileFile); } catch (e) { /* none */ }
+    }
+
     /** The phone's profile; an older message (a replay) never replaces a newer one. */
     setProfile(p, time) {
         time = typeof time === 'number' ? time : Date.now();
@@ -253,6 +260,7 @@ const ENGINE_TYPES = {
 Vehicle.engineTypeOf = (raw) => (raw !== undefined && raw !== null && Object.prototype.hasOwnProperty.call(ENGINE_TYPES, raw) ? ENGINE_TYPES[raw] : null);
 /** What the installer left out on this unit (kit/missing-interfaces.json, written by the build on the car): { key: why }. */
 Vehicle.missingAtInstall = () => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'kit', 'missing-interfaces.json'), 'utf8')) || {}; } catch (e) { return {}; } };
+Vehicle.profileLines = profileLines;
 Vehicle.vinFromLaunch = vinFromLaunch;
 Vehicle.decodeVin = decodeVin;
 Vehicle.cleanProfile = cleanProfile;

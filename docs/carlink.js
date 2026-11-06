@@ -284,6 +284,26 @@
         return out;
     }
 
+    /**
+     * The car's last word about the pairing among its recent messages: 'unpaired' (it disconnected:
+     * this entry's channel and key are dead), 'paired' (an ack or hello since), or null (nothing kept).
+     */
+    function lastWord(msgs) {
+        let w = null;
+        (msgs || []).forEach((m) => {
+            if (m && m.type === 'unpaired') w = 'unpaired';
+            else if (m && (m.type === 'pair_ack' || (m.type === 'car_hello' && m.paired === true))) w = 'paired';
+        });
+        return w;
+    }
+    /** Drop a car that disconnected while this page was closed (the relay keeps 12 hours). True if dropped. */
+    async function dropIfUnpaired(car) {
+        const msgs = await recent(car).catch(() => []);
+        if (lastWord(msgs) !== 'unpaired') return false;
+        await forgetCar(car.channel);
+        return true;
+    }
+
     /** Wait (up to ms) for a message from the car of one of these types. */
     function waitFor(car, types, ms) {
         return new Promise((resolve) => {
@@ -450,7 +470,7 @@
 
     window.CarLink = {
         APPS, appOf, validChannel, validKeyHex, shortCode, randomHex,
-        getCar, listCars, confirmCar, forgetCar, forget, clearPageState, saveCar, updateInfo, carFromAddress, migrateLegacy, parsePairingLink,
+        getCar, listCars, confirmCar, forgetCar, forget, clearPageState, saveCar, updateInfo, carFromAddress, migrateLegacy, parsePairingLink, lastWord, dropIfUnpaired,
         sendToCar, RELAY_DOWN, openFromCar, listen, recent, waitFor,
         startScanner,
         isIOS, isStandalone, pushSupported, pushSubscription, subscribePush, unsubscribePush, deviceLabel,

@@ -714,6 +714,12 @@
 
             if (stopListening) stopListening();
             stopListening = car ? CarLink.listen(car, onCarMessage) : null;
+            // what the car said while this page was closed (the relay keeps 12 hours): a disconnect, its id
+            if (car) CarLink.recent(car).then((msgs) => {
+                const id = msgs.filter((m) => m.carId).map((m) => m.carId).pop();
+                if (id) adoptCar(id);
+                if (CarLink.lastWord(msgs) === 'unpaired') handleCarDisconnected();
+            }).catch(() => {});
             // ask the car whether it is paired (a paired car answers encrypted while M-Copilot is open)
             if (car) CarLink.sendToCar(car, { type: 'hello_request' }).catch(() => {});
             showProfileCard();
@@ -721,8 +727,41 @@
             showNotifyCard();
         }
 
+        /**
+         * The car's own id (it survives a disconnect): pairing the same car again replaces its old entry,
+         * and the car profile, model choice and provider saved for it move to the new pairing.
+         */
+        function adoptCar(carId) {
+            if (!/^[0-9a-f]{16}$/.test(String(carId)) || !channel) return;
+            const key = 'copilot_car_' + carId, old = localStorage.getItem(key);
+            if (old && old !== channel) {
+                const move = (k) => { const v = localStorage.getItem(k + old); if (v !== null && localStorage.getItem(k + channel) === null) localStorage.setItem(k + channel, v); localStorage.removeItem(k + old); };
+                ['copilot_profile_', 'copilot_provider_'].forEach(move);
+                const keys = []; for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
+                keys.filter((k) => k && k.indexOf('copilot_model_' + old + '_') === 0).forEach((k) => {
+                    const nk = 'copilot_model_' + channel + k.slice(('copilot_model_' + old).length);
+                    if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+                    localStorage.removeItem(k);
+                });
+                localStorage.removeItem('copilot_paired_' + old);
+                CarLink.forgetCar(old).catch(() => {});
+                showProfileCard();
+                showModelCard();
+                // the car forgot them when it disconnected: send them back, so pairing again restores everything
+                if (car) {
+                    let prof = null;
+                    try { prof = JSON.parse(localStorage.getItem('copilot_profile_' + channel) || 'null'); } catch (e) {}
+                    if (prof && Object.keys(prof).length) CarLink.sendToCar(car, { type: 'copilot_profile', profile: prof }, 'BMW M-Copilot Car Profile').catch(() => {});
+                    const prov = localStorage.getItem('copilot_provider_' + channel), mdl = prov && localStorage.getItem('copilot_model_' + channel + '_' + prov);
+                    if (prov && mdl) CarLink.sendToCar(car, { type: 'copilot_model', provider: prov, model: mdl }, 'BMW M-Copilot AI Model').catch(() => {});
+                }
+            }
+            try { localStorage.setItem(key, channel); } catch (e) {}
+        }
+
         // what the car says (only messages that authenticate with this car's key reach here)
         function onCarMessage(m) {
+            if (m.carId) adoptCar(m.carId);
             if (m.type === 'unpaired') handleCarDisconnected();
             else if (m.type === 'pair_ack') handleCarConnected();
             else if (m.type === 'car_hello') {
@@ -923,6 +962,9 @@
 
         function handleCarDisconnected() {
             localStorage.removeItem('copilot_paired_' + channel);
+            // the car moved to a new channel and key: this entry can't reach it any more, so it leaves My cars
+            // (the settings stay on this phone: pairing the car again carries them over, see adoptCar)
+            CarLink.forgetCar(channel).catch(() => {});
             show('cardSuccess', false);
             show('cardPairing', true);
             show('cardNotify', false);

@@ -341,7 +341,7 @@
             iDrive 7 Custom Apps &middot; Unofficial
         </div>
         <h1>M-Copilot AI Setup</h1>
-        <p class="subtitle">Connect an AI provider key to the M-Copilot app on your car</p>
+        <p class="subtitle">Give M-Copilot on your car the AI it answers with</p>
     </div>
 
     <!-- Disconnect / Unpair Notification Banner -->
@@ -390,17 +390,17 @@
         </div>
 
         <div class="pair-code">
-            <span><span class="pulse-dot"></span>ACTIVE VEHICLE</span>
+            <span><span class="pulse-dot"></span>YOUR CAR</span>
             <strong id="spanCode">--------</strong>
         </div>
 
         <div class="privacy-pill" id="privacyIndicator">
-            🔒 <strong>E2EE Isolated Session:</strong> Encrypted exclusively for this vehicle.
+            🔒 Encrypted for this car only.
         </div>
 
         <div class="tabs">
-            <div class="tab active" id="tabGemini" onclick="switchTab('gemini')">Google Gemini (Free)</div>
-            <div class="tab" id="tabCustom" onclick="switchTab('custom')">Custom API</div>
+            <div class="tab active" id="tabGemini" onclick="switchTab('gemini')">Gemini (free)</div>
+            <div class="tab" id="tabCustom" onclick="switchTab('custom')">Other AI</div>
         </div>
 
         <!-- Google Gemini Form -->
@@ -416,9 +416,9 @@
         <div id="sectionCustom" style="display: none;">
             <label for="selectProvider">AI Provider</label>
             <select id="selectProvider">
-                <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
-                <option value="groq">Groq (Llama 3.3 70B - Ultra Fast)</option>
-                <option value="openrouter">OpenRouter (Universal)</option>
+                <option value="openai">OpenAI (ChatGPT)</option>
+                <option value="groq">Groq (very fast)</option>
+                <option value="openrouter">OpenRouter (many models)</option>
                 <option value="claude">Anthropic Claude</option>
             </select>
 
@@ -707,9 +707,9 @@
             const pill = document.getElementById('privacyIndicator');
             pill.textContent = '';
             const strong = document.createElement('strong');
-            strong.textContent = car ? 'End-to-end encrypted:' : 'No key for this car on this phone:';
+            strong.textContent = car ? 'Private:' : 'Not on this phone yet:';
             pill.append(car ? '🔒 ' : '⚠️ ', strong, car
-                ? ' 256-bit AES-GCM, for car ' + shortCode + ' only.'
+                ? ' encrypted for car ' + shortCode + ' only.'
                 : ' scan the QR code on the car screen to pair.');
 
             if (stopListening) stopListening();

@@ -154,21 +154,6 @@
             line-height: 1.5;
             margin-bottom: 14px;
         }
-        .tags-row {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            margin-bottom: 16px;
-        }
-        .tag {
-            font-size: 11px;
-            font-weight: 600;
-            color: #94a3b8;
-            background: #06080e;
-            border: 1px solid #16202f;
-            padding: 3px 8px;
-            border-radius: 4px;
-        }
         .btn-app {
             display: block;
             width: 100%;
@@ -296,7 +281,7 @@
             iDrive 7 Custom Apps &middot; Unofficial
         </div>
         <h1>Custom Apps Suite</h1>
-        <p class="subtitle">Phone companion pages for unofficial apps on BMW G-Series iDrive 7 head units</p>
+        <p class="subtitle">Your phone's link to the apps on your BMW's iDrive 7 screen</p>
     </div>
 
     <div class="container">
@@ -310,7 +295,6 @@
             </div>
             <div class="app-title-row">
                 <div class="app-title">My cars</div>
-                <div class="app-status">This phone</div>
             </div>
             <div id="carList"><p class="muted">Loading...</p></div>
             <button class="btn-app" id="btnScan" type="button" onclick="openScanner()" style="margin-top: 6px;">Scan car QR</button>
@@ -334,18 +318,11 @@
                 <div class="line"></div>
             </div>
             <div class="app-title-row">
-                <div class="app-title">M-Copilot AI</div>
-                <div class="app-status">Live Uplink</div>
+                <div class="app-title">M-Copilot</div>
             </div>
             <p class="app-desc">
-                AI co-driver with your choice of Gemini, Claude, OpenAI, Groq or OpenRouter. Answers use live driving signals; topic chips and an on-screen keyboard. The API key reaches the car end-to-end encrypted.
+                Ask about your car on its screen: warning lights, service, tyres, fuel, performance and more. Answers use your car's live readings. Works with Gemini (free), Claude, ChatGPT and others.
             </p>
-            <div class="tags-row">
-                <span class="tag">5 AI Providers</span>
-                <span class="tag">E2EE Pairing</span>
-                <span class="tag">Touch Keyboard</span>
-                <span class="tag">Launch & Cooling</span>
-            </div>
             <p class="pair-how">To pair: on the car, open <b>M-Copilot</b> and press <b>Pair Phone</b> on the bottom bar, then tap <b>Scan car QR</b> above.</p>
         </div>
 
@@ -358,18 +335,11 @@
                 <div class="line"></div>
             </div>
             <div class="app-title-row">
-                <div class="app-title">Spotify Connect</div>
-                <div class="app-status" style="color: #1ed760; border-color: #1ed760; background: rgba(30, 215, 96, 0.15);">OAuth PKCE</div>
+                <div class="app-title">Spotify</div>
             </div>
             <p class="app-desc">
-                Spotify Connect controller with OAuth 2.0 PKCE sign-in on your phone. Tokens reach the car end-to-end encrypted. Browse playlists and liked songs, control playback and switch devices.
+                Your playlists and liked songs on the car's screen: play, skip, shuffle, and choose which device plays.
             </p>
-            <div class="tags-row">
-                <span class="tag">OAuth 2.0 PKCE</span>
-                <span class="tag">Playlists & Artists</span>
-                <span class="tag">Cover Art</span>
-                <span class="tag">E2EE Pairing</span>
-            </div>
             <p class="pair-how">To pair: on the car, open <b>Spotify</b> and go to the <b>Connect</b> tab, then tap <b>Scan car QR</b> above.</p>
         </div>
 
@@ -383,18 +353,11 @@
             </div>
             <div class="app-title-row">
                 <div class="app-title">QuickCode</div>
-                <div class="app-status" style="color: #ffb703; border-color: #ffb703; background: rgba(255, 183, 3, 0.15);">Work in Progress</div>
+                <div class="app-status" style="color: #ffb703; border-color: #ffb703; background: rgba(255, 183, 3, 0.15);">Coming later</div>
             </div>
             <p class="app-desc">
-                BMW G-Series BDC (0x40) coding. Work in progress: not available in the MGU Store until its coding writes are verified against real BMW coding data.
+                Turn your car's comfort features on or off from its screen, with a backup before every change. Not available yet.
             </p>
-            <div class="tags-row">
-                <span class="tag">BDC 0x40</span>
-                <span class="tag">Coming Later</span>
-            </div>
-            <div style="font-size: 12px; color: #64748b; text-align: center; padding: 6px 0;">
-                Not installable yet
-            </div>
         </div>
     </div>
 

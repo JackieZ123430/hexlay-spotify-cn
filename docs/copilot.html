@@ -714,6 +714,8 @@
 
             if (stopListening) stopListening();
             stopListening = car ? CarLink.listen(car, onCarMessage) : null;
+            // ask the car whether it is paired (a paired car answers encrypted while M-Copilot is open)
+            if (car) CarLink.sendToCar(car, { type: 'hello_request' }).catch(() => {});
             showProfileCard();
             showModelCard();
             showNotifyCard();
@@ -723,7 +725,12 @@
         function onCarMessage(m) {
             if (m.type === 'unpaired') handleCarDisconnected();
             else if (m.type === 'pair_ack') handleCarConnected();
-            else if (m.type === 'car_hello' && typeof m.vapid === 'string') CarLink.updateInfo(channel, { vapid: m.vapid, version: String(m.version || '').slice(0, 20) }).then((c) => { if (c) car = c; });
+            else if (m.type === 'car_hello') {
+                if (typeof m.vapid === 'string') CarLink.updateInfo(channel, { vapid: m.vapid, version: String(m.version || '').slice(0, 20) }).then((c) => { if (c) car = c; });
+                // a paired car: "Connected" (not while the driver is changing the key)
+                if (m.paired === true && document.getElementById('btnCancelChange').style.display !== 'block') handleCarConnected();
+                else if (m.paired === true) CarLink.confirmCar(channel);
+            }
         }
 
         // models per provider; '' = the car's default, '*' = type a model id
@@ -952,6 +959,7 @@
         }
 
         function handleCarConnected() {
+            CarLink.confirmCar(channel);       // now it belongs in My cars
             localStorage.setItem('copilot_paired_' + channel, 'true');
             document.getElementById('disconnectNotice').style.display = 'none';
             show('btnCancelChange', false);

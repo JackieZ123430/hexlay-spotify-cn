@@ -30,8 +30,8 @@ This repository is built on the open-source BMW iDrive 7 platform:
 
 | App | Version | Needs internet | Touches vehicle ECUs |
 | :--- | :---: | :---: | :--- |
-| [Spotify](#1-spotify-spotify) | 1.0.15 | Yes | No |
-| [M-Copilot](#2-m-copilot-m_copilot) | 1.0.8 | Yes | No (reads driving signals, service list and fault memory) |
+| [Spotify](#1-spotify-spotify) | 1.0.17 | Yes | No |
+| [M-Copilot](#2-m-copilot-m_copilot) | 1.0.10 | Yes | No (reads driving signals, service list and fault memory) |
 
 > [!NOTE]
 > **QuickCode (BMW BDC coding) is a work in progress** and is not available in the MGU Store. It is not offered until its coding writes are verified against real BMW coding data. Its source is in `wip/quick_code/`.
@@ -99,6 +99,8 @@ The head unit's installer refuses an app outright if its SOME/IP manifest names 
 ### Internet access
 
 Spotify and M-Copilot need the MGU Store's **internet uplink** (`mgu-uplink`): Wi-Fi such as a phone hotspot, a USB-tethered phone, an LTE stick or a USB Ethernet adapter. The store routes only apps that declare `"mguInternet": true`, and the head unit's own resolver cannot reach the internet, so these apps resolve names through the DNS servers of the uplink's lease (`kit/runtime/uplink.js`).
+
+The phone link uses the public relay `ntfy.sh`, which limits requests per internet address. The apps read their pairing channel through one long-lived connection (`kit/runtime/relay_stream.js`) instead of polling it, so a car, an emulator and the phone sharing one connection don't use up the limit; the phone pages send with plain requests (no CORS preflight) and try again when the relay is briefly unreachable.
 
 If an app says it is offline while the store shows **Online**, look for the `uplink:` line at the start of the app's log (`<app>.log` in its data folder):
 * `lease <ip> via <interface>` — the app is routed; the problem is elsewhere.

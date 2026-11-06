@@ -563,9 +563,19 @@
             if (stopListening) stopListening();
             stopListening = car ? CarLink.listen(car, (m) => {
                 if (m.type === 'unpaired') handleCarDisconnected();
-                else if (m.type === 'pair_ack') handleCarConnected();
+                else if (m.type === 'pair_ack' || (m.type === 'car_hello' && m.paired === true)) handleCarConnected();
+                else if (m.type === 'car_hello' && m.paired === false && !sentThisVisit) {
+                    // the car says it is not signed in: no "Connected" from an old flag
+                    localStorage.removeItem('bmw_spot_paired_' + channel);
+                    show('cardSuccess', false);
+                    show('cardPairing', true);
+                }
             }) : null;
+            // ask the car whether it is paired (it answers encrypted, within seconds while the app runs);
+            // not on the way back from the Spotify login, which sends the token next
+            if (car && !urlParams.get('code')) CarLink.sendToCar(car, { type: 'hello_request' }).catch(() => {});
         }
+        let sentThisVisit = false;
 
         // the code shown on the car finds a car this phone already has (the key is only in the QR code)
         async function applyManualCode() {
@@ -622,6 +632,7 @@
         }
 
         function handleCarConnected() {
+            CarLink.confirmCar(channel);       // now it belongs in My cars
             localStorage.setItem('bmw_spot_paired_' + channel, 'true');
             show('cardPairing', false);
             show('cardSuccess', true);
@@ -656,6 +667,7 @@
                 return;
             }
             let ok = false;
+            sentThisVisit = true;
             try { ok = await CarLink.sendToCar(car, tokenData, 'BMW Spotify Secure Pairing'); } catch (e) { ok = false; }
             if (!ok) { showStatus(CarLink.RELAY_DOWN + ' Your Spotify login was not used: tap Connect with Spotify again.', true); return; }
             handleCarConnected();

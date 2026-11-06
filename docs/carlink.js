@@ -98,9 +98,26 @@
         memory.set(car.channel, car);
         return tx('readwrite', (s) => (s ? reqP(s.put(car)) : null)).then(() => car, () => car);
     }
-    function listCars() {
+    /**
+     * The cars of My cars: only confirmed ones (a send went through, or the car answered that it
+     * is paired). A pending car (QR scanned, not connected yet) older than PENDING_MS is dropped.
+     */
+    const PENDING_MS = 60 * 60 * 1000;
+    function listCars(opts) {
         return tx('readonly', (s) => (s ? reqP(s.getAll()) : Array.from(memory.values())))
-            .then((all) => (all || []).filter((c) => c && appOf(c.channel)).sort((a, b) => (b.added || 0) - (a.added || 0)), () => Array.from(memory.values()));
+            .then((all) => (all || []).filter((c) => c && appOf(c.channel)), () => Array.from(memory.values()))
+            .then((all) => {
+                all.filter((c) => c.pending && Date.now() - (c.added || 0) > PENDING_MS).forEach((c) => forgetCar(c.channel));
+                return all.filter((c) => (opts && opts.all) || !c.pending).sort((a, b) => (b.added || 0) - (a.added || 0));
+            });
+    }
+    /** The car is connected for real: keep it in My cars. */
+    function confirmCar(channel) {
+        return getCar(channel).then((c) => {
+            if (!c || !c.pending) return c;
+            c.pending = false;
+            return putCar(c);
+        });
     }
     function forgetCar(channel) {
         memory.delete(channel);
@@ -126,7 +143,9 @@
         raw.fill(0);
         raw = null;
         const old = await getCar(channel);
-        return putCar({ channel, app, code: shortCode(channel), added: (old && old.added) || Date.now(), toCar, fromCar, info: (old && old.info) || {} });
+        // new cars wait for proof of a connection (confirmCar) before they show in My cars
+        const pending = old ? !!old.pending : true;
+        return putCar({ channel, app, code: shortCode(channel), added: (old && old.added) || Date.now(), pending, toCar, fromCar, info: (old && old.info) || {} });
     }
 
     /** Keys the older pages left in local/session storage: moved into IndexedDB and wiped. */
@@ -144,7 +163,8 @@
                 }
             } catch (e) { /* storage blocked */ }
         });
-        for (const [ch, k] of moves) { try { await saveCar(ch, k); } catch (e) { /* skip */ } }
+        // these were real pairings of the older pages
+        for (const [ch, k] of moves) { try { await saveCar(ch, k); await confirmCar(ch); } catch (e) { /* skip */ } }
     }
 
     /**
@@ -223,7 +243,9 @@
         for (let attempt = 0; attempt < 3; attempt++) {
             if (attempt) await new Promise((r) => setTimeout(r, attempt === 1 ? 1500 : 4000));
             try {
-                const res = await fetch(RELAY + car.channel, { method: 'POST', headers: { Title: title || 'BMW car link' }, body, referrerPolicy: 'no-referrer' });
+                // a plain POST with a text body and no custom headers: no CORS preflight, so one
+                // request instead of two (a rate-limited preflight is what made Safari say "Load failed")
+                const res = await fetch(RELAY + car.channel, { method: 'POST', body, referrerPolicy: 'no-referrer' });
                 if (res.ok) return true;
                 if (res.status !== 429 && res.status < 500) return false;
             } catch (e) { /* unreachable: try again */ }
@@ -428,7 +450,7 @@
 
     window.CarLink = {
         APPS, appOf, validChannel, validKeyHex, shortCode, randomHex,
-        getCar, listCars, forgetCar, forget, clearPageState, saveCar, updateInfo, carFromAddress, migrateLegacy, parsePairingLink,
+        getCar, listCars, confirmCar, forgetCar, forget, clearPageState, saveCar, updateInfo, carFromAddress, migrateLegacy, parsePairingLink,
         sendToCar, RELAY_DOWN, openFromCar, listen, recent, waitFor,
         startScanner,
         isIOS, isStandalone, pushSupported, pushSubscription, subscribePush, unsubscribePush, deviceLabel,

@@ -60,6 +60,8 @@ require.cache['fake-tls'] = { id: 'fake-tls', filename: 'fake-tls', loaded: true
 const link = require('../runtime/link_crypto');
 const wp = require('../runtime/webpush');
 const { PhoneNotifier } = require('../../apps/m_copilot/phone_push');
+const { RelayStream } = require('../runtime/relay_stream');
+const { EventEmitter } = require('events');
 const CopilotPair = require('../../apps/m_copilot/cloud_pair').CloudPairManager;
 const SpotifyPair = require('../../apps/spotify/cloud_pair').CloudPairManager;
 
@@ -158,6 +160,22 @@ async function main() {
     assert.strictEqual(page2.localStorage.length + page2.sessionStorage.length, 0, 'plain-text keys wiped');
     assert.strictEqual((await page2.CarLink.listCars()).length, 2, 'both cars kept');
 
+    // ---- a send is a plain POST: no custom header, so no CORS preflight ----
+    await CL.sendToCar(car, { type: 'hello_request' });
+    const plain = page.posts.pop();
+    assert(!plain.init.headers, 'no headers (a header would make Safari send a preflight first)');
+
+    // ---- new cars wait for proof of a connection before they show in My cars ----
+    const chP = 'bmw_spot_' + link.nonce(12);
+    await CL.saveCar(chP, link.nonce(32));
+    assert(!(await CL.listCars()).some((c) => c.channel === chP), 'a scanned but unconnected car is not listed');
+    assert((await CL.listCars({ all: true })).some((c) => c.channel === chP && c.pending), 'it is kept as pending');
+    await CL.confirmCar(chP);
+    assert((await CL.listCars()).some((c) => c.channel === chP), 'listed once confirmed');
+    await CL.saveCar(chP, link.nonce(32));
+    assert((await CL.listCars()).some((c) => c.channel === chP), 'scanning a confirmed car again keeps it confirmed');
+    await CL.forgetCar(chP);
+
     // ---- the relay briefly unreachable: tried again, then a clear failure ----
     const realFetch = page.fetch;
     let calls = 0;
@@ -234,6 +252,49 @@ async function main() {
     assert(!spotify.tokens, 'a token message re-posted 2 h later: not used');
     sp.handleIncomingMessage(tw, false, nowSec());
     assert.strictEqual(spotify.tokens && spotify.tokens.token, 'tok', 'a fresh token message is used');
+
+    // the phone asks whether the car is paired: an encrypted answer
+    requests.length = 0;
+    await CL.sendToCar(spCar, { type: 'hello_request' });
+    sp.handleIncomingMessage(page.posts.pop().init.body, false, nowSec());
+    const hello2 = await CL.openFromCar(spCar, item(JSON.parse(requests.pop().body.toString())));
+    assert(hello2 && hello2.type === 'car_hello' && hello2.paired === false, 'Spotify answers hello with its paired state');
+
+    // ---- the relay subscription: one long-lived request, resumed after a drop ----
+    const paths = [];
+    let res = null;
+    const streamGet = (opts, cb) => {
+        paths.push(opts.path);
+        const req = new EventEmitter();
+        req.destroy = () => {};
+        setImmediate(() => {
+            res = new EventEmitter();
+            res.statusCode = paths.length === 3 ? 429 : 200;
+            res.headers = { date: new Date().toUTCString() };
+            res.resume = () => {};
+            res.setEncoding = () => {};
+            cb(res);
+        });
+        return req;
+    };
+    const got2 = [];
+    const rs = new RelayStream({ get: streamGet, log: quiet });
+    rs.start('bmw_spot_x', 'all', (it) => got2.push(it.message));
+    await new Promise((r) => setTimeout(r, 10));
+    assert.strictEqual(paths[0], '/bmw_spot_x/json?since=all', 'subscribes from the given point');
+    res.emit('data', '{"event":"open","time":1}\n{"event":"keepalive","time":2}\n{"id":"m1","event":"mes');
+    res.emit('data', 'sage","time":3,"message":"a"}\n{"id":"m2","event":"message","time":4,"message":"b"}\n');
+    assert.deepStrictEqual(got2, ['a', 'b'], 'messages split across chunks; open / keepalive are not messages');
+    res.emit('end');
+    await new Promise((r) => setTimeout(r, 3200));
+    assert.strictEqual(paths[1], '/bmw_spot_x/json?since=m2', 'a dropped stream resumes after the last message');
+    res.emit('end');
+    await new Promise((r) => setTimeout(r, 6300));
+    assert.strictEqual(paths.length, 3, 'reconnects with a growing wait');
+    await new Promise((r) => setTimeout(r, 200));
+    assert(rs.retryTimer, 'after a 429 it waits before trying again');
+    rs.stop();
+    assert(!rs.running && !rs.retryTimer, 'stopped: no retry left');
 
     // ---- notifications ----
     const told = [];

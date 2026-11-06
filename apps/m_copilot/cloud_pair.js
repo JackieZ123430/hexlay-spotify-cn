@@ -16,13 +16,12 @@
  */
 const tlsDates = require('./tls_dates');
 const link = require('./kit/link_crypto');
+const { RelayStream } = require('./kit/relay_stream');
 const crypto = require('crypto');
 
-// polling the channel (while M-Copilot is on screen): quickly while waiting to be paired, then
-// every 15 s for the phone's settings, notification set-up and unpair
-const PAIRING_POLL_MS = 2500;
-const PAIRED_POLL_MS = 15000;
-const BACKGROUND_POLL_MS = 30000;   // not paired, app not on screen
+// The channel is read (while M-Copilot is on screen) through one long-lived subscription
+// (kit/relay_stream.js), not polled: ntfy.sh limits requests per internet address, and polling
+// used up the allowance the phone shares with the car (its sends were then refused).
 const CHANNEL_PREFIX = 'bmw_copilot_';
 
 // pairing keys and channels come only from the system's CSPRNG
@@ -60,12 +59,9 @@ class CloudPairManager {
         }
 
         this.shortCode = formatShortCode(this.channel);
-        this.pollInterval = null;
-        this.isPolling = false;
-        this.pollInFlight = false;
-        this.lastPollAt = 0;
+        this.stream = new RelayStream({ get: tlsDates.get, log: this.log });
         this.lastMsgId = null;
-        this.primed = false;
+        this.openServerTime = null;
         const isCfg = (this.ai && typeof this.ai.isConfigured === 'function') ? this.ai.isConfigured() : false;
         this.lastSince = Math.floor(Date.now() / 1000) - (isCfg ? 2 : 7200);
 
@@ -122,8 +118,8 @@ class CloudPairManager {
         this.secretKey = generateEntropyHex(32);
         this.shortCode = formatShortCode(this.channel);
         this.lastMsgId = null;
-        this.primed = false;
         this.fresh.reset();
+        this.stream.stop();            // the next startPolling() subscribes to the new channel
         this.lastSince = Math.floor(Date.now() / 1000) - 2;
         if (this.ai && this.ai.config) {
             this.ai.config.channel = this.channel;
@@ -133,79 +129,24 @@ class CloudPairManager {
         this.log.info('CloudPair: Reset session to fresh channel ' + this.shortCode);
     }
 
+    /** Subscribe to the channel (one long-lived request; reconnects by itself). */
     startPolling() {
-        if (this.isPolling) return;
-        this.isPolling = true;
-
-        const check = () => {
-            if (!this.isPolling) return;
-            // one poll at a time (a stalled one is given up after 20 s)
-            if (this.pollInFlight && Date.now() - this.lastPollAt < 20000) return;
-            // Once paired, keep polling slowly so a phone-side (authenticated) unpair still arrives
-            const paired = this.isPaired();
-            if (paired && Date.now() - this.lastPollAt < PAIRED_POLL_MS) return;
-            if (!paired && this.isOnScreen && !this.isOnScreen() && Date.now() - this.lastPollAt < BACKGROUND_POLL_MS) return;
-            this.lastPollAt = Date.now();
-            // The first poll of a channel we are already paired on returns the cached history,
-            // the original pairing message included: that is not acted on again.
-            const replay = paired && !this.primed;
-            const channel = this.channel;
-
-            let pathStr = `/${channel}/json?poll=1`;
-            if (this.lastMsgId) {
-                pathStr += `&since=${encodeURIComponent(this.lastMsgId)}`;
-            } else if (this.lastSince && !paired) {
-                pathStr += `&since=${this.lastSince}`;
-            }
-
-            try {
-                this.pollInFlight = true;
-                const req = tlsDates.get({
-                    hostname: 'ntfy.sh',
-                    port: 443,
-                    path: pathStr,
-                    timeout: 4000
-                }, (res) => {
-                    let data = '';
-                    res.on('data', (c) => { data += c; });
-                    res.on('end', () => {
-                        this.pollInFlight = false;
-                        const date = Date.parse(res.headers && res.headers.date);
-                        if (isFinite(date) && this.onServerTime) this.onServerTime(date);
-                        if (channel !== this.channel || res.statusCode !== 200) return;
-                        this.primed = true;
-                        const trimmed = data.trim();
-                        if (!trimmed) return;
-
-                        const lines = trimmed.split('\n');
-                        for (const line of lines) {
-                            // an unpair just moved us to a fresh channel: the rest belongs to the old one
-                            if (channel !== this.channel) break;
-                            if (!line.trim()) continue;
-                            try {
-                                const item = JSON.parse(line);
-                                if (item.id) {
-                                    this.lastMsgId = item.id;
-                                }
-                                if (item.event === 'message' && item.message) {
-                                    this.handleIncomingMessage(item.message, replay, item.time);
-                                }
-                            } catch (e) {
-                                // not ntfy JSON: nothing authenticated in it
-                            }
-                        }
-                    });
-                });
-                req.on('error', () => { this.pollInFlight = false; });
-                req.on('timeout', () => { req.destroy(); this.pollInFlight = false; });
-            } catch (e) {
-                this.pollInFlight = false;
-                this.log.warn('CloudPair check error: ' + e.message);
-            }
-        };
-
-        this.pollInterval = setInterval(check, PAIRING_POLL_MS);
-        check();
+        if (this.stream.running) return;
+        this.openServerTime = null;
+        // from the last message seen; else, paired: the relay's whole cache (12 h) for what the
+        // phone sent meanwhile; not paired: the recent part of it (lastSince)
+        const since = this.lastMsgId || (this.isPaired() ? 'all' : this.lastSince);
+        this.stream.start(this.channel, since, (item) => {
+            if (item.id) this.lastMsgId = item.id;
+            // cached messages from before this subscription opened, on a car that is already
+            // paired: the original pairing among them is not acted on again (the relay's clock
+            // decides, not the head unit's)
+            const replay = this.isPaired() && this.openServerTime !== null && typeof item.time === 'number' && item.time * 1000 < this.openServerTime - 5000;
+            this.handleIncomingMessage(item.message, replay, item.time);
+        }, (ms) => {
+            if (this.openServerTime === null) this.openServerTime = ms;
+            if (this.onServerTime) this.onServerTime(ms);
+        });
     }
 
     isPaired() {
@@ -280,17 +221,12 @@ class CloudPairManager {
             this.log.info('CloudPair: Received verified AI credentials via secure uplink!');
             this.ai.saveCredentials(parsed);
             this.notifyAck();
-            this.lastPollAt = Date.now();
             if (this.onPaired) this.onPaired();
         }
     }
 
     stopPolling() {
-        this.isPolling = false;
-        if (this.pollInterval) {
-            clearInterval(this.pollInterval);
-            this.pollInterval = null;
-        }
+        this.stream.stop();
     }
 }
 

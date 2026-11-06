@@ -87,7 +87,7 @@ class PhoneNotifier {
 
     /** The car's hello to the phone: which app, and the key a push subscription needs. */
     hello() {
-        this.tellPhone({ type: 'car_hello', app: 'm_copilot', version: this.version, push: true, vapid: this.vapidPublicKey(), phones: this.phoneCount() }, 'BMW M-Copilot');
+        this.tellPhone({ type: 'car_hello', app: 'm_copilot', paired: true, version: this.version, push: true, vapid: this.vapidPublicKey(), phones: this.phoneCount() }, 'BMW M-Copilot');
     }
 
     /** A message from the paired phone (already decrypted, fresh and authenticated). */

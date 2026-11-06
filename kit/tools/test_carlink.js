@@ -158,6 +158,23 @@ async function main() {
     assert.strictEqual(page2.localStorage.length + page2.sessionStorage.length, 0, 'plain-text keys wiped');
     assert.strictEqual((await page2.CarLink.listCars()).length, 2, 'both cars kept');
 
+    // ---- the relay briefly unreachable: tried again, then a clear failure ----
+    const realFetch = page.fetch;
+    let calls = 0;
+    page.fetch = async () => { calls++; if (calls < 3) throw new TypeError('Load failed'); return { ok: true }; };
+    assert.strictEqual(await CL.sendToCar(car, { type: 'copilot_profile', profile: {} }), true, 'two network errors, then sent');
+    assert.strictEqual(calls, 3);
+    calls = 0;
+    page.fetch = async () => { calls++; return { ok: false, status: 400 }; };
+    assert.strictEqual(await CL.sendToCar(car, { type: 'copilot_profile', profile: {} }), false, 'refused by the relay: not retried');
+    assert.strictEqual(calls, 1);
+    calls = 0;
+    page.fetch = async () => { calls++; throw new TypeError('Load failed'); };
+    assert.strictEqual(await CL.sendToCar(car, { type: 'copilot_profile', profile: {} }), false, 'still down after 3 tries: false, no throw');
+    assert.strictEqual(calls, 3);
+    assert(/ntfy\.sh/.test(CL.RELAY_DOWN), 'the message names the relay');
+    page.fetch = realFetch;
+
     // ---- forgetting a car: only this phone, or disconnecting the car too ----
     const chF = 'bmw_copilot_' + link.nonce(12), keyF = link.nonce(32);
     const carF = await CL.saveCar(chF, keyF);

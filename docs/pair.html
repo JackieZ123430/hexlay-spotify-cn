@@ -657,7 +657,7 @@
             }
             let ok = false;
             try { ok = await CarLink.sendToCar(car, tokenData, 'BMW Spotify Secure Pairing'); } catch (e) { ok = false; }
-            if (!ok) { showStatus('Could not reach the relay. Check the phone\'s internet connection and try again.', true); return; }
+            if (!ok) { showStatus(CarLink.RELAY_DOWN + ' Your Spotify login was not used: tap Connect with Spotify again.', true); return; }
             handleCarConnected();
         }
 

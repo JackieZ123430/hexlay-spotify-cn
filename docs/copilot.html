@@ -763,11 +763,11 @@
             if (model && !/^[A-Za-z0-9._:\/-]{1,80}$/.test(model)) { say('That model id has characters the car does not accept.', false); return; }
             if (!car) { say('This phone has no key for this car. Scan the QR code on the car again.', false); return; }
             try {
-                if (!await CarLink.sendToCar(car, { type: 'copilot_model', provider: prov, model: model }, 'BMW M-Copilot AI Model')) { say('Transmission error. Check the phone\'s internet connection.', false); return; }
+                if (!await CarLink.sendToCar(car, { type: 'copilot_model', provider: prov, model: model }, 'BMW M-Copilot AI Model')) { say(CarLink.RELAY_DOWN, false); return; }
                 try { localStorage.setItem('copilot_model_' + channel + '_' + prov, model); } catch (e) {}
                 say('Saved. The car uses it within a minute while M-Copilot is open (the provider must be the one you paired).', true);
             } catch (e) {
-                say('Network error: ' + e.message, false);
+                say('Could not send: ' + e.message, false);
             }
         }
 
@@ -793,11 +793,11 @@
             });
             if (!car) { say('This phone has no key for this car. Scan the QR code on the car again.', false); return; }
             try {
-                if (!await CarLink.sendToCar(car, { type: 'copilot_profile', profile: profile }, 'BMW M-Copilot Car Profile')) { say('Transmission error. Check the phone\'s internet connection.', false); return; }
+                if (!await CarLink.sendToCar(car, { type: 'copilot_profile', profile: profile }, 'BMW M-Copilot Car Profile')) { say(CarLink.RELAY_DOWN, false); return; }
                 try { localStorage.setItem('copilot_profile_' + channel, JSON.stringify(profile)); } catch (e) {}
                 say('Saved. The car picks it up within a minute while M-Copilot is open, or the next time you open it.', true);
             } catch (e) {
-                say('Network error: ' + e.message, false);
+                say('Could not send: ' + e.message, false);
             }
         }
 
@@ -873,7 +873,7 @@
             notifySay('Telling your car about this phone...');
             const answer = CarLink.waitFor(car, ['push_ok', 'push_error'], 90000);
             if (!await CarLink.sendToCar(car, { type: 'push_subscribe', sub: { endpoint: sub.endpoint, keys: sub.keys }, vapid, label: CarLink.deviceLabel() }, 'BMW M-Copilot')) {
-                notifySay('Could not reach the relay. Check the phone\'s internet connection.', false);
+                notifySay(CarLink.RELAY_DOWN, false);
                 return;
             }
             const res = await answer;
@@ -1021,11 +1021,11 @@
                     handleCarConnected();
                     showModelCard();
                 } else {
-                    err.innerText = 'Transmission error. Check phone internet connection.';
+                    err.innerText = CarLink.RELAY_DOWN + ' Your key stays in the field.';
                     err.style.display = 'block';
                 }
             } catch (e) {
-                err.innerText = 'Network error: ' + e.message;
+                err.innerText = 'Could not send the key: ' + e.message;
                 err.style.display = 'block';
             }
         }

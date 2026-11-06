@@ -211,12 +211,26 @@
     }
 
     /** Encrypt obj for the car and post it; resolves true when the relay took it. */
+    /**
+     * Encrypt obj for the car and post it; resolves true when the relay took it. The relay can be
+     * briefly unreachable (Safari: "Load failed"), so a network error, 429 or 5xx is tried again,
+     * 3 attempts over about 6 s. A repeat that did arrive is harmless: the car keeps the newest.
+     */
     async function sendToCar(car, obj, title) {
         const wire = await sealForCar(car, obj);
         if (!wire) return false;
-        const res = await fetch(RELAY + car.channel, { method: 'POST', headers: { Title: title || 'BMW car link' }, body: JSON.stringify(wire), referrerPolicy: 'no-referrer' });
-        return res.ok;
+        const body = JSON.stringify(wire);
+        for (let attempt = 0; attempt < 3; attempt++) {
+            if (attempt) await new Promise((r) => setTimeout(r, attempt === 1 ? 1500 : 4000));
+            try {
+                const res = await fetch(RELAY + car.channel, { method: 'POST', headers: { Title: title || 'BMW car link' }, body, referrerPolicy: 'no-referrer' });
+                if (res.ok) return true;
+                if (res.status !== 429 && res.status < 500) return false;
+            } catch (e) { /* unreachable: try again */ }
+        }
+        return false;
     }
+    const RELAY_DOWN = 'Couldn\'t reach the relay (ntfy.sh) after 3 tries, so nothing was sent. Check the phone\'s internet connection and tap again.';
 
     /** Live messages from the car: onMsg(obj) for each authentic one. Returns a stop function. */
     function listen(car, onMsg) {
@@ -415,7 +429,7 @@
     window.CarLink = {
         APPS, appOf, validChannel, validKeyHex, shortCode, randomHex,
         getCar, listCars, forgetCar, forget, clearPageState, saveCar, updateInfo, carFromAddress, migrateLegacy, parsePairingLink,
-        sendToCar, openFromCar, listen, recent, waitFor,
+        sendToCar, RELAY_DOWN, openFromCar, listen, recent, waitFor,
         startScanner,
         isIOS, isStandalone, pushSupported, pushSubscription, subscribePush, unsubscribePush, deviceLabel,
     };

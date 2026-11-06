@@ -25,6 +25,8 @@
             align-items: center;
             min-height: 100vh;
         }
+        .nav-back { text-align: left; margin: -6px 0 12px; }
+        .nav-back a { display: inline-block; color: #00a3e0; font-size: 15px; font-weight: 700; text-decoration: none; padding: 6px 10px 6px 0; }
         .header {
             width: 100%;
             max-width: 440px;
@@ -329,6 +331,7 @@
 </head>
 <body>
     <div class="header">
+        <nav class="nav-back"><a href="index.html">&lsaquo; My cars</a></nav>
         <div class="badge-m">
             <span class="m-logo">
                 <span class="m-light"></span>
@@ -424,6 +427,7 @@
         </div>
 
         <button class="btn-connect" onclick="connectCopilot()">SEND KEY TO MY CAR</button>
+        <button class="btn-connect" id="btnCancelChange" onclick="cancelChange()" style="display: none; background: transparent; border-color: #242c39; color: #8a95a6; margin-top: 10px;">CANCEL: KEEP THE CURRENT KEY</button>
         <p id="errorMsg" style="color: #ff4d4d; font-size: 13px; text-align: center; margin-top: 12px; display: none;"></p>
     </div>
 
@@ -445,9 +449,11 @@
             AI credentials paired securely and isolated to this vehicle.<br>
             All prompts and questions are controlled directly from your car's touchscreen and iDrive controller.
         </p>
-        <p style="font-size: 12px; color: #64748b; margin-bottom: 18px;">
+        <p id="successProvider" style="font-size: 13px; color: #cbd5e1; margin-bottom: 12px; display: none;"></p>
+        <p style="font-size: 12px; color: #64748b; margin-bottom: 4px;">
             You can safely lock your phone or close this browser tab.
         </p>
+        <button class="btn-connect" onclick="changeKey()" style="background: transparent; border-color: #00a3e0; color: #00a3e0; margin-top: 14px;">CHANGE AI PROVIDER OR KEY</button>
         <button class="btn-unpair" onclick="unpairThisVehicle()">UNPAIR THIS VEHICLE</button>
     </div>
 
@@ -696,6 +702,7 @@
             show('cardNoVehicle', false);
             show('cardPairing', !isPaired);
             show('cardSuccess', isPaired);
+            showProviderLine();
 
             const pill = document.getElementById('privacyIndicator');
             pill.textContent = '';
@@ -918,11 +925,39 @@
             alertBox.innerText = 'Vehicle ' + CarLink.shortCode(channel) + ' was unpaired. Scan its new QR code to pair again.';
         }
 
+        // the paired car's provider, and changing provider or key without unpairing (the car takes a
+        // new key while paired, sent end-to-end encrypted like the first one)
+        const PROVIDER_NAMES = { gemini: 'Google Gemini', claude: 'Anthropic Claude', openai: 'OpenAI', groq: 'Groq', openrouter: 'OpenRouter' };
+        function showProviderLine() {
+            const prov = localStorage.getItem('copilot_provider_' + channel);
+            const el = document.getElementById('successProvider');
+            el.innerText = PROVIDER_NAMES[prov] ? 'AI provider: ' + PROVIDER_NAMES[prov] : '';
+            el.style.display = el.innerText ? 'block' : 'none';
+        }
+        function changeKey() {
+            const prov = localStorage.getItem('copilot_provider_' + channel);
+            if (prov && prov !== 'gemini' && PROVIDER_NAMES[prov]) { switchTab('custom'); document.getElementById('selectProvider').value = prov; } else switchTab('gemini');
+            document.getElementById('inputGeminiKey').value = '';
+            document.getElementById('inputCustomKey').value = '';
+            show('cardSuccess', false);
+            show('cardPairing', true);
+            show('btnCancelChange', true);
+            document.getElementById('cardPairing').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        function cancelChange() {
+            show('btnCancelChange', false);
+            show('cardPairing', false);
+            show('cardSuccess', true);
+            document.getElementById('errorMsg').style.display = 'none';
+        }
+
         function handleCarConnected() {
             localStorage.setItem('copilot_paired_' + channel, 'true');
             document.getElementById('disconnectNotice').style.display = 'none';
+            show('btnCancelChange', false);
             show('cardPairing', false);
             show('cardSuccess', true);
+            showProviderLine();
             showNotifyCard();
         }
 

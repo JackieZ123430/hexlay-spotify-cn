@@ -192,15 +192,6 @@
             border-color: #00f0ff;
             transform: scale(0.99);
         }
-        .btn-app.spotify {
-            background: rgba(30, 215, 96, 0.15);
-            border-color: #1ed760;
-            color: #1ed760;
-        }
-        .btn-app.spotify:hover, .btn-app.spotify:active {
-            background: #1ed760;
-            color: #000000;
-        }
         .car-row {
             display: flex;
             align-items: center;
@@ -230,6 +221,16 @@
         }
         .car-row a { background: #004e8c; border: 1px solid #00a3e0; color: #ffffff; }
         .car-row button { background: transparent; border: 1px solid #242c39; color: #8a95a6; }
+        .pair-how {
+            font-size: 12px;
+            color: #8a95a6;
+            line-height: 1.5;
+            background: #06080e;
+            border: 1px solid #16202f;
+            border-radius: 8px;
+            padding: 10px 12px;
+        }
+        .pair-how b { color: #cbd5e1; }
         .muted { font-size: 13px; color: #8a95a6; line-height: 1.5; }
         .scanner {
             display: none;
@@ -361,7 +362,7 @@
                 <span class="tag">Touch Keyboard</span>
                 <span class="tag">Launch & Cooling</span>
             </div>
-            <a class="btn-app" href="copilot.html">Open M-Copilot Setup ↗</a>
+            <p class="pair-how">To pair: on the car, open <b>M-Copilot</b> and press <b>Pair Phone</b> on the bottom bar, then tap <b>Scan car QR</b> above.</p>
         </div>
 
         <!-- Spotify Connect -->
@@ -385,7 +386,7 @@
                 <span class="tag">Cover Art</span>
                 <span class="tag">E2EE Pairing</span>
             </div>
-            <a class="btn-app spotify" href="pair.html">Open Spotify Connect ↗</a>
+            <p class="pair-how">To pair: on the car, open <b>Spotify</b> and go to the <b>Connect</b> tab, then tap <b>Scan car QR</b> above.</p>
         </div>
 
         <!-- QuickCode -->

@@ -30,8 +30,8 @@ This repository is built on the open-source BMW iDrive 7 platform:
 
 | App | Version | Needs internet | Touches vehicle ECUs |
 | :--- | :---: | :---: | :--- |
-| [Spotify](#1-spotify-spotify) | 1.0.20 | Yes | No |
-| [M-Copilot](#2-m-copilot-m_copilot) | 1.0.17 | Yes | No (reads driving signals, service list and fault memory) |
+| [Spotify](#1-spotify-spotify) | 1.0.21 | Yes | No |
+| [M-Copilot](#2-m-copilot-m_copilot) | 1.0.18 | Yes | No (reads driving signals, service list and fault memory) |
 
 > [!NOTE]
 > **QuickCode (BMW BDC coding) is a work in progress** and is not available in the MGU Store. It is not offered until its coding writes are verified against real BMW coding data. Its source is in `wip/quick_code/`.
@@ -47,6 +47,7 @@ This repository is built on the open-source BMW iDrive 7 platform:
 * **Cloud QR pairing over any network**: the Connect tab shows a QR code for [`pair.html`](https://hexlay.github.io/idrive7-custom-apps/pair.html). Sign in on your phone (cellular data or Wi-Fi) and the tokens reach the car **end-to-end encrypted** (AES-256-GCM, a key that only exists in this car's QR code). The car ignores anything on the pairing channel that is not encrypted with its key, including unpair requests. The car listens on the channel only while Spotify is on screen (nothing runs in the background, so no keepalives all drive); a disconnect sent meanwhile is applied when the screen is back, or at the next start within 12 hours.
 * **Library & playback**: all your playlists and liked songs (more load as you scroll; the library shows at once when the app opens, from a copy kept on the car, and refreshes in the background), Liked Songs played as Spotify's own collection, now playing with tap-to-seek, shuffle, repeat and like, Up Next you can jump into, and switching between Spotify Connect devices. Buttons that wait for Spotify show a spinner until it answers. Georgian titles and artists are shown in Georgian script. When something fails (no device to play on, Premium needed, no connection) a short message says why; with no active device, playback starts on the phone that played last.
 * **Internet through the MGU Store uplink**: looks up names through the uplink's DNS (see [Internet access](#internet-access)) and checks connectivity with a real HTTPS request. Without internet the player locks with **NO INTERNET CONNECTION**, **Retry** and **Switch to Demo Mode**.
+* **Sized for your display**: rows, buttons and text are sized in millimetres on the glass, as CarPlay sizes its own, so they are as easy to read and press on a 10.25" display as on a 12.3" one (the 12.3" display shows more rows instead). A tap just beside a button still presses it, and no text is drawn too small to read. The display is found on its own; *Screen size* in the settings sets it by hand.
 * **Robust sessions**: tokens refresh once even when several requests expire together, the pairing survives restarts, and TLS certificates are always verified (a head-unit clock that is days off at boot is tolerated, as in the MGU Store's own updater).
 
 | Now Playing | Liked Songs |
@@ -76,6 +77,7 @@ This repository is built on the open-source BMW iDrive 7 platform:
 * **Safe with the engine on or off**: driving data are passive subscriptions. Diagnostic reads (fault memory, and the one-time identification) are read-only requests in the default session, made only when a question needs them, and never while the engine is starting or the car is switching off; M-Copilot waits for a steady state instead. What is read follows the car's state: parked without ignition (units asleep) a fault read is marked as possibly incomplete and the engine computer is left alone; with the engine off, boost, load, timing and misfires are not read, and voltages, oil level and temperatures are labelled for what they then mean.
 * **Your choice of AI provider and model**: Google Gemini, Anthropic Claude (Claude Haiku 5.5 by default), OpenAI, Groq or OpenRouter, and the model on the phone page (e.g. Flash-Lite first, Claude Sonnet 5.5). The status bar shows the model that answered; when Gemini Flash is overloaded, Flash-Lite answers instead. Connections are reused, so an answer doesn't wait for a new TLS handshake.
 * **Pair from your phone**: scan the QR code and enter the provider and API key on [`copilot.html`](https://hexlay.github.io/idrive7-custom-apps/copilot.html). The key reaches the car end-to-end encrypted, as with Spotify.
+* **Sized for your display**: topics, keyboard keys, chips and answers are sized in millimetres on the glass, as in Spotify, so they are as easy to read and press on a 10.25" display as on a 12.3" one; a tap just beside a key or button still presses it.
 * **Foreground only**: driving signals, pairing checks and the internet check run only while M-Copilot is on screen, warning lights and the service list included: once you leave it, nothing is subscribed, drawn or polled, and everything stops on exit. The pairing is kept; what the phone sends meanwhile (unpair, a new key, profile or model) is picked up the next time the app is opened, within 12 hours. The API key is stored once, in the app's data folder (readable by the app only).
 
 ---

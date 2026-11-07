@@ -37,24 +37,27 @@ This repository is built on the open-source BMW iDrive 7 platform:
 > **QuickCode (BMW BDC coding) is a work in progress** and is not available in the MGU Store. It is not offered until its coding writes are verified against real BMW coding data. Its source is in `wip/quick_code/`.
 
 > [!NOTE]
-> **M-Cinema (YouTube player) has been removed.** Playback was unreliable on the head unit (it didn't play on some firmware, such as MainApp 6.5.5) and its sound was poor. CarPlay and Android Auto already have YouTube workarounds that render and play better, so a native player wasn't worth keeping.
+> **M-Cinema (YouTube player) has been removed**: playback was unreliable on some firmware and the sound was poor, and CarPlay and Android Auto workarounds play YouTube better.
 
 ### 1. Spotify (`spotify`)
 **Spotify Connect controller and library browser on the iDrive 7 central display.**
 
 ![Spotify Playlists](docs/screenshots/spotify.png)
 
-* **Cloud QR pairing over any network**: the Connect tab shows a QR code for [`pair.html`](https://hexlay.github.io/idrive7-custom-apps/pair.html). Sign in on your phone (cellular data or Wi-Fi) and the tokens reach the car **end-to-end encrypted** (AES-256-GCM, a key that only exists in this car's QR code). The car ignores anything on the pairing channel that is not encrypted with its key, including unpair requests. The car listens on the channel only while Spotify is on screen (nothing runs in the background, so no keepalives all drive); a disconnect sent meanwhile is applied when the screen is back, or at the next start within 12 hours.
+* **Pair from your phone**: the Connect tab shows a QR code for [`pair.html`](https://hexlay.github.io/idrive7-custom-apps/pair.html). Sign in to Spotify on your phone (cellular data or Wi-Fi) and the login reaches the car end-to-end encrypted (see [Privacy & Security](#privacy--security)). Switching account is a disconnect and a new pairing, both from the phone.
 * **Library & playback**: all your playlists and liked songs (more load as you scroll; the library shows at once when the app opens, from a copy kept on the car, and refreshes in the background), Liked Songs played as Spotify's own collection, now playing with tap-to-seek, shuffle, repeat and like, Up Next you can jump into, and switching between Spotify Connect devices. Buttons that wait for Spotify show a spinner until it answers. Georgian titles and artists are shown in Georgian script. When something fails (no device to play on, Premium needed, no connection) a short message says why; with no active device, playback starts on the phone that played last.
 * **Internet through the MGU Store uplink**: looks up names through the uplink's DNS (see [Internet access](#internet-access)) and checks connectivity with a real HTTPS request. Without internet the player locks with **NO INTERNET CONNECTION**, **Retry** and **Switch to Demo Mode**.
-* **Sized for your display**: rows, buttons and text are sized in millimetres on the glass, as CarPlay sizes its own, so they are as easy to read and press on a 10.25" display as on a 12.3" one (the 12.3" display shows more rows instead). A tap just beside a button still presses it, and no text is drawn too small to read. The display is found on its own; *Screen size* in the settings sets it by hand.
-* **Robust sessions**: tokens refresh once even when several requests expire together, the pairing survives restarts, and TLS certificates are always verified (a head-unit clock that is days off at boot is tolerated, as in the MGU Store's own updater).
+* **Sized for your display**: rows, buttons and text are sized in millimetres on the glass, as CarPlay sizes its own, so they are as easy to read and press on a 10.25" display as on a 12.3" one (the 12.3" display shows more rows instead). A tap just beside a button still presses it, and no text is drawn too small to read. The display is found on its own.
+* **Settings tab**: colour theme (Spotify Green, M Tricolour, M Red, Ice White, Night Amber), playback mode (Online, or Demo with sample music and no account), screen size (Automatic, 10.25", 12.3", 8.8"), screen layout (full screen or standard), renderer (GPU at 60 fps, or software) and how often playback is synced (1 to 10 s).
+* **Foreground only**: nothing runs while Spotify is off screen. A disconnect sent from the phone meanwhile is applied when you come back to it, or at the next start within 12 hours. The pairing survives restarts.
 
 | Now Playing | Liked Songs |
 | :---: | :---: |
 | ![Spotify Now Playing](docs/screenshots/spotify_now_playing.png) | ![Spotify Liked Songs](docs/screenshots/spotify_liked.png) |
 | **Phone QR Pairing & Devices** | **No Internet** |
 | ![Spotify Pairing](docs/screenshots/spotify_connect.png) | ![Spotify Offline](docs/screenshots/spotify_offline.png) |
+| **Settings** | |
+| ![Spotify Settings](docs/screenshots/spotify_settings.png) | |
 
 ---
 
@@ -63,7 +66,7 @@ This repository is built on the open-source BMW iDrive 7 platform:
 
 ![M-Copilot](docs/screenshots/m_copilot.png)
 
-* **Ask about your car**: 24 topic chips in four groups, worded for a stock daily car as well as a tuned one. **Check**: health check, warning lights and faults, service due, tyres, brakes, 12 V battery. **Drive**: ready for full power, fuel and range, weather and grip, how was that drive, running hot, cool-down. **Perform**: launch, track day prep, tune health, heat soak, gearbox and clutch load, mods and upgrade path. **Know-how**: oil spec, gearbox care, fuel and octane, known weak points, due at this mileage, long trip prep. Or type your own question with the on-screen keyboard. Under each answer, one-tap follow-ups (*What should I do?*, *Safe to keep driving?*, *Explain more*) go on in the same conversation.
+* **Ask about your car**: 24 topics in four groups (**Check**, **Drive**, **Perform**, **Know-how**), from a health check and service due to launch, heat soak and known weak points, worded for a stock daily car as well as a tuned one. Or type your own question with the on-screen keyboard. Under each answer, one-tap follow-ups (*What should I do?*, *Safe to keep driving?*, *Explain more*) go on in the same conversation.
 * **Knows which car it is in**: make and model year from the VIN (MainApp hands it to every app it starts), the engine type, and the engine and gearbox control unit types, which name the engine family and gearbox (read once per car and kept). The serial part of the VIN never leaves the car.
 * **Your car profile (optional)**: on the phone page, add the model, tune stage, power, modifications, tyres, fuel and how you use the car. It is sent end-to-end encrypted like the key and can be changed at any time without re-pairing. A tuned car gets advice for its higher load.
 * **Answers from your car's real data**: speed, rpm, gear, torque, boost, driving mode, engine state, auto start-stop, parking brake, oil and coolant temperature, oil level, outside temperature, tyre pressures and temperatures against the car's own targets, fuel, range, trip average, odometer, 12 V battery charge, the M xDrive setting on M models, and the cluster's own service list (oil, brakes, brake fluid, inspections, with distance and date). A value the car hasn't sent is named as unavailable: M-Copilot never fills in a number.
@@ -72,13 +75,19 @@ This repository is built on the open-source BMW iDrive 7 platform:
 * **Your units and language**: numbers come in the car's own units (psi or bar, °F or °C, miles or km, as set in the iDrive), and answers in the language picked on the phone page: English, Georgian, or German, French, Spanish, Italian, Dutch, Portuguese, Turkish or Polish (shown without accents; the car's fonts draw Latin and Georgian). Add the country you drive in, and answers follow its fuels, inspections, tyre rules and climate.
 * **A look into the engine computer**: with each question, a quick read-only snapshot of what M Vitals shows live: boost actual vs target, intake air temperature, air charge (load) actual vs target, ignition timing, high- and low-pressure fuel, misfires per cylinder, gearbox oil temperature and 12 V voltage; on plug-in hybrids also the high-voltage battery's charge and health. It runs only while the car is steady, within a few seconds, and is kept for 20 s.
 * **Warning messages and fault memory**: the Check Control messages active in the cluster are always part of the context. The health check and faults topics (or any question about faults) also read the stored faults of every control unit, with BMW's own fault descriptions (the Fault Scanner's fault-text database), so the AI explains the actual faults instead of hex codes. Each fault says whether it is **active now**, happened during this drive or is an older stored one, and whether it asked for the warning lamp, so the answer leads with what matters now.
-* **Connect tab**, as in Spotify: the pairing QR code until an AI is paired (M-Copilot opens there), then the connection (provider, model, internet) and what is set from the phone (car profile, AI model) with a QR code to open the phone page. **Disconnecting is done from the phone only** (the car's page or *My cars*): the car follows it live while the app is open, or reads it from the relay the next time it opens (within 12 hours), then drops the AI key and what the phone set (profile, model choice) and shows a new QR code; what the car told about itself stays. The phone forgets the car. A new AI key is also set from the phone. A phone that no longer has the car (a new phone, a cleared browser, another browser) gets it back from the phone page's QR code on the Connect tab, and can then disconnect it; the page shows the car's own settings (provider, model, car profile, never the key), which the car sends with its encrypted hello. Connecting again is a new pairing with the car's new QR code. Spotify works the same way (*Show QR for the phone page* on its Connect tab; switching account is a disconnect and a new pairing from the phone).
+* **Pair from your phone**: M-Copilot opens on its Connect tab with a QR code. Scan it and enter the provider and API key on [`copilot.html`](https://hexlay.github.io/idrive7-custom-apps/copilot.html); the key reaches the car end-to-end encrypted, as with Spotify. Once paired, the tab shows the connection (provider, model, internet) and what the phone set (car profile, AI model), with a QR code to open the phone page.
+* **Disconnect from the phone only** (the car's page or *My cars*): the car drops the AI key and what the phone set and shows a new QR code. A new AI key is also set from the phone. Spotify works the same way.
 * **Data check page**: a second tab lists what this car actually gives, source by source: the VIN (type part) and where it came from, engine and gearbox units, every live signal with its value or why there is none (waiting, not on this car's firmware, error), the diagnostic link, the last fault read, and every engine-computer value with the identifier that answered it. *Read engine now* and *Read faults now* read on demand, under the same safety rules.
 * **Safe with the engine on or off**: driving data are passive subscriptions. Diagnostic reads (fault memory, and the one-time identification) are read-only requests in the default session, made only when a question needs them, and never while the engine is starting or the car is switching off; M-Copilot waits for a steady state instead. What is read follows the car's state: parked without ignition (units asleep) a fault read is marked as possibly incomplete and the engine computer is left alone; with the engine off, boost, load, timing and misfires are not read, and voltages, oil level and temperatures are labelled for what they then mean.
 * **Your choice of AI provider and model**: Google Gemini, Anthropic Claude (Claude Haiku 5.5 by default), OpenAI, Groq or OpenRouter, and the model on the phone page (e.g. Flash-Lite first, Claude Sonnet 5.5). The status bar shows the model that answered; when Gemini Flash is overloaded, Flash-Lite answers instead. Connections are reused, so an answer doesn't wait for a new TLS handshake.
-* **Pair from your phone**: scan the QR code and enter the provider and API key on [`copilot.html`](https://hexlay.github.io/idrive7-custom-apps/copilot.html). The key reaches the car end-to-end encrypted, as with Spotify.
-* **Sized for your display**: topics, keyboard keys, chips and answers are sized in millimetres on the glass, as in Spotify, so they are as easy to read and press on a 10.25" display as on a 12.3" one; a tap just beside a key or button still presses it.
-* **Foreground only**: driving signals, pairing checks and the internet check run only while M-Copilot is on screen, warning lights and the service list included: once you leave it, nothing is subscribed, drawn or polled, and everything stops on exit. The pairing is kept; what the phone sends meanwhile (unpair, a new key, profile or model) is picked up the next time the app is opened, within 12 hours. The API key is stored once, in the app's data folder (readable by the app only).
+* **Sized for your display**, as in Spotify: topics, keys, chips and answers.
+* **Foreground only**: driving signals, warning lights, the service list, pairing checks and the internet check run only while M-Copilot is on screen; once you leave it nothing is subscribed, drawn or polled. What the phone sends meanwhile (a disconnect, a new key, profile or model) is picked up the next time the app is opened, within 12 hours. The API key is stored once, in the app's data folder (readable by the app only).
+
+| Ask Your Own Question | Data Check |
+| :---: | :---: |
+| ![M-Copilot Keyboard](docs/screenshots/m_copilot_keyboard.png) | ![M-Copilot Data Check](docs/screenshots/m_copilot_data_check.png) |
+| **Phone QR Pairing** | **Connected** |
+| ![M-Copilot Pairing](docs/screenshots/m_copilot_pairing.png) | ![M-Copilot Connected](docs/screenshots/m_copilot_connected.png) |
 
 ---
 
@@ -103,6 +112,8 @@ The head unit's installer refuses an app outright if its SOME/IP manifest names 
 The phone pages ([My cars](https://hexlay.github.io/idrive7-custom-apps/), M-Copilot's and Spotify's) install as an app, **iDrive Apps**, for all your cars one tap from the Home Screen:
 * **iPhone**: in Safari, tap **Share**, then **Add to Home Screen**. Open **iDrive Apps** from the Home Screen and add your cars with its **Scan car QR**: on iPhone the Home Screen app keeps its own cars, apart from Safari's (a car QR code scanned with the camera opens in Safari).
 * **Android**: in Chrome, tap **Install app** on My cars (or the **⋮** menu, then **Install app** / **Add to Home screen**). The app shares Chrome's cars.
+
+A phone that no longer has a car (a new phone, a cleared browser, another browser) gets it back by scanning *Show QR for the phone page* on the app's Connect tab, and can then disconnect it. The page shows the car's own settings (provider, model, car profile, never the key).
 
 ### Internet access
 
@@ -141,7 +152,7 @@ To build locally: `python3 kit/tools/build.py <app_id>` writes `dist/<app_id>@<v
 * **Hardened pages**: a Content Security Policy limits where the pages may connect (`ntfy.sh`, and Spotify's token endpoint on the Spotify page) and load code from (this site only; the QR decoder is vendored in [`docs/vendor`](docs/vendor), not loaded from a CDN), no referrer is sent, and the pages refuse to run inside another site's frame. The Spotify login uses PKCE with a random verifier and a random `state` checked on return, so a login the page didn't start is never sent to a car.
 * **Verified TLS**: all requests that carry tokens or keys verify the server's certificate chain and hostname; only the head unit's possibly wrong clock is tolerated.
 * **Local data**: tokens (`spotify_auth.json`) and app state stay in each app's data folder on the head unit.
-* **Git protection**: `*_auth.json`, `*_state.json`, `*_backups.json`, `copilot_push.json`, `*.key` and `*.pem` are excluded in `.gitignore`, and the build never packages them.
+* **Git protection**: auth, state and key files (`*_auth.json`, `*_state.json`, `*.key`, `*.pem`) are excluded in `.gitignore`, and the build never packages them.
 * **Tested**: `node kit/tools/test_carlink.js` runs the page library against the car modules (tampering, replays, foreign links, the relay's limits).
 
 ---

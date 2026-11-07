@@ -34,9 +34,6 @@ This repository is built on the open-source BMW iDrive 7 platform:
 | [M-Copilot](#2-m-copilot-m_copilot) | 1.0.18 | Yes | No (reads driving signals, service list and fault memory) |
 
 > [!NOTE]
-> **QuickCode (BMW BDC coding) is a work in progress** and is not available in the MGU Store. It is not offered until its coding writes are verified against real BMW coding data. Its source is in `wip/quick_code/`.
-
-> [!NOTE]
 > **M-Cinema (YouTube player) has been removed**: playback was unreliable on some firmware and the sound was poor, and CarPlay and Android Auto workarounds play YouTube better.
 
 ### 1. Spotify (`spotify`)

@@ -31,6 +31,28 @@ const qrcodegen = require('./qrcodegen');
 const W = 1600, H = 520;
 const PAGES = ['M-Copilot', 'Data check', 'Connect'];
 
+/*
+ * Sizes on this display (kit/runtime/panel.js): k = 1.2 on a 12.3" display, 1.44 on a 10.25" one, so keys,
+ * chips and text come out the same size in millimetres on both (as CarPlay sizes its own). sz(cv, n): n at the
+ * reference size (k = 1), rounded.
+ */
+const kOf = (cv) => (cv.ui && cv.ui.k) || 1.44;
+const sz = (cv, n) => Math.round(n * kOf(cv));
+/** str cut with '...' to fit maxW at size (the text's start shows). */
+function fitText(cv, str, maxW, size, opts) {
+    str = String(str || '');
+    if (cv.textWidth(str, size, opts) <= maxW) return str;
+    while (str.length > 1 && cv.textWidth(str + '...', size, opts) > maxW) str = str.slice(0, -1);
+    return str + '...';
+}
+/** The end of str that fits maxW at size, '...' before it (what is being typed shows). */
+function fitTail(cv, str, maxW, size, opts) {
+    str = String(str || '');
+    if (cv.textWidth(str, size, opts) <= maxW) return str;
+    while (str.length > 1 && cv.textWidth('...' + str, size, opts) > maxW) str = str.slice(1);
+    return '...' + str;
+}
+
 // Topic chips. Each question leans on what the car reports (the AI gets it with every question) and
 // on the car profile, so the same chip fits a stock daily car and a tuned one. faults: read the
 // fault memory first (a few seconds).
@@ -994,20 +1016,23 @@ mgu.run({
             const kx = 540, kw = 990;
 
             // 1. Query Input Display Box
-            const qBoxY = 104, qBoxH = 46;
+            // (sized for this display: sz; the keys fill the panel down to its bottom)
+            const ex = cv.extra || 0;
+            const qBoxY = 100, qBoxH = sz(cv, 36), qSize = sz(cv, 13);
             cv.roundRect(kx, qBoxY, kw, qBoxH, 8, '#080d14');
             cv.strokeRoundRect(kx, qBoxY, kw, qBoxH, 8, 1.5, '#00a3e0');
 
             const hasText = !!customQuery.trim();
-            const displayText = hasText ? tail(customQuery, 100) + '_' : 'Type your question with touch keyboard or tap a preset below...';
-            cv.text(displayText, kx + 18, qBoxY + 30, 15, hasText ? '#ffffff' : '#64748b', { font: hasText ? 'bold' : 'normal' });
+            const clrW = sz(cv, 66), clrH = qBoxH - 10, clrX = kx + kw - clrW - 6, clrY = qBoxY + 5;
+            const displayText = hasText ? fitTail(cv, customQuery, clrX - kx - 36, qSize) + '_' : 'Type your question with touch keyboard or tap a preset below...';
+            cv.text(displayText, kx + 18, qBoxY + qBoxH / 2 + qSize * 0.36, qSize, hasText ? '#ffffff' : '#64748b', { font: hasText ? 'bold' : 'normal' });
 
             // Clear button inside input bar
             if (hasText) {
-                const clrW = 70, clrH = 32, clrX = kx + kw - 78, clrY = qBoxY + 7;
+                const cs = sz(cv, 10.5);
                 cv.roundRect(clrX, clrY, clrW, clrH, 6, withAlpha('#e1001a', 0.22));
                 cv.strokeRoundRect(clrX, clrY, clrW, clrH, 6, 1, '#e1001a');
-                cv.text('CLEAR', clrX + clrW / 2, clrY + 21, 12, '#ff6b6b', { align: 'center', font: 'bold' });
+                cv.text('CLEAR', clrX + clrW / 2, clrY + clrH / 2 + cs * 0.36, cs, '#ff6b6b', { align: 'center', font: 'bold' });
                 cv.target(clrX, clrY, clrW, clrH, () => {
                     customQuery = '';
                     render(true);
@@ -1015,7 +1040,7 @@ mgu.run({
             }
 
             // 2. Quick Preset Chips Row
-            const presetY = 158, presetH = 26;
+            const presetY = qBoxY + qBoxH + 8, presetH = sz(cv, 24), pSize = sz(cv, 10.5);
             const presets = [
                 'What is my boost?',
                 'Brake pad health',
@@ -1023,23 +1048,26 @@ mgu.run({
                 'Recommended oil spec',
                 'Scan active fault codes'
             ];
+            // as many as fit on the row, each as wide as its text
             let px = kx;
             presets.forEach((pr, pIdx) => {
-                const pw = pr.length * 8 + 20;
-                cv.roundRect(px, presetY, pw, presetH, 13, '#101a28');
-                cv.strokeRoundRect(px, presetY, pw, presetH, 13, 1, '#1e324c');
-                cv.text(pr, px + pw / 2, presetY + 17, 12, '#cbd5e1', { align: 'center' });
+                const pw = cv.textWidth(pr, pSize) + sz(cv, 22);
+                if (px + pw > kx + kw) return;
+                cv.roundRect(px, presetY, pw, presetH, presetH / 2, '#101a28');
+                cv.strokeRoundRect(px, presetY, pw, presetH, presetH / 2, 1, '#1e324c');
+                cv.text(pr, px + pw / 2, presetY + presetH / 2 + pSize * 0.36, pSize, '#cbd5e1', { align: 'center' });
                 cv.target(px, presetY, pw, presetH, () => {
                     customQuery = pr;
                     render(true);
-                }, 'kb_preset_' + pIdx, 6);
+                }, 'kb_preset_' + pIdx, presetH / 2);
                 px += pw + 10;
             });
 
-            // 3. Speller Keyboard Key Rows
-            const kbY = 194;
-            const keyH = 38;
+            // 3. Speller Keyboard Key Rows: four rows of keys and the action row share the room down to the panel's bottom
+            const kbY = presetY + presetH + 10;
             const keyGap = 6;
+            const keyH = Math.min(sz(cv, 40), Math.floor((52 + 458 + ex - 12 - kbY - 4 * keyGap) / 5));
+            const kSize = sz(cv, 14);
 
             const rows = [
                 ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '?'],
@@ -1057,7 +1085,7 @@ mgu.run({
                     const kxPos = kx + cIdx * (keyW + keyGap);
                     cv.roundRect(kxPos, ry, keyW, keyH, 6, '#0f1724');
                     cv.strokeRoundRect(kxPos, ry, keyW, keyH, 6, 1, '#1e2d42');
-                    cv.text(k, kxPos + keyW / 2, ry + 25, 16, '#ffffff', { align: 'center', font: 'bold' });
+                    cv.text(k, kxPos + keyW / 2, ry + keyH / 2 + kSize * 0.36, kSize, '#ffffff', { align: 'center', font: 'bold' });
 
                     cv.target(kxPos, ry, keyW, keyH, () => {
                         if (customQuery.length < QUERY_MAX) customQuery += k;
@@ -1068,43 +1096,43 @@ mgu.run({
 
             // 4. Action Row (Row 5)
             const aY = kbY + 4 * (keyH + keyGap);
-            const aH = 42;
+            const aH = keyH, aSize = sz(cv, 12), aBase = aY + aH / 2 + aSize * 0.36;
 
             // Cancel button
-            const canW = 140, canX = kx;
+            const canW = 150, canX = kx;
             cv.roundRect(canX, aY, canW, aH, 8, '#141f2e');
             cv.strokeRoundRect(canX, aY, canW, aH, 8, 1, '#253347');
-            cv.text('CANCEL', canX + canW / 2, aY + 27, 14, '#94a3b8', { align: 'center', font: 'bold' });
+            cv.text('CANCEL', canX + canW / 2, aBase, aSize, '#94a3b8', { align: 'center', font: 'bold' });
             cv.target(canX, aY, canW, aH, () => {
                 showKeyboard = false;
                 render(true);
             }, 'kb_act_cancel', 8);
 
             // Spacebar
-            const spW = 410, spX = canX + canW + keyGap;
+            const spW = 380, spX = canX + canW + keyGap;
             cv.roundRect(spX, aY, spW, aH, 8, '#0f1724');
             cv.strokeRoundRect(spX, aY, spW, aH, 8, 1, '#1e2d42');
-            cv.text('SPACEBAR', spX + spW / 2, aY + 27, 14, '#cbd5e1', { align: 'center', font: 'bold' });
+            cv.text('SPACEBAR', spX + spW / 2, aBase, aSize, '#cbd5e1', { align: 'center', font: 'bold' });
             cv.target(spX, aY, spW, aH, () => {
                 if (customQuery.length < QUERY_MAX) customQuery += ' ';
                 render(true);
             }, 'kb_act_space', 8);
 
             // Backspace / Del
-            const delW = 150, delX = spX + spW + keyGap;
+            const delW = 170, delX = spX + spW + keyGap;
             cv.roundRect(delX, aY, delW, aH, 8, '#1f1418');
             cv.strokeRoundRect(delX, aY, delW, aH, 8, 1, '#421a22');
-            cv.text('BACKSPACE', delX + delW / 2, aY + 27, 13, '#ff8080', { align: 'center', font: 'bold' });
+            cv.text('BACKSPACE', delX + delW / 2, aBase, aSize, '#ff8080', { align: 'center', font: 'bold' });
             cv.target(delX, aY, delW, aH, () => {
                 customQuery = customQuery.slice(0, -1);
                 render(true);
             }, 'kb_act_del', 8);
 
             // Ask Copilot / Submit
-            const askW = 270, askX = delX + delW + keyGap;
+            const askX = delX + delW + keyGap, askW = kx + kw - askX;
             cv.roundRect(askX, aY, askW, aH, 8, hasText ? '#00a3e0' : '#1e293b');
             if (hasText) cv.strokeRoundRect(askX, aY, askW, aH, 8, 1.5, '#00f0ff');
-            cv.text('ASK M-COPILOT >', askX + askW / 2, aY + 27, 15, hasText ? '#ffffff' : '#64748b', { align: 'center', font: 'bold', spacing: 1 });
+            cv.text('ASK M-COPILOT >', askX + askW / 2, aBase, aSize, hasText ? '#ffffff' : '#64748b', { align: 'center', font: 'bold', spacing: 1 });
             cv.target(askX, aY, askW, aH, () => {
                 if (hasText) {
                     const q = customQuery.trim();
@@ -1125,12 +1153,13 @@ mgu.run({
 
             // category tabs
             const ex = cv.extra || 0;
-            const tabY = 64, tabH = 34;
+            // (sized for this display: sz)
+            const tabY = 62, tabH = sz(cv, 30), catSize = sz(cv, 10.5);
             TOPIC_CATEGORIES.forEach((cat, cIdx) => {
                 const tabW = 96, tabX = 60 + cIdx * 101, isCurCat = activeCategory === cIdx;
                 cv.roundRect(tabX, tabY, tabW, tabH, 7, isCurCat ? '#004e8c' : t.track);
                 cv.strokeRoundRect(tabX, tabY, tabW, tabH, 7, 1, isCurCat ? '#00a3e0' : t.panelEdge);
-                cv.text(cat.name, tabX + tabW / 2, tabY + 22, 12, isCurCat ? '#00f0ff' : '#94a3b8', { align: 'center', font: isCurCat ? 'bold' : 'normal' });
+                cv.text(fitText(cv, cat.name, tabW - 8, catSize, { font: 'bold' }), tabX + tabW / 2, tabY + tabH / 2 + catSize * 0.36, catSize, isCurCat ? '#00f0ff' : '#94a3b8', { align: 'center', font: isCurCat ? 'bold' : 'normal' });
                 cv.target(tabX, tabY, tabW, tabH, () => {
                     activeCategory = cIdx;
                     selectedTopicIdx = 0;
@@ -1140,15 +1169,17 @@ mgu.run({
             });
 
             // the question box at the bottom, the topic chips filling the room above it (taller on bigger screens)
-            const inputH = 60, inputX = 60, inputW = 400, inputY = 52 + 458 + ex - 14 - inputH;
-            const chipTop = 110, step = Math.floor((inputY - 12 - chipTop) / topics.length), topicH = Math.min(64, step - 6);
+            const inputH = sz(cv, 42), inputX = 60, inputW = 400, inputY = 52 + 458 + ex - 14 - inputH;
+            const chipTop = tabY + tabH + 10, step = Math.floor((inputY - 8 - chipTop) / topics.length), topicH = Math.min(sz(cv, 50), step - 6);
+            const topicSize = Math.min(sz(cv, 13), Math.round(topicH * 0.42));
             topics.forEach((p, idx) => {
                 const py = chipTop + idx * step;
                 const isSelected = selectedTopicIdx === idx, isCur = currentPrompt === p.title;
                 cv.roundRect(60, py, 400, topicH, 9, isSelected ? withAlpha('#00a3e0', 0.22) : t.track);
                 cv.strokeRoundRect(60, py, 400, topicH, 9, isSelected ? 1.5 : 1, isSelected ? '#00a3e0' : t.panelEdge);
                 cv.circle(82, py + topicH / 2, 5, isCur ? '#00f0ff' : (isSelected ? '#00a3e0' : t.dim));
-                cv.text(p.title, 102, py + topicH / 2 + 5, 15, isSelected ? '#ffffff' : '#cbd5e1', { font: isSelected ? 'bold' : 'normal' });
+                const topicOpt = { font: isSelected ? 'bold' : 'normal' };
+                cv.text(fitText(cv, p.title, 446 - 102, topicSize, topicOpt), 102, py + topicH / 2 + topicSize * 0.36, topicSize, isSelected ? '#ffffff' : '#cbd5e1', topicOpt);
                 cv.target(60, py, 400, topicH, () => {
                     selectedTopicIdx = idx;
                     showKeyboard = false;
@@ -1159,8 +1190,9 @@ mgu.run({
             cv.roundRect(inputX, inputY, inputW, inputH, 10, showKeyboard ? withAlpha('#00a3e0', 0.25) : '#0b111a');
             cv.strokeRoundRect(inputX, inputY, inputW, inputH, 10, showKeyboard ? 1.5 : 1, showKeyboard ? '#00f0ff' : '#1e2d42');
             const hasCustom = !!customQuery.trim();
-            const inputLabel = hasCustom ? (tail(customQuery, 38) + (showKeyboard ? '_' : '')) : (showKeyboard ? 'Typing custom question..._' : 'Ask Custom Question...');
-            cv.text(inputLabel, inputX + 18, inputY + inputH / 2 + 6, 16, hasCustom ? '#ffffff' : (showKeyboard ? '#00f0ff' : '#94a3b8'), { font: (hasCustom || showKeyboard) ? 'bold' : 'normal' });
+            const inSize = sz(cv, 13.5), inOpt = { font: (hasCustom || showKeyboard) ? 'bold' : 'normal' };
+            const inputLabel = hasCustom ? (fitTail(cv, customQuery, inputW - 44, inSize, inOpt) + (showKeyboard ? '_' : '')) : (showKeyboard ? 'Typing custom question..._' : 'Ask Custom Question...');
+            cv.text(inputLabel, inputX + 18, inputY + inputH / 2 + inSize * 0.36, inSize, hasCustom ? '#ffffff' : (showKeyboard ? '#00f0ff' : '#94a3b8'), inOpt);
             cv.target(inputX, inputY, inputW, inputH, () => {
                 showKeyboard = !showKeyboard;
                 render(true);
@@ -1187,24 +1219,26 @@ mgu.run({
             cv.fillRect(rx + 2, ry + 12, 4, rh - 24, '#00a3e0');
 
             // follow-up chips along the bottom of the card after a real answer
-            const chips = canFollowUp && !isThinking, chipH = 36, chipY = ry + rh - chipH - 12;
+            const chips = canFollowUp && !isThinking, chipH = sz(cv, 32), chipY = ry + rh - chipH - 12, chipSize = sz(cv, 12.5);
             if (chips) {
                 let cx = rx + 24;
                 FOLLOW_UPS.forEach((f, i) => {
-                    const w = 32 + f.title.length * 9;
+                    const w = cv.textWidth(f.title, chipSize, { font: 'bold' }) + sz(cv, 30);
                     cv.roundRect(cx, chipY, w, chipH, 8, withAlpha('#00a3e0', 0.15));
                     cv.strokeRoundRect(cx, chipY, w, chipH, 8, 1, '#00a3e0');
-                    cv.text(f.title, cx + w / 2, chipY + 24, 15, '#e2e8f0', { align: 'center', font: 'bold' });
+                    cv.text(f.title, cx + w / 2, chipY + chipH / 2 + chipSize * 0.36, chipSize, '#e2e8f0', { align: 'center', font: 'bold' });
                     cv.target(cx, chipY, w, chipH, () => askCopilot(f.query, f.title, { fresh: false }), 'follow_' + i, 8);
                     cx += w + 12;
                 });
             }
 
             // Render Response text with wrap and scroll: bigger while the car is moving (a glance, not a read)
-            const big = telemetry.moving === true, lineH = big ? 34 : 26, size = big ? 21 : 16;
+            // (sized for this display: a line holds fewer characters as the text grows)
+            const big = telemetry.moving === true, size = big ? sz(cv, 17.5) : sz(cv, 13.5), lineH = Math.round(size * (big ? 1.6 : 1.62));
             rowH = lineH;
             const shown = isThinking ? currentResponse + '  ' + Math.floor((Date.now() - thinkStart) / 1000) + ' s' : currentResponse;
-            const lines = wrapLines(shown, big ? 66 : 88);
+            // (about 0.42 em a character in the label font: the card's width, a little to spare)
+            const lines = wrapLines(shown, Math.floor((rw - 64) / (size * 0.42)));
             const maxVisibleLines = Math.floor((rh - 24 - (chips ? chipH + 18 : 0)) / lineH);
             dialogueRows = { count: lines.length, visible: maxVisibleLines };
             cv.scroll = true;
@@ -1213,7 +1247,7 @@ mgu.run({
 
             const visible = lines.slice(dialogueScroll, dialogueScroll + maxVisibleLines);
             visible.forEach((line, idx) => {
-                const ly = ry + 36 + idx * lineH;
+                const ly = ry + 12 + Math.round(lineH * 0.8) + idx * lineH;
                 let col = '#e2e8f0';
                 let isBold = false;
 

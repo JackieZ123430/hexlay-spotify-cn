@@ -716,10 +716,12 @@ function badgeRow(cv, t, xr, y, h, size, badges) {
  * flat: no sheen (plain t.bg).
  * compact: smaller text, badges right after the tabs and only as wide as that content, so the
  * HMI's own status strip (radio station, phone signal, icons) can show to the right of it.
+ * k (compact): size factor for the tabs and badges on this display (display.js chromeK: bigger on a
+ * smaller display); the tabs' text comes down again as far as needed for every tab to fit.
  * Returns the x where the header's content ends.
  */
-function header(cv, t, x, y, w, h, title, tabs, sel, badges, flat, compact) {
-    if (compact) return headerCompact(cv, t, x, y, w, h, title, tabs, sel, badges);
+function header(cv, t, x, y, w, h, title, tabs, sel, badges, flat, compact, k) {
+    if (compact) return headerCompact(cv, t, x, y, w, h, title, tabs, sel, badges, k);
     const S = t.sel || t.accent, opt = { align: 'center', font: 'bold', spacing: 2 };
     cv.fillRect(x, y, w, h, t.bg);
     // flat: plain, to match the HMI's own black strip next to it
@@ -750,16 +752,19 @@ function header(cv, t, x, y, w, h, title, tabs, sel, badges, flat, compact) {
     });
 }
 
-function headerCompact(cv, t, x, y, w, h, title, tabs, sel, badges) {
-    const S = t.sel || t.accent, opt = { align: 'center', font: 'bold', spacing: 1.6 };
+function headerCompact(cv, t, x, y, w, h, title, tabs, sel, badges, k) {
+    const z = Math.max(1, k || 1), S = t.sel || t.accent, opt = { align: 'center', font: 'bold', spacing: 1.6 };
     const bopt = { align: 'center', font: 'bold', spacing: 1.5 };
     const names = (tabs || []).map((n) => upperText(n));
-    const bh = 30, bsize = 17;
+    const bz = Math.min(z, 1.15), bh = Math.round(30 * bz), bsize = Math.round(17 * bz);
     const bws = (badges || []).map((b) => Math.max(bh * 3.5, cv.textWidth(b.text, bsize, bopt) + bh));
     const badgesW = bws.reduce((a, b) => a + b + bh * 0.4, 0);
     const tsize = 32, titleW = title ? cv.textWidth(title, tsize) : 0;
     const room = w - 20 - (badgesW ? badgesW + 12 : 0);
-    const tw = tabWidths(cv, names, 18, opt, 132, 44, room - 20, 20);
+    // the tabs' text as big as this display asks for, smaller only as far as every tab still fits
+    let tf = Math.round(18 * z);
+    while (tf > 18 && names.reduce((a, n) => a + cv.textWidth(n, tf, opt) + 20, 0) > room - 20) tf--;
+    const tw = tabWidths(cv, names, tf, opt, Math.round(132 * z), Math.round(44 * z), room - 20, 20);
     const tabsW = tw.reduce((a, b) => a + b, 0);
     const showTitle = title && titleW + 32 + tabsW <= room;
     // only as wide as the content: the rest of the strip stays the HMI's
@@ -782,7 +787,7 @@ function headerCompact(cv, t, x, y, w, h, title, tabs, sel, badges) {
             cv.gradientRect(tx, y, bw, h, [[0, withAlpha(S, 0)], [1, withAlpha(S, 0.25)]]);
             cv.fillRect(tx, y + h - 4, bw, 4, S);
         }
-        cv.text(n, tx + bw / 2, y + h / 2 + 6, 18, on ? t.selText || '#ffffff' : t.dim, opt);
+        cv.text(n, tx + bw / 2, y + h / 2 + tf * 0.34, tf, on ? t.selText || '#ffffff' : t.dim, opt);
         if (i < names.length - 1) cv.fillRect(tx + bw, y + h * 0.3, 1, h * 0.4, withAlpha('#ffffff', 0.14));
         tx += bw;
     });

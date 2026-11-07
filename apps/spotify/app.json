@@ -24,6 +24,8 @@
      "options": [["spotify", "Spotify Green"], ["m_tricolour", "M Tricolour"], ["m_red", "M Red"], ["ice", "Ice White"], ["amber", "Night Amber"]]},
     {"key": "demo", "label": "Playback mode", "type": "choice", "default": "off",
      "options": [["off", "Online Mode (Default)"], ["on", "Demo Mode (Offline)"]]},
+    {"key": "screen", "label": "Screen size", "type": "choice", "default": "auto",
+     "options": [["auto", "Automatic"], ["10.25", "10.25-inch"], ["12.3", "12.3-inch"], ["8.8", "8.8-inch"]]},
     {"key": "layout", "label": "Screen layout", "type": "choice", "default": "full",
      "options": [["full", "Full screen"], ["standard", "Standard"]]},
     {"key": "renderer", "label": "Renderer", "type": "choice", "default": "auto",

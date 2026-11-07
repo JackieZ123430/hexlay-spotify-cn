@@ -42,6 +42,7 @@ const { Canvas } = require('./canvas');
 const { RenderClient } = require('./renderd');
 const G = require('./gauges');
 const { drawCredit } = require('./credits');
+const panel = require('./panel');
 
 // FrontCCU deflection: short / long push per direction (DREHGEBER enums as numbers)
 const TILT = { 1: 'N', 2: 'N', 4: 'E', 5: 'E', 7: 'S', 8: 'S', 10: 'W', 11: 'W' };
@@ -74,6 +75,15 @@ const FULL = {
     src: { x: 12, y: 38, w: 1576, h: 482 },
 };
 const LAYOUTS = ['full', 'standard'];
+/*
+ * Touch, sized in millimetres on the panel (panel.js), as CarPlay sizes its buttons:
+ *   TAP_MM   a target smaller than this reaches out to it (centred on what is drawn), so a finger that lands
+ *            just beside a small button still presses it; it looks the same
+ *   SLOP_MM  how far beyond its edge any target still takes a tap
+ *   CHROME_K the most the kit's header tabs and slim bar grow with the panel's size factor (the header has
+ *            to share the HMI's title strip with its status icons)
+ */
+const TAP_MM = 11, SLOP_MM = 2, CHROME_K = 1.35;
 
 // the HMI's page animation when a screen opens (the picture shows after it)
 const SHOW_DELAY_MS = 350;
@@ -97,6 +107,7 @@ class Display {
         this.sheet = null;                           // sheet.js page drawn over the app's (openSheet)
         this.ccuLast = null;                         // last controller state (knob counter, press, push)
         this.ownHidden = new Set();                  // more bar buttons left out where the kit runs the screen (hideButton)
+        this._panel();
         G.onConfirm(() => { this.lastWords = null; this.tickHandlers.forEach((fn) => fn()); });   // a reset asks / runs out
         const canvasScreens = (spec.screens || []).filter((s) => s.kind === 'canvas');
         this.screen = canvasScreens[0] || null;
@@ -114,6 +125,12 @@ class Display {
             if (k === 'layout') { this._place(); this.lastWords = null; }
             if (k === 'theme') this.bgShown = null;
             if (k === 'renderer') this._mode();
+            if (k === 'screen') {
+                this._panel();
+                this._geo = null; this._btns = null; this.layoutKey = null; this.lastWords = null;
+                if (this.place) this._place(); else this._layoutChanged();
+                this.tickHandlers.forEach((fn) => fn());
+            }
         });
         this._mode();
         // slim bar: light the button the controller is on (HMI focus events) and flash on press
@@ -289,6 +306,7 @@ class Display {
         const r = this.sheetRec && this.sheetRec.textScale === sc ? this.sheetRec : (this.sheetRec = new Recorder(PAGE.w, PAGE.h, { textScale: sc }));
         r.reset();
         r.extra = this.place.extra || 0;
+        r.ui = this.sizes();
         let targets = [];
         try { targets = this.sheet.draw(r, this.theme()) || []; } catch (e) { this.log.error('sheet draw', e); }
         this.sheetTargets = targets;
@@ -423,8 +441,10 @@ class Display {
             const bar = sy >= pl.h - this.barH() ? this.buttons().find((b) => sx >= b.x - this.barOff - pl.x && sx < b.x - this.barOff - pl.x + b.w) : null;
             // the header's tabs (Settings among them) work over a sheet too
             const tab = !bar && (this.tabs || []).find(inside);
-            const tgt = !bar && !tab && !this.sheet ? (this.pageTargets || []).find(inside) : null;
-            const key = bar ? 'bar:' + bar.id : tab ? 'tab:' + tab.i : tgt ? 'tgt:' + tgt.key : this.sheet ? 'sheet:' + (this.sheetTargets || []).findIndex(inside) : null;
+            // page and sheet targets: the one the finger is on or the nearest within a finger's reach (_hit)
+            const tgt = !bar && !tab && !this.sheet ? (this.pageTargets || [])[this._hit(this.pageTargets, x, y)] || null : null;
+            const si = !bar && !tab && this.sheet ? this._hit(this.sheetTargets, x, y) : -1;
+            const key = bar ? 'bar:' + bar.id : tab ? 'tab:' + tab.i : tgt ? 'tgt:' + tgt.key : this.sheet ? 'sheet:' + si : null;
             if (phase === 3 && this.dragging && !this.sheet) { this.dragging = false; this.ownDown = null; return; }
             if (phase === 3 && !this.dragging && key && key === this.ownDown && (tab || tgt)) {
                 this.ownDown = null;
@@ -432,8 +452,9 @@ class Display {
                 else {
                     this.pressed = key; this.pressedT = Date.now(); this._repaint();
                     setTimeout(() => this._repaint(), 320);
-                    // where on it the finger lifted (a slider, a progress bar); the controller's press passes nothing
-                    const at = { x: x - tgt.x, y: y - tgt.y, w: tgt.w, h: tgt.h };
+                    // where on it the finger lifted (a slider, a progress bar: on it, a touch beside it counts at
+                    // its nearest edge); the controller's press passes nothing
+                    const at = { x: Math.max(0, Math.min(tgt.w, x - tgt.x)), y: Math.max(0, Math.min(tgt.h, y - tgt.y)), w: tgt.w, h: tgt.h };
                     try { Promise.resolve(tgt.run(at)).catch((e) => this.log.error('target', e)); } catch (e) { this.log.error('target', e); }
                 }
                 return;
@@ -455,8 +476,7 @@ class Display {
                 if (this.dragging) { this.dragging = false; if (this.sheet && this.sheet.release) this.sheet.release(); return; }
                 if (bar && was === key) { this._click(bar.id); return; }
                 if (this.sheet) {
-                    const i = (this.sheetTargets || []).findIndex(inside);
-                    if (i >= 0 && was === key) this._sheetResult(() => this.sheetTargets[i].act());
+                    if (si >= 0 && was === key) this._sheetResult(() => this.sheetTargets[si].act());
                     return;
                 }
                 if (was && was.indexOf('bar:') === 0) return;
@@ -521,6 +541,47 @@ class Display {
         (this.screen.buttons || []).forEach((b) => { if (this.ui.visible) this.ui.visible(b[0], !hide); });
     }
 
+    /** Which centre display this is (panel.js): the "screen" setting, MGU_PANEL, the display's EDID or 10.25". */
+    _panel() {
+        const p = panel.resolve(this.settings.get('screen'));
+        if (!this.panel || this.panel.key !== p.key || this.panel.source !== p.source) this.log.info('display: ' + p.inches + '" centre display (' + p.source + '), size factor ' + p.k);
+        this.panel = p;
+    }
+    /**
+     * Sizes for the frame being drawn on this panel (r.ui): { inches, k, mm, tap }.
+     *   k     size factor for controls and text (panel.js): 1.2 on a 12.3" display, 1.44 on a 10.25" one
+     *   mm    logical px per millimetre on the glass (for this placement's scale)
+     *   tap   logical px of the smallest target a finger hits easily (TAP_MM)
+     */
+    sizes() {
+        const p = this.panel, geo = this.geo();
+        const sc = this.active() && this.place && this.place.scale ? this.place.scale : 1;
+        const mm = geo.w / p.widthMm / sc;
+        return { inches: p.inches, k: p.k, mm, tap: Math.round(TAP_MM * mm) };
+    }
+    /** How much the kit's own header and bar grow on this panel (its size factor, at most CHROME_K). */
+    chromeK() { return Math.max(1, Math.min(CHROME_K, this.panel ? this.panel.k : 1)); }
+    /**
+     * Index of the target in list ([{ x, y, w, h }], logical px) a touch at (x, y) is for, -1: none. The one the
+     * finger is on, else the nearest one within reach: SLOP_MM round any target, out to TAP_MM for one drawn
+     * smaller than that. A large area (both sides at least twice TAP_MM: a card that scrolls) gives way to a
+     * small target near its edge; of two the finger is on, the smaller one has it.
+     */
+    _hit(list, x, y) {
+        if (!list || !list.length) return -1;
+        const u = this.sizes(), slop = SLOP_MM * u.mm;
+        let best = -1, bd = Infinity, ba = Infinity;
+        list.forEach((q, i) => {
+            if (!q) return;
+            const dx = Math.max(q.x - x, 0, x - (q.x + q.w)), dy = Math.max(q.y - y, 0, y - (q.y + q.h));
+            if (dx > Math.max(slop, (u.tap - q.w) / 2) || dy > Math.max(slop, (u.tap - q.h) / 2)) return;
+            const big = q.w >= 2 * u.tap && q.h >= 2 * u.tap;
+            const d = Math.hypot(dx, dy) + (big ? u.tap : 0), a = q.w * q.h;
+            if (d < bd || (d === bd && a < ba)) { best = i; bd = d; ba = a; }
+        });
+        return best;
+    }
+
     /**
      * The HMI's geometry on the renderer's screen. Measured on the 1920 x 720 centre display; another
      * size (a larger LCI display) is taken as the same HMI scaled by its height, the status corner at
@@ -528,17 +589,18 @@ class Display {
      */
     geo() {
         const scr = (this.gpu && this.gpu.ready && this.gpu.screen) || HMI.screen;
-        const key = scr.w + 'x' + scr.h;
+        const ck = this.chromeK(), key = scr.w + 'x' + scr.h + '@' + ck;
         if (this._geo && this._geo.key === key) return this._geo;
         const k = scr.h / HMI.screen.h, R = (v) => Math.round(v * k);
         this._geo = {
             key, k, w: scr.w, h: scr.h,
             left: R(HMI.left), colEnd: R(HMI.colEnd),
             statusX: scr.w - R(HMI.screen.w - HMI.status.x), statusH: R(HMI.status.h),
-            headH: R(FULL.headH), barH: R(FULL.barH),
+            // the slim bar grows with the panel (its labels with it: G.menuBar sizes them by its height)
+            headH: R(FULL.headH), barH: R(FULL.barH * ck),
             btnX: R(HMI.btn.x), btnPad: R(HMI.btn.pad), btnSize: HMI.btn.size * k,
         };
-        if (k !== 1) this.log.info('display: ' + key + ' screen: HMI geometry scaled by ' + k.toFixed(3) + ' ' + JSON.stringify(this._geo));
+        if (k !== 1) this.log.info('display: ' + scr.w + 'x' + scr.h + ' screen: HMI geometry scaled by ' + k.toFixed(3) + ' ' + JSON.stringify(this._geo));
         return this._geo;
     }
 
@@ -659,6 +721,8 @@ class Display {
         // the kit runs the screen: buttons drawn on the page (G.button) take the place of the bar's
         r.own = this.own() && this.active();
         r.extra = r.own && this.place.extra ? this.place.extra : 0;
+        // sizes for this panel: controls and text in millimetres (panel.js)
+        r.ui = this.sizes();
         return r;
     }
 
@@ -816,7 +880,7 @@ class Display {
         // right of it the HMI's strip shows through (radio station, phone signal, status icons)
         const geo = this.geo(), hx = geo.left - pl.x;
         const end = G.header(c, Object.assign({}, t, { bg: HMI.headBg }), hx, 0, geo.statusX - pl.x - hx, geo.headH,
-            this.screen.title || this.spec.title, tb.tabs, tb.sel, tb.badges, true, true);
+            this.screen.title || this.spec.title, tb.tabs, tb.sel, tb.badges, true, true, this.chromeK());
         // the HMI's own title is in the strip under the header: a narrower header (a sheet: no tabs) stays
         // as wide as the app's widest, so none of that title shows beside it
         if (!this.sheet) this.headMax = Math.max(this.headMax || 0, end);

@@ -986,10 +986,10 @@ mgu.run({
                 cv.text('Change these on the phone page: Your car and AI model.', 730, 408 + ex, 13, '#64748b');
             }
             if (paired) {
-                const bw = 300, bx = 1130 - bw / 2, by = 424 + ex, bh = 40;
+                const bw = 380, bx = 1130 - bw / 2, by = 424 + ex, bh = Math.min(56, sz(cv, 32));
                 cv.roundRect(bx, by, bw, bh, 10, '#004e8c');
                 cv.strokeRoundRect(bx, by, bw, bh, 10, 1.5, '#00a3e0');
-                cv.text(showPhoneQr ? 'BACK TO THE SETTINGS' : 'SHOW QR FOR THE PHONE PAGE', 1130, by + 26, 13, '#ffffff', { align: 'center', font: 'bold' });
+                cv.text(showPhoneQr ? 'BACK TO THE SETTINGS' : 'SHOW QR FOR THE PHONE PAGE', 1130, by + bh / 2 + sz(cv, 4), sz(cv, 11), '#ffffff', { align: 'center', font: 'bold' });
                 cv.target(bx, by, bw, bh, () => { showPhoneQr = !showPhoneQr; render(true); }, 'btn_phone_qr', 10);
             }
         }
@@ -1405,12 +1405,12 @@ mgu.run({
             });
 
             // buttons: read now (the same safety rules: steady car, never while asleep)
-            const by = top + 15 * step + 6, bw = 225, bh = 38;
+            const by = top + 15 * step + 6, bw = 225, bh = Math.min(52, sz(cv, 32));
             [['engine', 'READ ENGINE NOW', x3], ['faults', 'READ FAULTS NOW', x3 + bw + 20]].forEach(([what, label, bx]) => {
                 const busy = checking === what;
                 cv.roundRect(bx, by, bw, bh, 8, busy ? withAlpha('#00a3e0', 0.35) : '#004e8c');
                 cv.strokeRoundRect(bx, by, bw, bh, 8, 1.5, '#00a3e0');
-                cv.text(busy ? 'READING...' : label, bx + bw / 2, by + 25, 14, '#ffffff', { align: 'center', font: 'bold' });
+                cv.text(busy ? 'READING...' : label, bx + bw / 2, by + bh / 2 + sz(cv, 4), sz(cv, 12), '#ffffff', { align: 'center', font: 'bold' });
                 cv.target(bx, by, bw, bh, () => checkNow(what), 'dc_' + what, 8);
             });
         }

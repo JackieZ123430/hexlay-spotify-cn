@@ -866,7 +866,7 @@ mgu.run({
                 cv.text('Select any song from Playlists or Liked Songs to begin playback.', 464, 255, 16, t.dim, { align: 'center' });
             } else {
                 // Vinyl / Album Art Box
-                const artX = 54, artY = 104, artSz = 230;
+                const artX = 54, artY = 104, artSz = Math.min(244, sz(cv, 190));      // as tall as the room over the progress bar allows
                 cv.roundRect(artX, artY, artSz, artSz, 14, '#0c1015');
 
                 if (artManager.hasArt) {
@@ -888,7 +888,9 @@ mgu.run({
                 }
 
                 // Right of Album Art: Track Info, as wide as the panel lets it be
-                const metaX = 310, metaW = 880 - metaX;
+                const metaX = artX + artSz + 26, metaW = 880 - metaX;
+                const devSize = sz(cv, 10.5), devH = sz(cv, 24), tSize = sz(cv, 27), aSize = sz(cv, 18), alSize = sz(cv, 14);
+                const devY = 106, titleY = devY + devH + 14 + tSize, artistY = titleY + aSize + 14, albumY = artistY + alSize + 12;
 
                 // where it plays: a pill as wide as its text, a live dot when music plays
                 const devOpts = { font: 'bold', spacing: 1 };
@@ -896,17 +898,17 @@ mgu.run({
                 const devLabel = !devName ? 'SPOTIFY CONNECT'
                     : spotify.stalled ? devName + '  -  NOT RESPONDING'
                     : (isPlaying ? 'PLAYING ON  ' : 'PAUSED ON  ') + devName;
-                const devText = fitText(cv, devLabel, metaW - 44, 12, devOpts);
-                const devW = cv.textWidth(devText, 12, devOpts) + 42;
-                cv.roundRect(metaX, 106, devW, 28, 14, withAlpha(t.accent, 0.16));
-                cv.circle(metaX + 16, 120, 4.5, isPlaying ? t.accent : withAlpha(t.accent, 0.45));
-                cv.text(devText, metaX + 30, 125, 12, t.accent, devOpts);
+                const devText = fitText(cv, devLabel, metaW - 20 - devH * 1.5, devSize, devOpts);
+                const devW = cv.textWidth(devText, devSize, devOpts) + devH * 1.5 + 14;
+                cv.roundRect(metaX, devY, devW, devH, devH / 2, withAlpha(t.accent, 0.16));
+                cv.circle(metaX + devH * 0.6, devY + devH / 2, devH * 0.16, isPlaying ? t.accent : withAlpha(t.accent, 0.45));
+                cv.text(devText, metaX + devH * 1.1, devY + devH / 2 + devSize * 0.36, devSize, t.accent, devOpts);
 
                 // Title, artist, album: cut only where the panel ends
-                cv.text(fitText(cv, curTrk.title, metaW, 32, { font: 'bold' }), metaX, 182, 32, t.text, { font: 'bold' });
-                cv.text(fitText(cv, curTrk.artist, metaW, 22), metaX, 218, 22, '#d4d8de');
+                cv.text(fitText(cv, curTrk.title, metaW, tSize, { font: 'bold' }), metaX, titleY, tSize, t.text, { font: 'bold' });
+                cv.text(fitText(cv, curTrk.artist, metaW, aSize), metaX, artistY, aSize, '#d4d8de');
                 if (curTrk.album) {
-                    cv.text(fitText(cv, curTrk.album, metaW, 17), metaX, 248, 17, t.dim);
+                    cv.text(fitText(cv, curTrk.album, metaW, alSize), metaX, albumY, alSize, t.dim);
                 }
 
                 // what it plays from: the playlist, Liked Songs or the album
@@ -919,8 +921,9 @@ mgu.run({
                 } else if (/:album:/.test(ctxUri)) { fromKind = 'ALBUM'; fromName = curTrk.album || ''; }
                 else if (/:artist:/.test(ctxUri)) { fromKind = 'ARTIST'; }
                 if (fromKind) {
-                    cv.text('PLAYING FROM ' + fromKind, metaX, 304, 11, t.dim, { font: 'bold', spacing: 1.5 });
-                    if (fromName) cv.text(fitText(cv, fromName, metaW, 17, { font: 'bold' }), metaX, 326, 17, t.text, { font: 'bold' });
+                    const fkSize = sz(cv, 9.5), fnSize = sz(cv, 14), fkY = albumY + 22 + fkSize;
+                    cv.text('PLAYING FROM ' + fromKind, metaX, fkY, fkSize, t.dim, { font: 'bold', spacing: 1.5 });
+                    if (fromName) cv.text(fitText(cv, fromName, metaW, fnSize, { font: 'bold' }), metaX, fkY + fnSize + 8, fnSize, t.text, { font: 'bold' });
                 }
 
                 // Progress Bar
@@ -1057,7 +1060,6 @@ mgu.run({
         /* ---------- Page 3: Connect & Real Cloud Pairing ---------- */
         function drawConnect(cv, t) {
             // Left: Real Cloud Pairing QR Code or Connected Status
-            const cEx = cv.extra || 0;
             G.panelExact(cv, t, 24, 44, 580, metrics(cv).panelH, spotify.isAuthenticated() ? 'Spotify Account Status' : 'Scan to Connect Phone');
 
             const authed = spotify.isAuthenticated();
@@ -1092,7 +1094,7 @@ mgu.run({
                     cv.text(label, lx + 18, pillY + 21, 15, GREEN, { font: 'bold' });
                 } else {
                     cv.roundRect(pillX, pillY, pillW, pillH, 16, withAlpha('#ffffff', 0.06));
-                    cv.text('No device playing - open Spotify on your phone', cx, pillY + 21, 14, '#94a3b8', { align: 'center' });
+                    cv.text(fitText(cv, 'No device playing - open Spotify on your phone', pillW - 24, 14), cx, pillY + 21, 14, '#94a3b8', { align: 'center' });
                 }
 
                 // the library at a glance
@@ -1102,10 +1104,10 @@ mgu.run({
 
                 // disconnecting or switching account is the phone's: the car follows it live. The
                 // phone page's QR code puts this car on a phone again (a new phone, cleared browser)
-                const qbX = 164, qbY = 316, qbW = 300, qbH = 42;
+                const qbW = 380, qbX = 314 - qbW / 2, qbH = Math.min(56, sz(cv, 36)), qbY = 376 - qbH;
                 cv.roundRect(qbX, qbY, qbW, qbH, 10, '#0f1a14');
                 cv.strokeRoundRect(qbX, qbY, qbW, qbH, 10, 1, withAlpha(GREEN, 0.6));
-                cv.text('SHOW QR FOR THE PHONE PAGE', qbX + qbW / 2, qbY + 26, 13, GREEN, { align: 'center', font: 'bold', spacing: 1 });
+                cv.text('SHOW QR FOR THE PHONE PAGE', qbX + qbW / 2, qbY + qbH / 2 + sz(cv, 4), sz(cv, 11), GREEN, { align: 'center', font: 'bold', spacing: 1 });
                 cv.target(qbX, qbY, qbW, qbH, () => { showPhoneQr = true; render().catch(() => {}); }, 'btn_phone_qr', 15);
                 cv.text('Disconnect or switch account on your phone.', cx, 404, 13, '#64748b', { align: 'center' });
             } else {
@@ -1138,10 +1140,10 @@ mgu.run({
                 if (authed) cv.text('Installed the phone app? Scan with its Scan car QR, not the camera.', cx, 364, 12, '#64748b', { align: 'center' });
                 else cv.text('https://hexlay.github.io/idrive7-custom-apps/pair.html', cx, 364, 11, '#64748b', { align: 'center' });
                 if (authed) {
-                    const bbX = 164, bbY = 384, bbW = 300, bbH = 40;
+                    const bbW = 380, bbX = 314 - bbW / 2, bbY = 384, bbH = Math.min(52, sz(cv, 34));
                     cv.roundRect(bbX, bbY, bbW, bbH, 10, '#004e3a');
                     cv.strokeRoundRect(bbX, bbY, bbW, bbH, 10, 1.5, '#1ed760');
-                    cv.text('BACK TO THE ACCOUNT', bbX + bbW / 2, bbY + 26, 13, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+                    cv.text('BACK TO THE ACCOUNT', bbX + bbW / 2, bbY + bbH / 2 + sz(cv, 4), sz(cv, 11), '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
                     cv.target(bbX, bbY, bbW, bbH, () => { showPhoneQr = false; render().catch(() => {}); }, 'btn_phone_qr_back', 15);
                 }
             }
@@ -1177,39 +1179,44 @@ mgu.run({
                 }, 'btn_refresh_devs', 12);
             } else {
                 // as many as the panel holds; the one that plays first
-                const DEV_ROWS = Math.max(3, Math.floor((330 + cEx) / 78));
+                // (sized for this display: sz)
+                const m = metrics(cv), rowH = sz(cv, 54), step = rowH + 10, devTop = 102;
+                const DEV_ROWS = Math.max(1, Math.floor((m.listBottom - devTop + 10) / step));
+                const nSize = sz(cv, 17), sSize = sz(cv, 12.5), bSize = sz(cv, 11);
                 const shown = devices.slice().sort((x, y) => (y.isActive ? 1 : 0) - (x.isActive ? 1 : 0)).slice(0, DEV_ROWS);
                 shown.forEach((dev, idx) => {
-                    const dy = 102 + idx * 78;
+                    const dy = devTop + idx * step, mid = dy + rowH / 2;
                     const isCur = !!dev.isActive;
                     const moving = busyOn('transfer', dev.id);
-                    cv.roundRect(644, dy, 908, 68, 12, isCur ? withAlpha(t.accent, 0.16) : t.track);
-                    if (isCur || moving) cv.strokeRoundRect(644, dy, 908, 68, 12, 1.5, withAlpha(t.accent, isCur ? 0.8 : 0.4));
+                    cv.roundRect(644, dy, 908, rowH, 12, isCur ? withAlpha(t.accent, 0.16) : t.track);
+                    if (isCur || moving) cv.strokeRoundRect(644, dy, 908, rowH, 12, 1.5, withAlpha(t.accent, isCur ? 0.8 : 0.4));
 
                     // the device's kind, in a round tile
-                    cv.circle(686, dy + 34, 22, isCur ? withAlpha(t.accent, 0.2) : withAlpha('#ffffff', 0.06));
-                    drawDeviceIcon(cv, 686, dy + 34, dev.type, isCur ? t.accent : '#aeb4bd');
-
-                    cv.text(fitText(cv, dev.name, 1390 - 724, 21, { font: 'bold' }), 724, dy + 31, 21, isCur ? t.text : '#dddddd', { font: 'bold' });
-                    const vol = typeof dev.volume === 'number' ? '  |  Volume ' + dev.volume + '%' : '';
-                    cv.text((isCur ? (spotify.isPlaying ? 'Playing now' : 'Paused here') : dev.type) + vol, 724, dy + 53, 15, isCur ? t.accent : t.dim);
+                    const iconR = Math.round(rowH * 0.32), iconX = 644 + 18 + iconR;
+                    cv.circle(iconX, mid, iconR, isCur ? withAlpha(t.accent, 0.2) : withAlpha('#ffffff', 0.06));
+                    drawDeviceIcon(cv, iconX, mid, dev.type, isCur ? t.accent : '#aeb4bd');
 
                     // the action: where it plays, or "play here"
-                    const bx = 1400, bw = 128, by = dy + 16, bh = 36;
+                    const bw = sz(cv, 104), bh = sz(cv, 30), bx = 644 + 908 - 20 - bw, by = mid - bh / 2;
+                    const textX = iconX + iconR + 18;
+                    cv.text(fitText(cv, dev.name, bx - 20 - textX, nSize, { font: 'bold' }), textX, mid - 4, nSize, isCur ? t.text : '#dddddd', { font: 'bold' });
+                    const vol = typeof dev.volume === 'number' ? '  |  Volume ' + dev.volume + '%' : '';
+                    cv.text(fitText(cv, (isCur ? (spotify.isPlaying ? 'Playing now' : 'Paused here') : dev.type) + vol, bx - 20 - textX, sSize), textX, mid + sSize + 4, sSize, isCur ? t.accent : t.dim);
+                    const bBase = by + bh / 2 + bSize * 0.36;
                     if (isCur) {
-                        cv.roundRect(bx, by, bw, bh, 18, withAlpha(t.accent, 0.22));
-                        cv.circle(bx + 22, by + bh / 2, 4, t.accent);
-                        cv.text('ACTIVE', bx + bw / 2 + 8, by + 23, 13, t.accent, { align: 'center', font: 'bold', spacing: 1 });
+                        cv.roundRect(bx, by, bw, bh, bh / 2, withAlpha(t.accent, 0.22));
+                        cv.circle(bx + bh * 0.6, by + bh / 2, 4, t.accent);
+                        cv.text('ACTIVE', bx + bw / 2 + 8, bBase, bSize, t.accent, { align: 'center', font: 'bold', spacing: 1 });
                     } else if (moving) {
-                        cv.roundRect(bx, by, bw, bh, 18, withAlpha('#ffffff', 0.06));
-                        drawSpinner(cv, bx + bw / 2, by + bh / 2, 9, t.accent);
+                        cv.roundRect(bx, by, bw, bh, bh / 2, withAlpha('#ffffff', 0.06));
+                        drawSpinner(cv, bx + bw / 2, by + bh / 2, sz(cv, 8), t.accent);
                     } else {
                         const dim = isBusy('transfer');
-                        cv.strokeRoundRect(bx, by, bw, bh, 18, 1.5, withAlpha('#ffffff', dim ? 0.15 : 0.45));
-                        cv.text('PLAY HERE', bx + bw / 2, by + 23, 13, dim ? '#64748b' : '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+                        cv.strokeRoundRect(bx, by, bw, bh, bh / 2, 1.5, withAlpha('#ffffff', dim ? 0.15 : 0.45));
+                        cv.text('PLAY HERE', bx + bw / 2, bBase, bSize, dim ? '#64748b' : '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
                     }
 
-                    cv.target(644, dy, 908, 68, () => {
+                    cv.target(644, dy, 908, rowH, () => {
                         if (!isCur) runBusy('transfer', () => spotify.transferToDevice(dev.id), dev.id);
                     }, 'dev_' + idx, 12);
                 });

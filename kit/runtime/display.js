@@ -84,6 +84,9 @@ const LAYOUTS = ['full', 'standard'];
  *            to share the HMI's title strip with its status icons)
  */
 const TAP_MM = 11, SLOP_MM = 2, CHROME_K = 1.35;
+/* the smallest text on the page, in millimetres on the glass (its size, about 1.8 mm capitals): smaller text is
+   drawn at this size, and measured so (Recorder.minText), so what an app cuts to fit still fits */
+const MIN_TEXT_MM = 2.6;
 
 // the HMI's page animation when a screen opens (the picture shows after it)
 const SHOW_DELAY_MS = 350;
@@ -306,7 +309,7 @@ class Display {
         const r = this.sheetRec && this.sheetRec.textScale === sc ? this.sheetRec : (this.sheetRec = new Recorder(PAGE.w, PAGE.h, { textScale: sc }));
         r.reset();
         r.extra = this.place.extra || 0;
-        r.ui = this.sizes();
+        r.ui = this.sizes(); r.minText = r.ui.minText;
         let targets = [];
         try { targets = this.sheet.draw(r, this.theme()) || []; } catch (e) { this.log.error('sheet draw', e); }
         this.sheetTargets = targets;
@@ -557,7 +560,7 @@ class Display {
         const p = this.panel, geo = this.geo();
         const sc = this.active() && this.place && this.place.scale ? this.place.scale : 1;
         const mm = geo.w / p.widthMm / sc;
-        return { inches: p.inches, k: p.k, mm, tap: Math.round(TAP_MM * mm) };
+        return { inches: p.inches, k: p.k, mm, tap: Math.round(TAP_MM * mm), minText: Math.round(MIN_TEXT_MM * mm * 2) / 2 };
     }
     /** How much the kit's own header and bar grow on this panel (its size factor, at most CHROME_K). */
     chromeK() { return Math.max(1, Math.min(CHROME_K, this.panel ? this.panel.k : 1)); }
@@ -721,8 +724,9 @@ class Display {
         // the kit runs the screen: buttons drawn on the page (G.button) take the place of the bar's
         r.own = this.own() && this.active();
         r.extra = r.own && this.place.extra ? this.place.extra : 0;
-        // sizes for this panel: controls and text in millimetres (panel.js)
+        // sizes for this panel: controls and text in millimetres (panel.js); no text smaller than readable
         r.ui = this.sizes();
+        r.minText = r.ui.minText;
         return r;
     }
 

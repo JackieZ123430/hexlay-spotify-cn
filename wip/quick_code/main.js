@@ -36,6 +36,42 @@ const { BackupManager } = require('./backup');
 
 const W = 1600, H = 520;
 
+/*
+ * Sizes on this display (kit/runtime/panel.js): k = 1.2 on a 12.3" display, 1.44 on a 10.25" one, so cards,
+ * switches, buttons and text come out the same size in millimetres on both (as CarPlay sizes its own).
+ * sz(cv, n): n at the reference size (k = 1), rounded. The kit draws no text smaller than readable
+ * (Recorder.minText), so text that has to fit a box is cut with fitText at the size it is drawn.
+ */
+const kOf = (cv) => (cv.ui && cv.ui.k) || 1.44;
+const sz = (cv, n) => Math.round(n * kOf(cv));
+/** str cut with '...' to fit maxW at size. */
+function fitText(cv, str, maxW, size, opts) {
+    str = String(str || '');
+    if (cv.textWidth(str, size, opts) <= maxW) return str;
+    while (str.length > 1 && cv.textWidth(str + '...', size, opts) > maxW) str = str.slice(0, -1);
+    return str + '...';
+}
+/** str broken into at most maxLines lines of maxW at size, the last cut with '...' if it doesn't all fit. */
+function wrapText(cv, str, maxW, size, maxLines, opts) {
+    const words = String(str || '').split(/\s+/).filter(Boolean), lines = [];
+    let cur = '';
+    for (let i = 0; i < words.length; i++) {
+        const next = cur ? cur + ' ' + words[i] : words[i];
+        if (cv.textWidth(next, size, opts) <= maxW || !cur) { cur = next; continue; }
+        if (lines.length === maxLines - 1) { cur = fitText(cv, words.slice(i - cur.split(' ').length).join(' '), maxW, size, opts); lines.push(cur); return lines; }
+        lines.push(cur); cur = words[i];
+    }
+    if (cur) lines.push(fitText(cv, cur, maxW, size, opts));
+    return lines.slice(0, maxLines);
+}
+/** Baseline that centres text of size in a box from y, h high. */
+const mid = (y, h, size) => y + h / 2 + size * 0.36;
+/** Page geometry: the status dock at the bottom (sized by the display) and the panels over it. */
+function geom(cv) {
+    const dockH = sz(cv, 32), dockY = 510 - dockH;
+    return { dockH, dockY, panelH: dockY - 8 - 52 };
+}
+
 const AMBIENT_PRESETS = [
     { name: 'BMW Bronze (OEM)', hex: '#c89650', desc: 'Standard BMW G-Series factory default warm tone', isOem: true },
     { name: 'M Neon Cyan', hex: '#00f0ff', desc: 'Vibrant modern hypercar glow', isOem: false },
@@ -339,16 +375,17 @@ mgu.run({
         });
 
         // 4 Curated Low-Risk Categories (BDC 0x40 Only)
+        // (short tab names: the header holds them and Settings at a readable size; the panels say the rest)
         const PAGES = [
-            { id: 'ambient', name: 'Ambient RGB' },
-            { id: 'comfort', name: 'Comfort & Doors' },
-            { id: 'lighting', name: 'Signals & Lighting' },
-            { id: 'backups', name: 'Backups & Rollback' }
+            { id: 'ambient', name: 'Ambient' },
+            { id: 'comfort', name: 'Comfort' },
+            { id: 'lighting', name: 'Lighting' },
+            { id: 'backups', name: 'Backups' }
         ];
 
         /* ---------- Safety Lockout Screen (Non-G-Series or Bus Unreachable) ---------- */
         function drawSafetyLockout(cv, t) {
-            G.panel(cv, t, 40, 52, 1520, 410, 'Safety Interlock Active');
+            G.panel(cv, t, 40, 52, 1520, geom(cv).panelH, 'Safety Interlock Active');
 
             cv.roundRect(80, 110, 1440, 310, 16, '#0f172a');
             cv.strokeRoundRect(80, 110, 1440, 310, 16, 2, '#e1001a');
@@ -361,14 +398,16 @@ mgu.run({
             cv.text('All ECU coding write and parameter change functions are locked for vehicle protection.', 260, 245, 17, '#94a3b8');
             cv.text('No coding modifications will be sent to the vehicle CAN/Ethernet bus.', 260, 275, 17, '#94a3b8');
 
-            cv.roundRect(260, 315, 360, 46, 8, '#1e293b');
-            cv.text('STATUS: READ-ONLY SAFE LOCKOUT', 440, 344, 15, '#ffb703', { align: 'center', font: 'bold' });
+            const lbH = sz(cv, 38), lbSize = sz(cv, 12), lbOpt = { align: 'center', font: 'bold' };
+            const stW = cv.textWidth('STATUS: READ-ONLY SAFE LOCKOUT', lbSize, lbOpt) + 40;
+            cv.roundRect(260, 315, stW, lbH, 8, '#1e293b');
+            cv.text('STATUS: READ-ONLY SAFE LOCKOUT', 260 + stW / 2, mid(315, lbH, lbSize), lbSize, '#ffb703', lbOpt);
 
             // Interactive Re-scan Button so startup timing never permanently locks user out
-            const rBtnX = 640, rBtnY = 315, rBtnW = 260, rBtnH = 46;
+            const rBtnX = 260 + stW + 20, rBtnY = 315, rBtnW = cv.textWidth('RETRY BUS SCAN', lbSize, lbOpt) + sz(cv, 50), rBtnH = lbH;
             cv.roundRect(rBtnX, rBtnY, rBtnW, rBtnH, 8, '#0f291e');
             cv.strokeRoundRect(rBtnX, rBtnY, rBtnW, rBtnH, 8, 1.5, '#2af575');
-            cv.text('RETRY BUS SCAN', rBtnX + rBtnW / 2, rBtnY + 29, 15, '#2af575', { align: 'center', font: 'bold' });
+            cv.text('RETRY BUS SCAN', rBtnX + rBtnW / 2, mid(rBtnY, rBtnH, lbSize), lbSize, '#2af575', lbOpt);
             cv.target(rBtnX, rBtnY, rBtnW, rBtnH, async () => {
                 notify('Scanning vehicle bus for BDC (0x40)...');
                 await safety.scanModules();
@@ -391,8 +430,9 @@ mgu.run({
             cv.roundRect(0, 0, W, H, 0, withAlpha('#000000', 0.82));
 
             // Dialog Box
-            const dw = 860, dh = 400;
-            const dx = (W - dw) / 2, dy = (H - dh) / 2;
+            const dw = 1000, dh = 460;
+            // (below the page's top strip, which the full-screen header covers)
+            const dx = (W - dw) / 2, dy = 48;
             cv.roundRect(dx, dy, dw, dh, 16, '#0c131d');
             cv.strokeRoundRect(dx, dy, dw, dh, 16, 2, alert.badgeColor || '#e1001a');
 
@@ -400,17 +440,18 @@ mgu.run({
             cv.roundRect(dx + 16, dy + 16, dw - 32, 54, 10, withAlpha(alert.badgeColor || '#e1001a', 0.15));
             cv.circle(dx + 50, dy + 43, 16, alert.badgeColor || '#e1001a');
             cv.text('!', dx + 50, dy + 49, 18, '#000000', { align: 'center', font: 'bold' });
-            cv.text(alert.title, dx + 82, dy + 50, 20, alert.badgeColor || '#e1001a', { font: 'bold', spacing: 1 });
+            const aTitle = sz(cv, 15), aMsg = sz(cv, 12.5), aStep = sz(cv, 12.5), aGap = Math.round(aStep * 1.55);
+            cv.text(fitText(cv, alert.title, dw - 130, aTitle, { font: 'bold', spacing: 1 }), dx + 82, mid(dy + 16, 54, aTitle), aTitle, alert.badgeColor || '#e1001a', { font: 'bold', spacing: 1 });
 
             // Message text
-            cv.text(alert.message, dx + 32, dy + 104, 15, '#cbd5e1');
+            cv.text(fitText(cv, alert.message, dw - 64, aMsg), dx + 32, dy + 104, aMsg, '#cbd5e1');
 
             // Step instructions box
-            const boxY = dy + 130, boxH = 160;
+            const boxY = dy + 126, boxH = 24 + aStep + 4 * aGap + 10;
             cv.roundRect(dx + 32, boxY, dw - 64, boxH, 10, '#060a10');
             cv.strokeRoundRect(dx + 32, boxY, dw - 64, boxH, 10, 1, '#1e293b');
 
-            cv.text(alert.status === 'READ_ONLY' ? 'WHY CODING IS OFF:' : 'WHAT TO DO:', dx + 48, boxY + 28, 15, '#00a3e0', { font: 'bold' });
+            cv.text(alert.status === 'READ_ONLY' ? 'WHY CODING IS OFF:' : 'WHAT TO DO:', dx + 48, boxY + 14 + aStep, aStep, '#00a3e0', { font: 'bold' });
 
             const steps = alert.steps && alert.steps.length ? alert.steps : [
                 '1. Turn OFF engine completely (Press Start/Stop button)',
@@ -420,17 +461,17 @@ mgu.run({
             ];
 
             steps.forEach((st, i) => {
-                cv.text(st, dx + 48, boxY + 58 + i * 25, 15, '#ffffff');
+                cv.text(fitText(cv, st, dw - 96, aStep), dx + 48, boxY + 14 + aStep + (i + 1) * aGap, aStep, '#ffffff');
             });
 
             // Action Buttons at bottom
-            const btnW = 240, btnH = 46;
-            const b1X = dx + 32, bY = dy + dh - 64;
+            const btnW = sz(cv, 200), btnH = sz(cv, 38);
+            const b1X = dx + 32, bY = dy + dh - 18 - btnH;
 
             // Dismiss Button
             cv.roundRect(b1X, bY, btnW, btnH, 8, '#1e293b');
             cv.strokeRoundRect(b1X, bY, btnW, btnH, 8, 1, '#334155');
-            cv.text('OK, UNDERSTOOD', b1X + btnW / 2, bY + 29, 16, '#ffffff', { align: 'center', font: 'bold' });
+            cv.text('OK, UNDERSTOOD', b1X + btnW / 2, mid(bY, btnH, sz(cv, 13)), sz(cv, 13), '#ffffff', { align: 'center', font: 'bold' });
             cv.target(b1X, bY, btnW, btnH, () => {
                 activeSafetyAlert = null;
             }, 'btn_dismiss_alert', 15);
@@ -439,34 +480,43 @@ mgu.run({
 
         /* ---------- Tab 0: Ambient Lighting RGB (BDC 0x40) ---------- */
         function drawAmbient(cv, t, now) {
-            G.panel(cv, t, 40, 52, 680, 410, 'Ambient RGB Lighting (BDC 0x40)');
+            const g = geom(cv);
+            G.panel(cv, t, 40, 52, 680, g.panelH, 'Ambient RGB Lighting (BDC 0x40)');
 
+            // six colour tiles, two by three, filling the panel
+            const tileTop = 114, tileGap = 12, tileW = 305;
+            const tileH = Math.floor((52 + g.panelH - 18 - tileTop - 2 * tileGap) / 3);
+            const nSize = sz(cv, 16), hSize = sz(cv, 12.5);
             AMBIENT_PRESETS.forEach((preset, idx) => {
                 const col = idx % 2;
                 const row = Math.floor(idx / 2);
                 const px = 64 + col * 320;
-                const py = 114 + row * 94;
+                const py = tileTop + row * (tileH + tileGap);
                 const isSel = selectedColor.name === preset.name;
+                const dotR = Math.round(tileH * 0.22), dotX = px + 14 + dotR + 6, dotY = py + tileH / 2;
 
-                cv.roundRect(px, py, 305, 82, 12, isSel ? withAlpha(preset.hex, 0.25) : t.track);
-                cv.strokeRoundRect(px, py, 305, 82, 12, isSel ? 2 : 1, isSel ? preset.hex : t.panelEdge);
+                cv.roundRect(px, py, tileW, tileH, 12, isSel ? withAlpha(preset.hex, 0.25) : t.track);
+                cv.strokeRoundRect(px, py, tileW, tileH, 12, isSel ? 2 : 1, isSel ? preset.hex : t.panelEdge);
 
-                cv.circle(px + 36, py + 41, 18, preset.hex);
-                if (isSel) cv.circle(px + 36, py + 41, 24, withAlpha(preset.hex, 0.35));
+                cv.circle(dotX, dotY, dotR, preset.hex);
+                if (isSel) cv.circle(dotX, dotY, dotR + 6, withAlpha(preset.hex, 0.35));
 
-                cv.text(preset.name, px + 68, py + 34, 22, isSel ? '#ffffff' : '#dddddd', { font: 'bold' });
-                cv.text(preset.hex.toUpperCase(), px + 68, py + 56, 17, t.dim, { font: 'num' });
+                const textX = dotX + dotR + 16, textW = px + tileW - 12 - textX;
+                cv.text(fitText(cv, preset.name, textW, nSize, { font: 'bold' }), textX, dotY - 3, nSize, isSel ? '#ffffff' : '#dddddd', { font: 'bold' });
+                cv.text(preset.hex.toUpperCase(), textX, dotY + hSize + 5, hSize, t.dim, { font: 'num' });
 
-                cv.target(px, py, 305, 82, () => {
+                cv.target(px, py, tileW, tileH, () => {
                     if (isCodingInProgress) return;
                     selectedColor = preset;
                 }, 'amb_' + idx, 12);
             });
 
             // Right: Interior Silhouette & Light Tubes
-            G.panel(cv, t, 740, 52, 820, 410, 'Live Interior Light Bar Preview');
+            G.panel(cv, t, 740, 52, 820, g.panelH, 'Live Interior Light Bar Preview');
 
-            const cx = 760, cy = 114, cw = 780, ch = 250;
+            // the apply button at the panel's bottom, the preview in the room above it
+            const btnH = sz(cv, 42), btnY = 52 + g.panelH - 16 - btnH;
+            const cx = 760, cy = 114, cw = 780, ch = btnY - 14 - cy;
             cv.roundRect(cx, cy, cw, ch, 14, '#070a0d');
             cv.strokeRoundRect(cx, cy, cw, ch, 14, 1.5, t.panelEdge);
 
@@ -487,10 +537,11 @@ mgu.run({
 
             cv.roundRect(cx + 260, cy + 148, cw - 520, 12, 6, withAlpha(glowCol, 0.5));
 
-            cv.text('ACTIVE PREVIEW: ' + selectedColor.name.toUpperCase(), cx + cw / 2, cy + 205, 20, glowCol, { align: 'center', font: 'bold', spacing: 1.5 });
+            const pvSize = sz(cv, 15), pvOpt = { align: 'center', font: 'bold', spacing: 1.5 };
+            cv.text(fitText(cv, 'ACTIVE PREVIEW: ' + selectedColor.name.toUpperCase(), cw - 40, pvSize, pvOpt), cx + cw / 2, Math.min(cy + ch - 18, cy + 205), pvSize, glowCol, pvOpt);
 
             // Apply button (Gated by Engine Running & Diagnostic Mode Safety)
-            const btnX = cx + 180, btnY = 380, btnW = cw - 360, btnH = 54;
+            const btnX = cx + 100, btnW = cw - 200;
             const safeCheck = safety.checkCodingSafety('ambient_rgb');
             const canWrite = safeCheck.allowed && !isCodingInProgress;
 
@@ -507,7 +558,8 @@ mgu.run({
                 btnLabel = `[LOCKED] ${safeCheck.title}`;
             }
 
-            cv.text(btnLabel, btnX + btnW / 2, btnY + 34, 17, canWrite ? '#000000' : safeCheck.badgeColor, { align: 'center', font: 'bold', spacing: 1.2 });
+            const bSize = sz(cv, 13), bOpt = { align: 'center', font: 'bold', spacing: 1.2 };
+            cv.text(fitText(cv, btnLabel, btnW - 32, bSize, bOpt), btnX + btnW / 2, mid(btnY, btnH, bSize), bSize, canWrite ? '#000000' : safeCheck.badgeColor, bOpt);
 
             cv.target(btnX, btnY, btnW, btnH, async () => {
                 if (isCodingInProgress) return;
@@ -525,9 +577,11 @@ mgu.run({
         }
 
         /* ---------- BMW iDrive 7 OEM Toggle Switch ---------- */
-        function drawBmwToggle(cv, x, y, active, canCode, lockColor) {
-            const w = 104, h = 46, r = 23;
-            const thumbR = 18;
+        /** The switch, drawn at s times its reference size (104 x 46) from x, y. */
+        function drawBmwToggle(cv, x, y, active, canCode, lockColor, s) {
+            s = s || 1;
+            const w = 104 * s, h = 46 * s, r = h / 2;
+            const thumbR = 18 * s, lSize = 13 * s, base = y + h / 2 + lSize * 0.36;
 
             if (!canCode) {
                 // Interlocked / Locked State (e.g. Engine Running)
@@ -538,7 +592,7 @@ mgu.run({
                 cv.circle(tx, ty, thumbR - 1.5, '#1e293b');
                 // label in the free half, beside the knob
                 const lx = active ? x + (w - 2 * r) / 2 + 2 : x + 2 * r + (w - 2 * r) / 2 - 2;
-                cv.text('LOCK', lx, y + 28, 11, lockColor || '#ffb703', { align: 'center', font: 'bold', spacing: 0.5 });
+                cv.text('LOCK', lx, base, lSize * 0.85, lockColor || '#ffb703', { align: 'center', font: 'bold', spacing: 0.5 });
                 return;
             }
 
@@ -548,34 +602,82 @@ mgu.run({
                 cv.strokeRoundRect(x, y, w, h, r, 1.5, '#00a3e0');
 
                 // "ON" label on the left in crisp white
-                cv.text('ON', x + 28, y + 28, 14, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+                cv.text('ON', x + 28 * s, base, lSize, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
 
                 // Tactile Machined Aluminum Thumb on the right
                 const tx = x + w - r, ty = y + r;
                 cv.circle(tx, ty, thumbR, '#002e54');
                 cv.circle(tx, ty, thumbR - 1.5, '#f8fafc');
                 // Central vertical grip notch (BMW M-Cyan bar)
-                cv.roundRect(tx - 2, ty - 7, 4, 14, 2, '#00a3e0');
+                cv.roundRect(tx - 2 * s, ty - 7 * s, 4 * s, 14 * s, 2 * s, '#00a3e0');
             } else {
                 // Inactive State: Dark Graphite & Slate
                 cv.roundRect(x, y, w, h, r, '#0c121a');
                 cv.strokeRoundRect(x, y, w, h, r, 1.5, '#1e2a3a');
 
                 // "OFF" label on the right in dim slate
-                cv.text('OFF', x + w - 28, y + 28, 13, '#64748b', { align: 'center', font: 'bold', spacing: 1 });
+                cv.text('OFF', x + w - 28 * s, base, lSize, '#64748b', { align: 'center', font: 'bold', spacing: 1 });
 
                 // Tactile Matte Aluminum Thumb on the left
                 const tx = x + r, ty = y + r;
                 cv.circle(tx, ty, thumbR, '#090e15');
                 cv.circle(tx, ty, thumbR - 1.5, '#384656');
                 // Central vertical grip notch
-                cv.roundRect(tx - 2, ty - 7, 4, 14, 2, '#1e293b');
+                cv.roundRect(tx - 2 * s, ty - 7 * s, 4 * s, 14 * s, 2 * s, '#1e293b');
             }
+        }
+
+        /**
+         * Four coding switches as cards, two by two, filling the panel over the dock: title, what it does, the
+         * state (or why it is locked) and the switch. target(item, idx, x, y, w, h) makes each card pressable.
+         */
+        function drawToggleCards(cv, t, toggles, target) {
+            const g = geom(cv), gap = 18, top = 112;
+            const cw = 720, ch = Math.floor((52 + g.panelH - 18 - top - gap) / 2);
+            const tSize = sz(cv, 18), dSize = sz(cv, 12.5), pSize = sz(cv, 10.5), pillH = sz(cv, 25);
+            const ts = kOf(cv) / 1.2, swW = 104 * ts, swH = 46 * ts;
+            toggles.forEach((item, idx) => {
+                const col = idx % 2;
+                const row = Math.floor(idx / 2);
+                const tx = 64 + col * 752;
+                const ty = top + row * (ch + gap);
+                const safeCheck = safety.checkCodingSafety(item.key);
+                const canCode = safeCheck.allowed && !isCodingInProgress;
+
+                // Card container with authentic BMW cockpit styling
+                const cardBg = item.active ? '#0c1522' : '#0b0f16';
+                const cardEdge = canCode ? (item.active ? '#0077c8' : '#1c2432') : withAlpha(safeCheck.badgeColor, 0.5);
+                cv.roundRect(tx, ty, cw, ch, 12, cardBg);
+                cv.strokeRoundRect(tx, ty, cw, ch, 12, 1.5, cardEdge);
+
+                // BMW iDrive 7 Toggle Switch, on the right, centred
+                const swX = tx + cw - 28 - swW, swY = ty + (ch - swH) / 2;
+                const textW = swX - 20 - (tx + 28);
+                // title, then what it does on up to two lines
+                const titleY = ty + 14 + tSize, descY = titleY + dSize + 10, dStep = dSize + 6;
+                cv.text(fitText(cv, item.title, textW, tSize, { font: 'bold' }), tx + 28, titleY, tSize, item.active ? '#ffffff' : '#cbd5e1', { font: 'bold' });
+                wrapText(cv, item.desc, textW, dSize, 2).forEach((line, i) => cv.text(line, tx + 28, descY + i * dStep, dSize, t.dim));
+
+                // Status Pill, as wide as its text
+                const pillBg = canCode ? (item.active ? '#0a2e1d' : '#141c26') : '#241215';
+                const pillBorder = canCode ? (item.active ? '#10b981' : '#283548') : safeCheck.badgeColor;
+                const pillTextCol = canCode ? (item.active ? '#2af575' : '#8a99ad') : safeCheck.badgeColor;
+                const pillOpt = { align: 'center', font: 'bold', spacing: 1 };
+                const pillLabel = fitText(cv, canCode ? item.stateLabel : ('[LOCKED] ' + safeCheck.badgeText), textW - 24, pSize, pillOpt);
+                const pillW = cv.textWidth(pillLabel, pSize, pillOpt) + 24, pillY = ty + ch - 14 - pillH;
+
+                cv.roundRect(tx + 28, pillY, pillW, pillH, 6, pillBg);
+                cv.strokeRoundRect(tx + 28, pillY, pillW, pillH, 6, 1, pillBorder);
+                cv.text(pillLabel, tx + 28 + pillW / 2, mid(pillY, pillH, pSize), pSize, pillTextCol, pillOpt);
+
+                drawBmwToggle(cv, swX, swY, item.active, canCode, safeCheck.badgeColor, ts);
+                target(item, idx, tx, ty, cw, ch);
+            });
         }
 
         /* ---------- Tab 1: Comfort & Doors (BDC 0x40) ---------- */
         function drawComfort(cv, t) {
-            G.panel(cv, t, 40, 52, 1520, 410, 'Comfort Access & Doors (BDC 0x40)');
+            G.panel(cv, t, 40, 52, 1520, geom(cv).panelH, 'Comfort Access & Doors (BDC 0x40)');
 
             const toggles = [
                 {
@@ -648,47 +750,15 @@ mgu.run({
                 }
             ];
 
-            toggles.forEach((item, idx) => {
-                const col = idx % 2;
-                const row = Math.floor(idx / 2);
-                const tx = 64 + col * 752;
-                const ty = 112 + row * 162;
-                const safeCheck = safety.checkCodingSafety(item.key);
-                const canCode = safeCheck.allowed && !isCodingInProgress;
-
-                // Card container with authentic BMW cockpit styling
-                const cardBg = item.active ? '#0c1522' : '#0b0f16';
-                const cardEdge = canCode ? (item.active ? '#0077c8' : '#1c2432') : withAlpha(safeCheck.badgeColor, 0.5);
-                cv.roundRect(tx, ty, 720, 144, 12, cardBg);
-                cv.strokeRoundRect(tx, ty, 720, 144, 12, 1.5, cardEdge);
-
-                cv.text(item.title, tx + 28, ty + 38, 23, item.active ? '#ffffff' : '#cbd5e1', { font: 'bold' });
-                cv.text(item.desc, tx + 28, ty + 68, 15, t.dim);
-
-                // Status Pill
-                const pillBg = canCode ? (item.active ? '#0a2e1d' : '#141c26') : '#241215';
-                const pillBorder = canCode ? (item.active ? '#10b981' : '#283548') : safeCheck.badgeColor;
-                const pillTextCol = canCode ? (item.active ? '#2af575' : '#8a99ad') : safeCheck.badgeColor;
-                const pillLabel = canCode ? item.stateLabel : ('[LOCKED] ' + safeCheck.badgeText);
-
-                cv.roundRect(tx + 28, ty + 92, 250, 32, 6, pillBg);
-                cv.strokeRoundRect(tx + 28, ty + 92, 250, 32, 6, 1, pillBorder);
-                cv.text(pillLabel, tx + 153, ty + 113, 13, pillTextCol, { align: 'center', font: 'bold', spacing: 1 });
-
-                // BMW iDrive 7 Toggle Switch
-                const swX = tx + 586, swY = ty + 49;
-                drawBmwToggle(cv, swX, swY, item.active, canCode, safeCheck.badgeColor);
-
-                cv.target(tx, ty, 720, 144, async () => {
+            drawToggleCards(cv, t, toggles, (item, idx, tx, ty, cw, ch) => cv.target(tx, ty, cw, ch, async () => {
                     if (isCodingInProgress) return;
                     await item.action();
-                }, 'tog_c_' + idx, 12);
-            });
+                }, 'tog_c_' + idx, 12));
         }
 
         /* ---------- Tab 2: Signals & Lighting (BDC 0x40) ---------- */
         function drawLighting(cv, t) {
-            G.panel(cv, t, 40, 52, 1520, 410, 'Signals & Lighting Enhancements (BDC 0x40)');
+            G.panel(cv, t, 40, 52, 1520, geom(cv).panelH, 'Signals & Lighting Enhancements (BDC 0x40)');
 
             const toggles = [
                 {
@@ -761,47 +831,16 @@ mgu.run({
                 }
             ];
 
-            toggles.forEach((item, idx) => {
-                const col = idx % 2;
-                const row = Math.floor(idx / 2);
-                const tx = 64 + col * 752;
-                const ty = 112 + row * 162;
-                const safeCheck = safety.checkCodingSafety(item.key);
-                const canCode = safeCheck.allowed && !isCodingInProgress;
-
-                // Card container with authentic BMW cockpit styling
-                const cardBg = item.active ? '#0c1522' : '#0b0f16';
-                const cardEdge = canCode ? (item.active ? '#0077c8' : '#1c2432') : withAlpha(safeCheck.badgeColor, 0.5);
-                cv.roundRect(tx, ty, 720, 144, 12, cardBg);
-                cv.strokeRoundRect(tx, ty, 720, 144, 12, 1.5, cardEdge);
-
-                cv.text(item.title, tx + 28, ty + 38, 23, item.active ? '#ffffff' : '#cbd5e1', { font: 'bold' });
-                cv.text(item.desc, tx + 28, ty + 68, 15, t.dim);
-
-                // Status Pill
-                const pillBg = canCode ? (item.active ? '#0a2e1d' : '#141c26') : '#241215';
-                const pillBorder = canCode ? (item.active ? '#10b981' : '#283548') : safeCheck.badgeColor;
-                const pillTextCol = canCode ? (item.active ? '#2af575' : '#8a99ad') : safeCheck.badgeColor;
-                const pillLabel = canCode ? item.stateLabel : ('[LOCKED] ' + safeCheck.badgeText);
-
-                cv.roundRect(tx + 28, ty + 92, 250, 32, 6, pillBg);
-                cv.strokeRoundRect(tx + 28, ty + 92, 250, 32, 6, 1, pillBorder);
-                cv.text(pillLabel, tx + 153, ty + 113, 13, pillTextCol, { align: 'center', font: 'bold', spacing: 1 });
-
-                // BMW iDrive 7 Toggle Switch
-                const swX = tx + 586, swY = ty + 49;
-                drawBmwToggle(cv, swX, swY, item.active, canCode, safeCheck.badgeColor);
-
-                cv.target(tx, ty, 720, 144, async () => {
+            drawToggleCards(cv, t, toggles, (item, idx, tx, ty, cw, ch) => cv.target(tx, ty, cw, ch, async () => {
                     if (isCodingInProgress) return;
                     await item.action();
-                }, 'tog_l_' + idx, 12);
-            });
+                }, 'tog_l_' + idx, 12));
         }
 
         /* ---------- Tab 3: Automated Backups & Rollback Engine ---------- */
         function drawBackups(cv, t) {
-            G.panel(cv, t, 40, 52, 1520, 410, 'Automated Backups & Rollback Engine (BDC 0x40)');
+            const g = geom(cv), bottom = 52 + g.panelH - 16;
+            G.panel(cv, t, 40, 52, 1520, g.panelH, 'Automated Backups & Rollback Engine (BDC 0x40)');
 
             const backups = backupMgr.getBackups();
             const safeCheck = safety.checkCodingSafety();
@@ -812,50 +851,54 @@ mgu.run({
 
             if (backups.length === 0) {
                 // Empty state card
-                cv.roundRect(listX, listY, listW, 330, 12, '#0c131d');
-                cv.strokeRoundRect(listX, listY, listW, 330, 12, 1.5, '#1e293b');
+                cv.roundRect(listX, listY, listW, bottom - listY, 12, '#0c131d');
+                cv.strokeRoundRect(listX, listY, listW, bottom - listY, 12, 1.5, '#1e293b');
 
                 cv.circle(listX + listW / 2, listY + 120, 36, '#152132');
                 cv.text('i', listX + listW / 2, listY + 132, 34, '#00a3e0', { align: 'center', font: 'bold' });
 
-                cv.text('NO CODING BACKUPS YET', listX + listW / 2, listY + 195, 22, '#ffffff', { align: 'center', font: 'bold' });
-                cv.text('A snapshot is recorded here before every coding write.', listX + listW / 2, listY + 230, 16, '#94a3b8', { align: 'center' });
-                cv.text('This read-only build writes nothing, so none are made.', listX + listW / 2, listY + 258, 15, '#64748b', { align: 'center' });
+                cv.text('NO CODING BACKUPS YET', listX + listW / 2, listY + 195, sz(cv, 17), '#ffffff', { align: 'center', font: 'bold' });
+                cv.text('A snapshot is recorded here before every coding write.', listX + listW / 2, listY + 195 + sz(cv, 26), sz(cv, 13), '#94a3b8', { align: 'center' });
+                cv.text('This read-only build writes nothing, so none are made.', listX + listW / 2, listY + 195 + sz(cv, 48), sz(cv, 12), '#64748b', { align: 'center' });
             } else {
-                // Render up to 3 most recent backups
-                const displayBackups = backups.slice(0, 3);
+                // the most recent backups, as many as fit over the panel's bottom
+                const bGap = 10, bh = Math.max(100, sz(cv, 80));
+                const displayBackups = backups.slice(0, Math.max(1, Math.floor((bottom - listY + bGap) / (bh + bGap))));
+                const tagSize = sz(cv, 10.5), tagH = sz(cv, 22), tagOpt = { align: 'center', font: 'bold' };
+                const titleSize = sz(cv, 16), valSize = sz(cv, 12);
+                const btnW = sz(cv, 130), btnH = sz(cv, 38), btnSize = sz(cv, 12);
                 displayBackups.forEach((b, idx) => {
-                    const by = listY + idx * 110;
-                    const bh = 100;
+                    const by = listY + idx * (bh + bGap);
 
                     cv.roundRect(listX, by, listW, bh, 12, '#0c1522');
                     cv.strokeRoundRect(listX, by, listW, bh, 12, 1.5, '#1c293d');
 
-                    // Timestamp pill
-                    cv.roundRect(listX + 24, by + 16, 175, 26, 6, '#142030');
-                    cv.text(b.timeFormatted, listX + 111, by + 34, 13, '#00a3e0', { align: 'center', font: 'bold' });
-
-                    // ECU Target badge
-                    cv.roundRect(listX + 210, by + 16, 150, 26, 6, '#0f291e');
-                    cv.text('TARGET: BDC 0x40', listX + 285, by + 34, 12, '#2af575', { align: 'center', font: 'bold' });
-
-                    // Backup Title & details
-                    cv.text(b.actionTitle, listX + 24, by + 68, 20, '#ffffff', { font: 'bold' });
-                    const valText = (b.oldValue !== null && b.newValue !== null) ? `Changed: ${b.oldValue} -> ${b.newValue}` : 'State Snapshot';
-                    cv.text(valText, listX + 24, by + 88, 14, '#94a3b8');
+                    // Timestamp pill, then the ECU Target badge, each as wide as its text
+                    const tw1 = cv.textWidth(b.timeFormatted, tagSize, tagOpt) + 24, tw2 = cv.textWidth('TARGET: BDC 0x40', tagSize, tagOpt) + 24;
+                    cv.roundRect(listX + 24, by + 12, tw1, tagH, 6, '#142030');
+                    cv.text(b.timeFormatted, listX + 24 + tw1 / 2, mid(by + 12, tagH, tagSize), tagSize, '#00a3e0', tagOpt);
+                    cv.roundRect(listX + 36 + tw1, by + 12, tw2, tagH, 6, '#0f291e');
+                    cv.text('TARGET: BDC 0x40', listX + 36 + tw1 + tw2 / 2, mid(by + 12, tagH, tagSize), tagSize, '#2af575', tagOpt);
 
                     // Right Restore Action Button
-                    const btnW = 160, btnH = 46;
-                    const btnX = listX + listW - btnW - 24, btnY = by + 27;
+                    const btnX = listX + listW - btnW - 24, btnY = by + (bh - btnH) / 2;
 
+                    // Backup Title & details, up to the button
+                    const textW = btnX - 24 - (listX + 24);
+                    const valY = by + bh - 12, titleY = valY - valSize - 8;
+                    cv.text(fitText(cv, b.actionTitle, textW, titleSize, { font: 'bold' }), listX + 24, titleY, titleSize, '#ffffff', { font: 'bold' });
+                    const valText = (b.oldValue !== null && b.newValue !== null) ? `Changed: ${b.oldValue} -> ${b.newValue}` : 'State Snapshot';
+                    cv.text(fitText(cv, valText, textW, valSize), listX + 24, valY, valSize, '#94a3b8');
+
+                    const bOpt = { align: 'center', font: 'bold', spacing: 1 };
                     if (!canRestore) {
                         cv.roundRect(btnX, btnY, btnW, btnH, 8, '#241215');
                         cv.strokeRoundRect(btnX, btnY, btnW, btnH, 8, 1, safeCheck.badgeColor);
-                        cv.text(isCodingInProgress ? 'BUSY...' : '[LOCKED]', btnX + btnW / 2, btnY + 29, 14, safeCheck.badgeColor, { align: 'center', font: 'bold', spacing: 1 });
+                        cv.text(isCodingInProgress ? 'BUSY...' : '[LOCKED]', btnX + btnW / 2, mid(btnY, btnH, btnSize), btnSize, safeCheck.badgeColor, bOpt);
                     } else {
                         cv.roundRect(btnX, btnY, btnW, btnH, 8, '#004e8c');
                         cv.strokeRoundRect(btnX, btnY, btnW, btnH, 8, 1.5, '#00a3e0');
-                        cv.text('RESTORE', btnX + btnW / 2, btnY + 29, 16, '#ffffff', { align: 'center', font: 'bold', spacing: 1.2 });
+                        cv.text('RESTORE', btnX + btnW / 2, mid(btnY, btnH, btnSize), btnSize, '#ffffff', bOpt);
                     }
 
                     cv.target(btnX, btnY, btnW, btnH, async () => {
@@ -869,22 +912,27 @@ mgu.run({
             const infoX = 1010, infoY = 112, infoW = 526;
 
             // Shield Card
-            const shH = 190;
+            // (the reset card at the panel's bottom, the shield card in the room above it)
+            const rfBtnH = sz(cv, 38), resH = rfBtnH + 22 + 14 + sz(cv, 12) + 16, resY = bottom - resH;
+            const shH = resY - 16 - infoY;
             cv.roundRect(infoX, infoY, infoW, shH, 12, '#09121d');
             cv.strokeRoundRect(infoX, infoY, infoW, shH, 12, 1.5, '#0077c8');
 
-            cv.text('READ-ONLY BUILD', infoX + 28, infoY + 36, 19, '#ffb703', { font: 'bold', spacing: 1 });
-            cv.text('No coding is written to the car by this version.', infoX + 28, infoY + 68, 15, '#cbd5e1');
-            cv.text('The BDC coding map is not verified for this car,', infoX + 28, infoY + 96, 15, '#cbd5e1');
-            cv.text('so restore and rollback are disabled too.', infoX + 28, infoY + 124, 15, '#cbd5e1');
-            cv.text('Last raw read 0x2001: ' + (lastRawRead ? lastRawRead.raw2001 : 'none'), infoX + 28, infoY + 152, 14, '#94a3b8', { font: 'num' });
+            const shTitle = sz(cv, 15), shLine = sz(cv, 12), shStep = Math.max(shLine + 8, Math.min(sz(cv, 21), Math.floor((shH - 36 - shTitle) / 4)));
+            const lineW = infoW - 56;
+            cv.text('READ-ONLY BUILD', infoX + 28, infoY + 18 + shTitle, shTitle, '#ffb703', { font: 'bold', spacing: 1 });
+            [['No coding is written to the car by this version.', '#cbd5e1'],
+             ['The BDC coding map is not verified for this car,', '#cbd5e1'],
+             ['so restore and rollback are disabled too.', '#cbd5e1'],
+             ['Last raw read 0x2001: ' + (lastRawRead ? lastRawRead.raw2001 : 'none'), '#94a3b8', 'num']].forEach(([line, c, font], i) => {
+                cv.text(fitText(cv, line, lineW, shLine, { font }), infoX + 28, infoY + 18 + shTitle + (i + 1) * shStep, shLine, c, { font });
+            });
 
             // OEM Factory Reset Card
-            const resY = infoY + shH + 16, resH = 124;
             cv.roundRect(infoX, resY, infoW, resH, 12, '#101722');
             cv.strokeRoundRect(infoX, resY, infoW, resH, 12, 1.5, '#334155');
 
-            const rfBtnX = infoX + 28, rfBtnY = resY + 22, rfBtnW = infoW - 56, rfBtnH = 48;
+            const rfBtnX = infoX + 28, rfBtnY = resY + 22, rfBtnW = infoW - 56;
             cv.roundRect(rfBtnX, rfBtnY, rfBtnW, rfBtnH, 10, canRestore ? '#1e293b' : '#241215');
             cv.strokeRoundRect(rfBtnX, rfBtnY, rfBtnW, rfBtnH, 10, 1.5, canRestore ? '#00a3e0' : safeCheck.badgeColor);
 
@@ -896,9 +944,10 @@ mgu.run({
             } else {
                 rLabel = `[LOCKED] ${safeCheck.title}`;
             }
-            cv.text(rLabel, rfBtnX + rfBtnW / 2, rfBtnY + 31, 16, canRestore ? '#ffffff' : safeCheck.badgeColor, { align: 'center', font: 'bold', spacing: 1 });
+            const rfSize = sz(cv, 12), rfOpt = { align: 'center', font: 'bold', spacing: 1 };
+            cv.text(fitText(cv, rLabel, rfBtnW - 24, rfSize, rfOpt), rfBtnX + rfBtnW / 2, mid(rfBtnY, rfBtnH, rfSize), rfSize, canRestore ? '#ffffff' : safeCheck.badgeColor, rfOpt);
 
-            cv.text('Disabled in the read-only build.', infoX + 28, resY + 98, 14, '#94a3b8');
+            cv.text('Disabled in the read-only build.', infoX + 28, resY + resH - 14, sz(cv, 12), '#94a3b8');
 
             cv.target(rfBtnX, rfBtnY, rfBtnW, rfBtnH, async () => {
                 if (isCodingInProgress) return;
@@ -908,7 +957,7 @@ mgu.run({
 
         /* ---------- Bottom Diagnostic & Vehicle State Dock ---------- */
         function drawDiagnosticDock(cv, t, safeStatus) {
-            const dockX = 40, dockY = 472, dockW = 1520, dockH = 38;
+            const g = geom(cv), dockX = 40, dockY = g.dockY, dockW = 1520, dockH = g.dockH;
             const isDiag = safety.vehicleState.diagnosticMode;
             const rpm = safety.vehicleState.rpm;
             const speed = safety.vehicleState.speed;
@@ -945,19 +994,22 @@ mgu.run({
                 subLabel = 'Engine off, vehicle stationary.';
             }
 
-            cv.text(mainLabel, dockX + 42, dockY + 24, 15, stateColor, { font: 'bold', spacing: 1 });
-            const mainW = cv.textWidth(mainLabel, 15, { font: 'bold', spacing: 1 });
-            cv.text(' |  ' + subLabel, dockX + 46 + mainW, dockY + 24, 14, t.dim);
-
-            // Right-side Action Buttons: [READ BDC] [RESTORE OEM] [TEST DIAG]
-            const b1W = 105, bH = 26;
-            const bY = dockY + 6;
+            // Right-side Action Button: [READ BDC]
+            const bSize = sz(cv, 11), bOpt = { align: 'center', font: 'bold', spacing: 0.8 };
+            const b1W = cv.textWidth('READ BDC', bSize, bOpt) + sz(cv, 30), bH = dockH - 10;
+            const bY = dockY + 5;
             const b1X = dockX + dockW - b1W - 6;
+
+            // the state, then what it means, cut where the button starts
+            const mSize = sz(cv, 12.5), sSize = sz(cv, 11.5), mOpt = { font: 'bold', spacing: 1 }, base = mid(dockY, dockH, mSize);
+            cv.text(mainLabel, dockX + 42, base, mSize, stateColor, mOpt);
+            const mainW = cv.textWidth(mainLabel, mSize, mOpt);
+            cv.text(fitText(cv, ' |  ' + subLabel, b1X - 16 - (dockX + 46 + mainW), sSize), dockX + 46 + mainW, base, sSize, t.dim);
 
             // Button 1: READ BDC
             cv.roundRect(b1X, bY, b1W, bH, 6, '#0c1724');
             cv.strokeRoundRect(b1X, bY, b1W, bH, 6, 1, '#00a3e0');
-            cv.text('READ BDC', b1X + b1W / 2, bY + 18, 12, '#00a3e0', { align: 'center', font: 'bold', spacing: 0.8 });
+            cv.text('READ BDC', b1X + b1W / 2, mid(bY, bH, bSize), bSize, '#00a3e0', bOpt);
             cv.target(b1X, bY, b1W, bH, async () => {
                 if (isCodingInProgress) return;
                 await readLiveEcuValues();
@@ -1001,9 +1053,11 @@ mgu.run({
                 const alpha = Math.min(1, (3800 - (now - statusTime)) / 400);
                 const isErr = statusMsg.startsWith('[ERR]') || statusMsg.startsWith('[!]');
                 const borderCol = isErr ? '#e1001a' : '#1db954';
-                cv.roundRect(W / 2 - 320, 415, 640, 44, 10, withAlpha('#000000', 0.92 * alpha));
-                cv.strokeRoundRect(W / 2 - 320, 415, 640, 44, 10, 1.5, withAlpha(borderCol, alpha));
-                cv.text(statusMsg, W / 2, 443, 17, withAlpha('#ffffff', alpha), { align: 'center', font: 'bold', spacing: 1 });
+                const tSize = sz(cv, 13), tOpt = { align: 'center', font: 'bold', spacing: 1 };
+                const tw = Math.min(1400, Math.max(640, cv.textWidth(statusMsg, tSize, tOpt) + 60)), th = sz(cv, 36), ty = geom(cv).dockY - 12 - th;
+                cv.roundRect(W / 2 - tw / 2, ty, tw, th, 10, withAlpha('#000000', 0.92 * alpha));
+                cv.strokeRoundRect(W / 2 - tw / 2, ty, tw, th, 10, 1.5, withAlpha(borderCol, alpha));
+                cv.text(fitText(cv, statusMsg, tw - 40, tSize, tOpt), W / 2, mid(ty, th, tSize), tSize, withAlpha('#ffffff', alpha), tOpt);
             }
 
             // If safety alert modal is active, render on top of everything!

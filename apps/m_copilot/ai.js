@@ -75,6 +75,8 @@ class AiBridge {
                     const parsed = JSON.parse(raw);
                     if (parsed && (parsed.geminiApiKey || parsed.apiKey || parsed.paired)) {
                         this.log.info('AiBridge: Loaded config from ' + p);
+                        // (a config from before 1.0.20 has no keyAt: when the file was last saved stands in)
+                        try { this.savedAt = fs.statSync(p).mtimeMs; } catch (e) { this.savedAt = 0; }
                         return parsed;
                     }
                 }
@@ -104,9 +106,19 @@ class AiBridge {
         }
     }
 
-    saveCredentials(payload) {
+    /**
+     * When the key the car has was sent from the phone (the phone's clock, ms; 0: none). A key read
+     * from the relay's backlog is taken only when it is newer (CloudPairManager).
+     */
+    keyTime() {
+        return this.config.keyAt || (this.isConfigured() ? this.savedAt || 0 : 0);
+    }
+
+    /** payload: the phone's key message; time: when the phone sent it (its clock). */
+    saveCredentials(payload, time) {
         if (!payload) return;
         const before = this.config.provider;
+        this.config.keyAt = typeof time === 'number' && isFinite(time) ? time : Date.now();
         if (payload.mode) this.config.mode = payload.mode;
         if (payload.provider) this.config.provider = payload.provider;
         if (payload.model) this.config.model = payload.model;

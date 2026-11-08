@@ -65,11 +65,13 @@ class CloudPairManager extends CloudPair {
             return;
         }
         if (msg.type === 'push_subscribe' || msg.type === 'push_unsubscribe') return;
-        // the AI credentials from the phone
+        // the AI credentials from the phone. From the relay's backlog (sent while M-Copilot was closed or
+        // the car asleep) only a key newer than the one the car has: a new key or provider sent meanwhile
+        // is taken, the original pairing (also still in the backlog) is not applied again.
         if (msg.geminiApiKey || msg.apiKey || msg.sessionToken) {
-            if (replay) return;
-            this.log.info(this.tag + ': Received verified AI credentials via secure uplink!');
-            this.ai.saveCredentials(msg);
+            if (replay && !(typeof msg.time === 'number' && msg.time > this.ai.keyTime())) return;
+            this.log.info(this.tag + ': Received verified AI credentials via secure uplink' + (replay ? ' (sent while M-Copilot was closed)' : '') + '!');
+            this.ai.saveCredentials(msg, msg.time);
             this.notifyAck();
             if (this.onPaired) this.onPaired();
         }

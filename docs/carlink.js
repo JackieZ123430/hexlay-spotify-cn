@@ -470,7 +470,7 @@
     /** What the pages keep about a car besides its key: the paired flags, Copilot's profile, provider and models. */
     function clearPageState(channel) {
         try {
-            ['bmw_spot_paired_', 'copilot_paired_', 'copilot_profile_', 'copilot_provider_', 'copilot_sent_at_'].forEach((p) => localStorage.removeItem(p + channel));
+            ['bmw_spot_paired_', 'copilot_paired_', 'copilot_profile_', 'copilot_provider_', 'copilot_sent_at_', 'copilot_key_pending_'].forEach((p) => localStorage.removeItem(p + channel));
             for (let i = localStorage.length - 1; i >= 0; i--) {
                 const k = localStorage.key(i);
                 if (k && k.indexOf('copilot_model_' + channel + '_') === 0) localStorage.removeItem(k);

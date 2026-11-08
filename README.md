@@ -31,7 +31,7 @@ This repository is built on the open-source BMW iDrive 7 platform:
 | App | Version | Needs internet | Touches vehicle ECUs |
 | :--- | :---: | :---: | :--- |
 | [Spotify](#1-spotify-spotify) | 1.0.22 | Yes | No |
-| [M-Copilot](#2-m-copilot-m_copilot) | 1.0.19 | Yes | No (reads driving signals, service list and fault memory) |
+| [M-Copilot](#2-m-copilot-m_copilot) | 1.0.20 | Yes | No (reads driving signals, service list and fault memory) |
 
 > [!NOTE]
 > **M-Cinema (YouTube player) has been removed**: playback was unreliable on some firmware and the sound was poor, and CarPlay and Android Auto workarounds play YouTube better.
@@ -79,7 +79,7 @@ This repository is built on the open-source BMW iDrive 7 platform:
 * **Safe with the engine on or off**: driving data are passive subscriptions. Diagnostic reads (fault memory, and the one-time identification) are read-only requests in the default session, made only when a question needs them, and never while the engine is starting or the car is switching off; M-Copilot waits for a steady state instead. What is read follows the car's state: parked without ignition (units asleep) a fault read is marked as possibly incomplete and the engine computer is left alone; with the engine off, boost, load, timing and misfires are not read, and voltages, oil level and temperatures are labelled for what they then mean.
 * **Your choice of AI provider and model**: Google Gemini, Anthropic Claude (Claude Haiku 5.5 by default), OpenAI, Groq or OpenRouter, and the model on the phone page (e.g. Flash-Lite first, Claude Sonnet 5.5). The status bar shows the model that answered; when Gemini Flash is overloaded, Flash-Lite answers instead. Connections are reused, so an answer doesn't wait for a new TLS handshake.
 * **Sized for your display**, as in Spotify: topics, keys, chips and answers.
-* **Foreground only**: driving signals, warning lights, the service list, pairing checks and the internet check run only while M-Copilot is on screen; once you leave it nothing is subscribed, drawn or polled. What the phone sends meanwhile (a disconnect, a new key, profile or model) is picked up the next time the app is opened, within 12 hours. The API key is stored once, in the app's data folder (readable by the app only).
+* **Foreground only**: driving signals, warning lights, the service list, pairing checks and the internet check run only while M-Copilot is on screen; once you leave it nothing is subscribed, drawn or polled. What the phone sends meanwhile (a disconnect, a new key, profile or model) is picked up the next time the app is opened, within 12 hours: the relay keeps it that long, and the car is never woken for it. Until the car has a new key, the phone page says it is waiting for the car. The API key is stored once, in the app's data folder (readable by the app only).
 
 | Ask Your Own Question | Data Check |
 | :---: | :---: |

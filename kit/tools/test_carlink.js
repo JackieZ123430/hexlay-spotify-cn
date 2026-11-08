@@ -258,6 +258,19 @@ async function main() {
     cp.onProfile = (p) => { profile = p; };
     await send({ type: 'copilot_profile', profile: { tune: 'stock' } });
     assert.strictEqual(profile.tune, 'stock', 'profile accepted');
+    // a key read from the relay's backlog (sent while M-Copilot was closed or the car asleep): taken
+    // when it is newer than the car's own, so the original pairing in the backlog isn't applied again
+    ai.keyAt = Date.now() - 3600000;
+    ai.keyTime = () => ai.keyAt;
+    ai.saveCredentials = (p, t) => { ai.saved = p; ai.keyAt = t; };
+    const backlog = async (obj) => { await CL.sendToCar(car, obj); cp.handleIncomingMessage(page.posts.pop().init.body, true, nowSec()); };
+    await backlog({ mode: 'custom_api', provider: 'claude', apiKey: 'sk-ant-new' });
+    assert.strictEqual(ai.saved && ai.saved.apiKey, 'sk-ant-new', 'a key sent while M-Copilot was closed is taken when it opens');
+    assert(ai.keyAt > Date.now() - 60000, 'and the car keeps when the phone sent it');
+    ai.saved = null;
+    ai.keyAt = Date.now() + 60000;
+    await backlog({ mode: 'gemini', provider: 'gemini', geminiApiKey: 'AIzaSyold' });
+    assert.strictEqual(ai.saved, null, 'a backlog key older than the car\'s: not applied again');
     requests.length = 0;
     cp.notifyAck();
     const ack = JSON.parse(requests[0].body.toString());

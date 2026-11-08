@@ -703,7 +703,7 @@
         // what the car says (only messages that authenticate with this car's key reach here)
         function onCarMessage(m) {
             if (m.type === 'unpaired') handleCarDisconnected();
-            else if (m.type === 'pair_ack') handleCarConnected();
+            else if (m.type === 'pair_ack') { keyArrived(); handleCarConnected(); }
             else if (m.type === 'car_hello') {
                 if (m.settings) applyCarSettings(m);
                 // a paired car: "Connected" (not while the driver is changing the key)
@@ -753,7 +753,7 @@
                 try { localStorage.setItem('copilot_model_' + channel + '_' + prov, model); } catch (e) {}
                 markSent();
                 editing.model = false;
-                say('Saved. The car uses it within a minute while M-Copilot is open (the provider must be the one you paired).', true);
+                say('Saved. The car uses it at once while M-Copilot is open, or the next time you open it (within 12 hours). The provider must be the one you paired.', true);
             } catch (e) {
                 say('Could not send: ' + e.message, false);
             }
@@ -770,6 +770,10 @@
         let carSettingsAt = 0;
         function applyCarSettings(hello) {
             const st = hello.settings;
+            // the car's hello after it took the key sent from here (also read later, from the relay). Its time is
+            // the car's clock, which the page allows to be 15 minutes off (CarLink.openFromCar)
+            const pending = keyPending();
+            if (pending && st && st.provider === pending.provider && typeof hello.time === 'number' && hello.time >= pending.at - 15 * 60000) { keyArrived(); showProviderLine(); }
             if (!st || typeof st !== 'object' || typeof hello.time !== 'number' || hello.time <= carSettingsAt) return;
             let sentAt = 0;
             try { sentAt = Number(localStorage.getItem('copilot_sent_at_' + channel)) || 0; } catch (e) {}
@@ -833,7 +837,7 @@
                 try { localStorage.setItem('copilot_profile_' + channel, JSON.stringify(profile)); } catch (e) {}
                 markSent();
                 editing.profile = false;
-                say('Saved. The car picks it up within a minute while M-Copilot is open, or the next time you open it.', true);
+                say('Saved. The car picks it up at once while M-Copilot is open, or the next time you open it (within 12 hours).', true);
             } catch (e) {
                 say('Could not send: ' + e.message, false);
             }
@@ -882,10 +886,22 @@
         // the paired car's provider, and changing provider or key without unpairing (the car takes a
         // new key while paired, sent end-to-end encrypted like the first one)
         const PROVIDER_NAMES = { gemini: 'Google Gemini', claude: 'Anthropic Claude', openai: 'OpenAI', groq: 'Groq', openrouter: 'OpenRouter' };
+        function keyPending() {
+            try { return JSON.parse(localStorage.getItem('copilot_key_pending_' + channel) || 'null'); } catch (e) { return null; }
+        }
+        function keyArrived() {
+            try { localStorage.removeItem('copilot_key_pending_' + channel); } catch (e) {}
+        }
         function showProviderLine() {
             const prov = localStorage.getItem('copilot_provider_' + channel);
             const el = document.getElementById('successProvider');
+            const pending = keyPending();
             el.innerText = PROVIDER_NAMES[prov] ? 'AI provider: ' + PROVIDER_NAMES[prov] : '';
+            // sent while M-Copilot is closed (or the car is off): the relay keeps it 12 hours
+            if (el.innerText && pending) {
+                const what = pending.provider !== prov && PROVIDER_NAMES[pending.provider] ? PROVIDER_NAMES[pending.provider] + ' key' : 'new key';
+                el.innerText += ' - ' + what + ' sent, waiting for the car: it takes it the next time M-Copilot is open (within 12 hours).';
+            }
             el.style.display = el.innerText ? 'block' : 'none';
         }
         function changeKey() {
@@ -987,7 +1003,12 @@
                     // the key is in the car now: not kept in this page
                     document.getElementById('inputGeminiKey').value = '';
                     document.getElementById('inputCustomKey').value = '';
-                    try { localStorage.setItem('copilot_provider_' + channel, creds.provider); } catch (e) {}
+                    try {
+                        localStorage.setItem('copilot_provider_' + channel, creds.provider);
+                        // until the car says it has it (pair_ack, or its hello with this provider)
+                        localStorage.setItem('copilot_key_pending_' + channel, JSON.stringify({ provider: creds.provider, at: Date.now() }));
+                    } catch (e) {}
+                    markSent();            // the car's older hellos don't put the old provider back
                     handleCarConnected();
                     showModelCard();
                 } else {

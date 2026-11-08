@@ -19,7 +19,7 @@ const Module = require('module');
 
 const ROOT = path.join(__dirname, '..', '..');
 
-// the apps require './kit/<x>' (copied from kit/runtime by the build) and './tls_dates'
+// the apps require './kit/<x>' (copied from kit/runtime by the build) (tls_dates among them)
 const requests = [];          // every HTTPS request the car modules make
 const fakeTls = {
     request(opts, cb) { return fakeRequest(opts, cb); },
@@ -48,10 +48,12 @@ function fakeRequest(opts, cb) {
 const origResolve = Module._resolveFilename;
 Module._resolveFilename = function (request, parent, ...rest) {
     if (parent && parent.filename && parent.filename.indexOf(path.join(ROOT, 'apps')) === 0) {
+        if (request === './kit/tls_dates') return 'fake-tls';
         const m = /^\.\/kit\/(.+)$/.exec(request);
         if (m) return origResolve.call(this, path.join(ROOT, 'kit', 'runtime', m[1]), parent, ...rest);
-        if (request === './tls_dates') return 'fake-tls';
     }
+    // the shared pairing channel (kit/runtime/cloud_pair.js) posts to the relay through it too
+    if (request === './tls_dates' && parent && parent.filename === path.join(ROOT, 'kit', 'runtime', 'cloud_pair.js')) return 'fake-tls';
     return origResolve.call(this, request, parent, ...rest);
 };
 require.cache['fake-tls'] = { id: 'fake-tls', filename: 'fake-tls', loaded: true, exports: fakeTls };

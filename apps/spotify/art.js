@@ -7,7 +7,7 @@
  * via setImage() for GPU or software rendering.
  */
 const http = require('http');
-const tlsDates = require('./tls_dates');
+const tlsDates = require('./kit/tls_dates');
 const urlMod = require('url');
 const decodeJpeg = require('./jpeg');
 const { setImage } = require('./kit/record');
@@ -114,7 +114,7 @@ class AlbumArtManager {
                     const decoded = decodeJpeg(buf, { formatAsRGBA: true });
                     if (decoded && decoded.width > 0 && decoded.height > 0) {
                         // Apply rounded corner mask to blend into #0c1015
-                        this._applyRoundedCorners(decoded, Math.round(decoded.width * 0.07), [12, 16, 21]);
+                        this._applyRoundedCorners(decoded, Math.round(decoded.width * 0.07));
 
                         // Keep up to 25 recent album covers in cache
                         if (this.cache.size >= 25) {
@@ -144,7 +144,8 @@ class AlbumArtManager {
         });
     }
 
-    _applyRoundedCorners(img, r, bg) {
+    /** Corners outside radius r made see-through (premultiplied 0, 0, 0, 0): whatever the theme draws under them shows. */
+    _applyRoundedCorners(img, r) {
         const w = img.width, h = img.height, d = img.data;
         const rSq = r * r;
         for (let y = 0; y < r; y++) {
@@ -154,23 +155,23 @@ class AlbumArtManager {
                 const distSq = dx * dx + dy * dy;
                 if (distSq > rSq) {
                     // Top-Left
-                    this._blendPixel(d, (y * w + x) * 4, bg);
+                    this._blendPixel(d, (y * w + x) * 4);
                     // Top-Right
-                    this._blendPixel(d, (y * w + (w - 1 - x)) * 4, bg);
+                    this._blendPixel(d, (y * w + (w - 1 - x)) * 4);
                     // Bottom-Left
-                    this._blendPixel(d, ((h - 1 - y) * w + x) * 4, bg);
+                    this._blendPixel(d, ((h - 1 - y) * w + x) * 4);
                     // Bottom-Right
-                    this._blendPixel(d, ((h - 1 - y) * w + (w - 1 - x)) * 4, bg);
+                    this._blendPixel(d, ((h - 1 - y) * w + (w - 1 - x)) * 4);
                 }
             }
         }
     }
 
-    _blendPixel(d, i, bg) {
-        d[i] = bg[0];
-        d[i + 1] = bg[1];
-        d[i + 2] = bg[2];
-        d[i + 3] = 255;
+    _blendPixel(d, i) {
+        d[i] = 0;
+        d[i + 1] = 0;
+        d[i + 2] = 0;
+        d[i + 3] = 0;
     }
 
     _applyImage(img) {

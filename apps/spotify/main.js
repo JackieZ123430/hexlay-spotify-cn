@@ -17,7 +17,7 @@ const G = require('./kit/gauges');
 const { SpotifyClient } = require('./api');
 const { CloudPairManager } = require('./cloud_pair');
 const { AlbumArtManager, ART_IMG_ID } = require('./art');
-const qrcodegen = require('./qrcodegen');
+const qrcodegen = require('./kit/qrcodegen');
 
 const W = 1600, H = 520;
 const PAGES = ['Playlists', 'Liked Songs', 'Now Playing', 'Connect'];
@@ -508,7 +508,7 @@ mgu.run({
             const miniSz = dockH - 18, miniX = dockX + 10, miniY = dockY + 9;
             cv.roundRect(miniX, miniY, miniSz, miniSz, 8, withAlpha(t.panelEdge, 0.9));
             if (artManager.hasArt) {
-                cv.image(ART_IMG_ID, miniX, miniY, miniSz, miniSz);
+                cv.image(ART_IMG_ID, miniX, miniY, miniSz, miniSz, miniSz * 0.07);   // (the GPU rounds the corners smoothly; art.js cuts them for software)
                 cv.strokeRoundRect(miniX, miniY, miniSz, miniSz, 8, 1, withAlpha(t.accent, 0.35));
             } else {
                 cv.strokeRoundRect(miniX, miniY, miniSz, miniSz, 8, 1, withAlpha(t.accent, 0.3));
@@ -870,7 +870,7 @@ mgu.run({
                 cv.roundRect(artX, artY, artSz, artSz, 14, '#0c1015');
 
                 if (artManager.hasArt) {
-                    cv.image(ART_IMG_ID, artX, artY, artSz, artSz);
+                    cv.image(ART_IMG_ID, artX, artY, artSz, artSz, artSz * 0.07);
                     cv.strokeRoundRect(artX, artY, artSz, artSz, 14, 1.5, isPlaying ? withAlpha(t.accent, 0.4) : withAlpha(t.panelEdge, 0.8));
                 } else {
                     cv.strokeRoundRect(artX, artY, artSz, artSz, 14, 1.5, isPlaying ? withAlpha(t.accent, 0.4) : withAlpha(t.panelEdge, 0.8));
@@ -1227,9 +1227,36 @@ mgu.run({
         }
 
         /* ---------- Master Render Loop ---------- */
+        // What a frame shows, roughly: the loop draws again when it changes, or at least once a second
+        // (data that isn't listed here then shows within a second). Taps, scrolling, the album art and
+        // the pairing call render() themselves and always draw.
+        function frameSig() {
+            const trk = spotify.currentTrack, pl = spotify.currentPlaylist, n = spotify.notice;
+            return [page, showPhoneQr, selectedPlaylistIdx, playlistScroll, trackScroll, likedScroll, queueScroll,
+                settings.get('theme'), settings.get('demo'), spotify.hasInternet, spotify.isAuthenticated(),
+                trk ? trk.id : '', spotify.isPlaying, spotify.stalled, spotify.shuffle, spotify.repeat, spotify.isCurrentLiked,
+                Math.floor((spotify.progressMs || 0) / 1000), spotify.contextUri, spotify.activeDevice,
+                (spotify.playlists || []).length, pl ? pl.id + ':' + ((pl.tracks && pl.tracks.length) || 0) : '',
+                (spotify.likedSongs || []).length, spotify.likedTotal, (spotify.remoteQueue || []).length,
+                (spotify.devices || []).map((d) => d.id + (d.isActive ? '*' : '')).join(','),
+                artManager.hasArt, artManager.currentUrl, n && Date.now() - n.at <= NOTICE_MS ? n.text : ''].join('|');
+        }
+        let lastSig = '', lastDrawAt = 0;
+        /** The loop's frame: drawn while something moves (music, a spinner), on a change, or once a second. */
+        function loopFrame() {
+            const moving = spotify.isPlaying || Object.keys(busy).some(isBusy) || spotify.isLoadingPlaylists || spotify.isLoadingLiked;
+            if (!moving && Date.now() - lastDrawAt < 1000) {
+                spotify.tick();                 // the polls go on
+                if (frameSig() === lastSig) return Promise.resolve();
+            }
+            return render();
+        }
+
         async function render() {
             spotify.tick();
             spectrumSeed += 0.08;
+            lastSig = frameSig();
+            lastDrawAt = Date.now();
 
             if (spotify.currentTrack && spotify.currentTrack.albumArt) {
                 artManager.load(spotify.currentTrack.albumArt);
@@ -1312,9 +1339,11 @@ mgu.run({
         ui.onClick('BTN_PAGE', () => { page = (page + 1) % PAGES.length; return render(); });
         ctx.onTab((idx) => { page = idx; showPhoneQr = false; return render(); });
 
-        // Start 60 fps render loop and render initial frame
-        // 30 fps while music plays (spectrum, progress), 10 fps otherwise; taps redraw at once
-        ctx.loop('MAIN', 15, render, { maxFps: () => (spotify.isPlaying ? 30 : 10) });
+        // 30 fps while music plays (spectrum, progress), 10 fps otherwise - and an unchanged frame
+        // isn't drawn again (loopFrame); taps redraw at once
+        ctx.loop('MAIN', 15, loopFrame, { maxFps: () => (spotify.isPlaying ? 30 : 10) });
+        // where the frame goes changed (renderer, layout): draw it again there
+        if (ctx.onLayout) ctx.onLayout(() => { render().catch(() => {}); });
         await render();
         log.info('Spotify app ready');
     }

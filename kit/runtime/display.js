@@ -279,7 +279,12 @@ class Display {
         if (!this.sheet) this.saved = this.app;          // the app's last frame, back when the sheet closes
         this.sheetHead = false;
         this.sheet = sheet; this.sheetDown = -1;
-        if (!this.sheetTimer) this.sheetTimer = setInterval(() => this._paintSheet(), 33);   // scrolling glides
+        // 30 times a second while its list glides (sheet.moving), else twice a second (values that change)
+        if (!this.sheetTimer) this.sheetTimer = setInterval(() => {
+            const sh = this.sheet;
+            if (sh && sh.moving && !sh.moving() && Date.now() - (this.sheetPaintT || 0) < 500) return;
+            this._paintSheet();
+        }, 33);
         this._paintSheet();
         return true;
     }
@@ -306,6 +311,7 @@ class Display {
         if (!this.active() || !this.place.full) return;
         const L = this.last, sc = this.place.scale;
         if (!L) return;
+        this.sheetPaintT = Date.now();
         const r = this.sheetRec && this.sheetRec.textScale === sc ? this.sheetRec : (this.sheetRec = new Recorder(PAGE.w, PAGE.h, { textScale: sc }));
         r.reset();
         r.extra = this.place.extra || 0;
@@ -798,8 +804,10 @@ class Display {
         if (!force && this.lastWords && now - this.lastSent < 1000 && this.lastWords.length === w.byteLength && Buffer.from(w.buffer, w.byteOffset, w.byteLength).equals(this.lastWords)) return;
         this.lastSent = now;
         this.gpu.frame(out);
-        this.lastWords = Buffer.from(Buffer.from(w.buffer, w.byteOffset, w.byteLength));
-        this._keep(name, out, softImage);
+        // one copy of the frame: compared with the next one, and kept (keepalive, software fallback)
+        const snap = new Uint32Array(w);
+        this.lastWords = Buffer.from(snap.buffer, snap.byteOffset, snap.byteLength);
+        this._keep(name, out, softImage, snap);
         this._stats();
     }
 
@@ -829,8 +837,8 @@ class Display {
     }
 
     /** Remember the last frame: resent as keepalive, or drawn in software when the GPU goes. */
-    _keep(name, r, softImage) {
-        const words = new Uint32Array(r.words());
+    _keep(name, r, softImage, snap) {
+        const words = snap || new Uint32Array(r.words());
         this.last = {
             name, softImage, w: r.w, h: r.h,
             frame: { words: () => words, atlases: new Set(r.atlases), ramps: new Set(r.ramps), layersUsed: new Set(r.layersUsed || []), images: new Set(r.images || []) },

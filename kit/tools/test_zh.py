@@ -16,13 +16,13 @@ for shipped in sorted(list((root / 'apps').rglob('*')) + list((root / 'kit/runti
 count = 0
 for manifest in sorted((root / 'apps').glob('*/app.json')):
     original = json.loads(manifest.read_text(encoding='utf-8'))
-    assert not any(s['key'] == 'language' for s in original['settings'])
+    assert not any(s['key'] == 'language' for s in original.get('settings', []))
     keys = []
     for language in ('en', 'zh-CN'):
         spec = localize_spec(original, language)
         for key in ('id', 'signals', 'config', 'assets'):
             assert original.get(key) == spec.get(key), (manifest, key)
-        for a, b in zip(original['settings'], spec['settings']):
+        for a, b in zip(original.get('settings', []), spec.get('settings', [])):
             assert a['key'] == b['key'] and a['default'] == b['default']
             assert [o[0] for o in a.get('options', [])] == [o[0] for o in b.get('options', [])]
         _, ui, strings, _ = build.build_ui(copy.deepcopy(spec), language)
@@ -32,12 +32,13 @@ for manifest in sorted((root / 'apps').glob('*/app.json')):
         assert spec['title'] in strings.values()
         # translation credit: Chinese builds only; the project credit: every build
         cn = [k for k in strings if k.endswith('_CN_CREDITS_TITLE') or k.endswith('_CN_CREDITS_LINK')]
-        if language == 'zh-CN':
+        has_settings = bool(original.get('settings'))   # the credit rows are in the settings list
+        if language == 'zh-CN' and has_settings:
             assert 'Translation by: 抖音 小白科技杂物社 / BiliBili 小白151' in strings.values()
             assert len(cn) == 2
         else:
             assert not cn and not any('JackieZ123430' in v or '小白' in v for v in strings.values())
-        assert any('github.com/cauliflowermossgrape/idrive7-apps' in v for v in strings.values())
+        assert not has_settings or any('github.com/cauliflowermossgrape/idrive7-apps' in v for v in strings.values())
         def visit(obj):
             if isinstance(obj, dict):
                 if obj.get('type') == 'StringId': assert obj['value'] in strings, (manifest, obj)

@@ -10,6 +10,14 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const Module = require('module');
+// in a package the kit is at ./kit next to the app's files (build.py); here it is kit/runtime
+const KIT = path.resolve(__dirname, '..', 'runtime'), APPS = path.resolve(__dirname, '..', '..', 'apps');
+const origResolve = Module._resolveFilename;
+Module._resolveFilename = function (request, parent, ...rest) {
+    const m = parent && parent.filename && parent.filename.indexOf(APPS) === 0 && /^\.\/kit\/(.+)$/.exec(request);
+    return origResolve.call(this, m ? path.join(KIT, m[1]) : request, parent, ...rest);
+};
 const { SpotifyClient } = require('../../apps/spotify/api');
 
 // No login is read or cleaned: a stored one would start real requests at construction, and logout

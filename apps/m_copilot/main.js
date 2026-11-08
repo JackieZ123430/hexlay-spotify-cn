@@ -25,8 +25,8 @@ const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
 const { AiBridge } = require('./ai');
 const { CloudPairManager } = require('./cloud_pair');
-const tlsDates = require('./tls_dates');
-const qrcodegen = require('./qrcodegen');
+const tlsDates = require('./kit/tls_dates');
+const qrcodegen = require('./kit/qrcodegen');
 
 const W = 1600, H = 520;
 const PAGES = ['M-Copilot', 'Data check', 'Connect'];
@@ -480,14 +480,16 @@ mgu.run({
             if (telemetry.tyreTemps) ['fl', 'fr', 'rl', 'rr'].forEach((k) => { drive.tyreTempMax = hi(drive.tyreTempMax, telemetry.tyreTemps[k]); });
         }
         /** Under load (high rpm and torque), every 2 s: a light engine unit sample for the drive memory. */
-        let loadTimer = null;
+        let loadTimer = null, sampling = false;
         function loadSampling(on) {
             if (!on) { if (loadTimer) { clearInterval(loadTimer); loadTimer = null; } return; }
             if (loadTimer) return;
             loadTimer = setInterval(async () => {
                 const rpm = telemetry.rpm;
                 const load = typeof rpm === 'number' && rpm > 2500 && ((typeof telemetry.torquePct === 'number' && telemetry.torquePct >= 50) || (typeof telemetry.torque === 'number' && telemetry.torque >= 250));
-                if (!load || !drive || isThinking || !steady()) return;
+                // one sample at a time: a diagnostic read that hangs doesn't pile up samples behind it
+                if (!load || !drive || isThinking || sampling || !steady()) return;
+                sampling = true;
                 try {
                     const d = await diagLink();
                     if (!d.available) return;
@@ -501,7 +503,7 @@ mgu.run({
                         if (gap > 0.15) { drive.boostShort++; if (drive.boostShortWorst === null || gap > drive.boostShortWorst) { drive.boostShortWorst = gap; drive.boostShortRpm = rpm; } }
                     }
                     if (typeof x.timing === 'number' && (drive.timingMin === null || x.timing < drive.timingMin)) { drive.timingMin = x.timing; drive.timingMinRpm = rpm; }
-                } catch (e) { /* the next sample */ }
+                } catch (e) { /* the next sample */ } finally { sampling = false; }
             }, 2000);
         }
         /** The drive memory as the AI gets it (ai.js buildVehicleContext). */

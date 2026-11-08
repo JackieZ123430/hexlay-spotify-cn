@@ -12,7 +12,7 @@
       "sdk": "oap-sdk",
       "output": "dist/{id}@{version}.tgz",
       "network": ["spotify", "m_copilot"],
-      "shared": ["kit/runtime", "kit/platform", "kit/localization", "kit/tools/build.py", "kit/tools/pack_data.py",
+      "shared": ["LICENSE", "LICENSE.MIT", "kit/runtime", "kit/platform", "kit/localization", "kit/tools/build.py", "kit/tools/pack_data.py",
         "kit/tools/localize.py", "kit/tools/locale-revisions.json", "kit/tools/oapgen", "oap-sdk"]
     }
   }

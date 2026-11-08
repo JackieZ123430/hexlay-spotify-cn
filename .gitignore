@@ -27,8 +27,7 @@ apps/dtc_scanner/dtc_db/
 dtc_scanner_*.json
 .idea
 
-# Doom: Freedoom data is downloaded by the build (app.json "assets")
-apps/doom/*.wad
+# the font bake_cjk.py downloads
 kit/tools/.font-cache/
 
 # Local vehicle diagnostics and build packages (packages contain the owner's SDK)
@@ -50,8 +49,6 @@ apps/m_copilot/copilot_auth.json
 *.log
 *.core
 /kit/renderd/core
-/apps/zf8hp/data/
-egs-snapshot*.json
 
 # left by M-Copilot before 1.0.17 (phone notifications: subscriptions and the car's push key)
 copilot_push.json

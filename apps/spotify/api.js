@@ -12,7 +12,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const querystring = require('querystring');
-const tlsDates = require('./tls_dates');
+const tlsDates = require('./kit/tls_dates');
 
 // how long a failed token refresh (network, 5xx, a non-definitive 4xx) waits before the next try
 const REFRESH_RETRY_MS = 30000;
@@ -176,8 +176,11 @@ class SpotifyClient {
         this.syncing = false;
 
         // Internet connection monitoring
-        this.hasInternet = (ctx.settings && ctx.settings.get('net') === 'off') ? false : true;
+        // settings.get('net') === 'off': no internet probes (not an app setting: the tests' switch, kit/tools/test_spotify.js)
+        this.noNet = !!(ctx.settings && ctx.settings.get('net') === 'off');
+        this.hasInternet = !this.noNet;
         this.lastInternetCheck = 0;
+        this.lastAnswerAt = 0;              // the last answer from api.spotify.com (the internet works)
 
         // Mode: Default is Online (demo is off)
         this.isDemoMode = ctx.settings ? (ctx.settings.get('demo') === 'on') : false;
@@ -229,13 +232,15 @@ class SpotifyClient {
         this.checkInternetConnection().catch(() => {});
         // re-checked only while the app is on screen (main.js sets isOnScreen)
         if (!this.isOnScreen) this.isOnScreen = () => true;
+        // the player is polled every few seconds: an answer from Spotify in the last 30 s already
+        // showed the uplink works, so the extra HTTPS check runs only when Spotify went quiet
         setInterval(() => {
-            if (this.isOnScreen()) this.checkInternetConnection().catch(() => {});
+            if (this.isOnScreen() && Date.now() - this.lastAnswerAt > 30000) this.checkInternetConnection().catch(() => {});
         }, 12000);
     }
 
     async checkInternetConnection() {
-        if (this.ctx.settings && this.ctx.settings.get('net') === 'off') {
+        if (this.noNet) {
             this.hasInternet = false;
             this.lastInternetCheck = Date.now();
             return false;
@@ -689,6 +694,8 @@ class SpotifyClient {
                 },
                 timeout: 6000
             }, (res) => {
+                this.lastAnswerAt = Date.now();
+                if (!this.hasInternet) { this.hasInternet = true; this.lastInternetCheck = this.lastAnswerAt; }
                 let data = '';
                 res.on('data', (c) => { data += c; });
                 res.on('end', () => {
@@ -1120,6 +1127,12 @@ class SpotifyClient {
     }
 
     // Tick called every frame
+    /** How often the player is polled: the "pollRate" setting in seconds (1 to 10, default 2). */
+    syncMs() {
+        const v = Number(this.ctx.settings && this.ctx.settings.get('pollRate'));
+        return (isFinite(v) && v > 0 ? Math.max(1, Math.min(10, v)) : 2) * 1000;
+    }
+
     tick() {
         const now = Date.now();
         const dt = now - this.lastTickTime;
@@ -1136,15 +1149,17 @@ class SpotifyClient {
             });
         }
 
-        // Player state every second, devices every 5 s. tick() runs from the render loop, which
-        // runs only while the Spotify screen is shown: nothing is polled in the background.
-        if (this.token && now - this.lastSync > 1000 && !this.syncing) {
+        // Player state at the "Playback sync rate" setting (1 to 10 s), devices every 5 s (or the sync
+        // rate, if slower). tick() runs from the render loop, which runs only while the Spotify screen
+        // is shown: nothing is polled in the background.
+        const syncMs = this.syncMs();
+        if (this.token && now - this.lastSync > syncMs - 50 && !this.syncing) {
             this.lastSync = now;
             this.syncing = true;
             const done = () => { this.syncing = false; };
             this.pollPlayer().then(done, done);
         }
-        if (this.token && now - this.lastDeviceSync > 5000 && !this.syncingDevices) {
+        if (this.token && now - this.lastDeviceSync > Math.max(5000, syncMs) && !this.syncingDevices) {
             this.lastDeviceSync = now;
             this.syncingDevices = true;
             const done = () => { this.syncingDevices = false; };

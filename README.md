@@ -1,11 +1,11 @@
 # BMW iDrive 7 (MGU) — Custom Apps Suite
 
 <p align="center">
-  <b>Custom applications for BMW iDrive 7 (MGU High / Intel Atom A3960), rendered at 60 fps on the head unit's GPU and installed through the MGU Store.</b>
+  <b>Custom applications for BMW iDrive 7 (MGU High / Intel Atom A3960), drawn on the head unit's GPU (its renderer composites at 60 fps) and installed through the MGU Store.</b>
 </p>
 
 <p align="center">
-  <img alt="60 fps" src="https://img.shields.io/badge/frame%20rate-60%20fps-2ea44f?style=for-the-badge">
+  <img alt="GPU renderer" src="https://img.shields.io/badge/renderer-60%20fps-2ea44f?style=for-the-badge">
   <img alt="OpenGL ES 2" src="https://img.shields.io/badge/render-OpenGL%20ES%202-1c6dd0?style=for-the-badge">
   <img alt="BMW iDrive 7" src="https://img.shields.io/badge/BMW-iDrive%207%20MGU-e4002b?style=for-the-badge">
   <img alt="MGU Store Ready" src="https://img.shields.io/badge/MGU%20Store-Compatible-8957e5?style=for-the-badge">
@@ -30,8 +30,8 @@ This repository is built on the open-source BMW iDrive 7 platform:
 
 | App | Version | Needs internet | Touches vehicle ECUs |
 | :--- | :---: | :---: | :--- |
-| [Spotify](#1-spotify-spotify) | 1.0.21 | Yes | No |
-| [M-Copilot](#2-m-copilot-m_copilot) | 1.0.18 | Yes | No (reads driving signals, service list and fault memory) |
+| [Spotify](#1-spotify-spotify) | 1.0.22 | Yes | No |
+| [M-Copilot](#2-m-copilot-m_copilot) | 1.0.19 | Yes | No (reads driving signals, service list and fault memory) |
 
 > [!NOTE]
 > **M-Cinema (YouTube player) has been removed**: playback was unreliable on some firmware and the sound was poor, and CarPlay and Android Auto workarounds play YouTube better.
@@ -45,7 +45,8 @@ This repository is built on the open-source BMW iDrive 7 platform:
 * **Library & playback**: all your playlists and liked songs (more load as you scroll; the library shows at once when the app opens, from a copy kept on the car, and refreshes in the background), Liked Songs played as Spotify's own collection, now playing with tap-to-seek, shuffle, repeat and like, Up Next you can jump into, and switching between Spotify Connect devices. Buttons that wait for Spotify show a spinner until it answers. Georgian titles and artists are shown in Georgian script. When something fails (no device to play on, Premium needed, no connection) a short message says why; with no active device, playback starts on the phone that played last.
 * **Internet through the MGU Store uplink**: looks up names through the uplink's DNS (see [Internet access](#internet-access)) and checks connectivity with a real HTTPS request. Without internet the player locks with **NO INTERNET CONNECTION**, **Retry** and **Switch to Demo Mode**.
 * **Sized for your display**: rows, buttons and text are sized in millimetres on the glass, as CarPlay sizes its own, so they are as easy to read and press on a 10.25" display as on a 12.3" one (the 12.3" display shows more rows instead). A tap just beside a button still presses it, and no text is drawn too small to read. The display is found on its own.
-* **Settings tab**: colour theme (Spotify Green, M Tricolour, M Red, Ice White, Night Amber), playback mode (Online, or Demo with sample music and no account), screen size (Automatic, 10.25", 12.3", 8.8"), screen layout (full screen or standard), renderer (GPU at 60 fps, or software) and how often playback is synced (1 to 10 s).
+* **Settings tab**: colour theme (Spotify Green, M Tricolour, M Red, Ice White, Night Amber), playback mode (Online, or Demo with sample music and no account), screen size (Automatic, 10.25", 12.3", 8.8"), screen layout (full screen or standard), renderer (GPU, or software) and how often playback is synced with Spotify (1 to 10 s, every 2 s by default).
+* **Light on the head unit**: up to 30 frames a second while music plays and 10 when paused, and a paused screen that doesn't change isn't drawn again (about once a second instead).
 * **Foreground only**: nothing runs while Spotify is off screen. A disconnect sent from the phone meanwhile is applied when you come back to it, or at the next start within 12 hours. The pairing survives restarts.
 
 | Now Playing | Liked Songs |
@@ -97,7 +98,7 @@ The recommended way to install and update these apps is the [**MGU Store**](http
    ```text
    hexlay/idrive7-custom-apps
    ```
-3. Tap **OK**. The MGU Store reads `mgu-repo.json` and lists the two apps. They need the GPU renderer (`idrive7-renderd`) and the controller gate (`mgu-inputgate`), which this repo doesn't ship: add [cauliflowermossgrape/idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps) as a source too and install them from there (most cars with these apps have them already).
+3. Tap **OK**. The MGU Store reads `mgu-repo.json` and lists the two apps. They need the GPU renderer (`idrive7-renderd`) and the controller gate (`mgu-inputgate`), which the store doesn't install from this repository: add [cauliflowermossgrape/idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps) as a source too and install them from there (most cars with these apps have them already). `kit/renderd` here is a copy of their source, used by the browser emulator and the SSH deploy kit.
 4. Tap an app to install it. Updates appear in the store when a new version is pushed.
 
 ### Older firmware (e.g. MainApp 6.5.5)
@@ -137,7 +138,7 @@ For everything else, including:
 
 👉 **See the source repository: [cauliflowermossgrape/idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps)** and the [**MGU Store guide**](https://github.com/robertnisipeanu/mgu-store).
 
-To build locally: `python3 kit/tools/build.py <app_id>` writes `dist/<app_id>@<version>.tgz`. `node kit/tools/emu.js <app_id>` runs an app in the browser emulator, and `node kit/tools/preview.js dist/<app_id> <outDir>` renders it to PNGs.
+To build locally: `python3 kit/tools/build.py <app_id>` writes `dist/<app_id>@<version>.mgu` and `.tgz` (it needs `oap-sdk`, extracted from your own head unit with `kit/tools/extract_sdk.js`). `node kit/tools/emu.js <app_id>` runs an app in the browser emulator, and `node kit/tools/preview.js dist/<app_id> <outDir>` renders it to PNGs.
 
 ---
 
@@ -150,11 +151,12 @@ To build locally: `python3 kit/tools/build.py <app_id>` writes `dist/<app_id>@<v
 * **Verified TLS**: all requests that carry tokens or keys verify the server's certificate chain and hostname; only the head unit's possibly wrong clock is tolerated.
 * **Local data**: tokens (`spotify_auth.json`) and app state stay in each app's data folder on the head unit.
 * **Git protection**: auth, state and key files (`*_auth.json`, `*_state.json`, `*.key`, `*.pem`) are excluded in `.gitignore`, and the build never packages them.
-* **Tested**: `node kit/tools/test_carlink.js` runs the page library against the car modules (tampering, replays, foreign links, the relay's limits).
+* **Tested**: `node kit/tools/test_carlink.js` runs the page library against the car modules (tampering, replays, foreign links, the relay's limits); `node kit/tools/test_spotify.js` runs Spotify's client against a fake Web API, and `kit/tools/test_zh.js` / `test_zh.py` check the language builds.
 
 ---
 
 ## License
 
-This project is released under the GNU General Public License v3.0 or later.
+This project is released under the GNU General Public License v3.0 or later ([`LICENSE`](LICENSE)).
+It is built on [cauliflowermossgrape/idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps), released under the MIT License: its copyright and permission notice are kept in [`LICENSE.MIT`](LICENSE.MIT), and every app package carries both files. The renderer source in `kit/renderd` keeps its own licence files.
 Not affiliated with or endorsed by Bayerische Motoren Werke (BMW) AG.

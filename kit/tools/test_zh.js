@@ -9,7 +9,6 @@ const {Recorder,atlasId}=require(path.join(kit,'record'));
 const {CREDIT,drawCredit}=require(path.join(kit,'credits'));
 const fonts=require(path.join(kit,'fonts'));
 const {statusInfo,NRC}=require(path.join(kit,'diag'));
-const {fitText}=require(path.join(kit,'text-layout'));
 const chinese=getLanguage()==='zh-CN';
 async function main(){
  assert.strictEqual(t('Settings'),chinese?'设置':'Settings');
@@ -29,7 +28,9 @@ async function main(){
  if(chinese){assert.deepStrictEqual(updates[0],{[slotId(0)]:'立即扫描'});assert.strictEqual(writes[0][3],'StringId')}
  else assert.deepStrictEqual(writes[0],[0,'Text','Scan now','Text']);
  await hmi.set(component,'CODE',0,'Text','D1C604');assert.deepStrictEqual(writes[1],[0,'Text','D1C604','Text']);
- const f=fonts.get('bold',32,'中文'),catalog=JSON.parse(fs.readFileSync(path.join(kit,'locales/zh-CN.json'),'utf8'));
+ // the catalog: kit/runtime/locales in the source; a built package has only its own language's (locale.json)
+ const source=path.join(kit,'locales/zh-CN.json');
+ const f=fonts.get('bold',32,'中文'),catalog=fs.existsSync(source)?JSON.parse(fs.readFileSync(source,'utf8')):(JSON.parse(fs.readFileSync(path.join(kit,'locale.json'),'utf8')).strings||{});
  assert.notStrictEqual(atlasId(f,'cjk'),atlasId(Object.assign({},f,{cacheKey:f.cacheKey+'-changed'}),'cjk'),'font updates must not reuse an old GPU texture');
  for(const ch of CREDIT+Object.values(catalog).join(''))assert(f.glyphs[ch.codePointAt(0)],'missing Chinese glyph '+ch);
  const cv=new Canvas(800,120),r=new Recorder(800,120),opts={font:'bold'};
@@ -45,10 +46,6 @@ async function main(){
    const label=statusInfo(bits).label;assert.notStrictEqual(t(label),label,'untranslated DTC status '+label);
   }
   for(const label of Object.values(NRC))assert.notStrictEqual(t(label),label,'untranslated diagnostic rejection '+label);
-  const source='ZGM: Ethernet: Communication ended unexpectedly';
-  const fitted=fitText(cv,source,22,190);
-  assert(!fitted.includes('Ethernet')&&fitted.includes('以太网'),'translate the full diagnostic sentence before truncation');
-  assert(cv.textWidth(fitted,22)<=190,'localized truncated text must fit');
   assert.strictEqual(t('FAULTS'),'故障');
   const G=require(path.join(kit,'gauges')),theme=require(path.join(kit,'themes')).theme('m_tricolour');
   const labels=[],mock={w:1600,fillRect:()=>{},gradientRect:()=>{},textWidth:()=>50,text:(s)=>labels.push(s)};

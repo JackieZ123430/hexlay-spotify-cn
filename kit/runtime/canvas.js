@@ -73,6 +73,7 @@ class Canvas {
             let di = (py * this.w + x0) * 4;
             for (let px = x0; px < x1; px++, di += 4) {
                 const si = (sy + Math.min(sw - 1, ((px - x + 0.5) * fx) | 0)) * 4;
+                if (src[si + 3] === 0) continue;          // see-through (rounded corners): the page shows
                 d[di] = src[si]; d[di + 1] = src[si + 1]; d[di + 2] = src[si + 2]; d[di + 3] = 255;
             }
         }

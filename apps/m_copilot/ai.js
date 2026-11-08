@@ -14,7 +14,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const urlMod = require('url');
-const tlsDates = require('./tls_dates');
+const tlsDates = require('./kit/tls_dates');
 
 const CONFIG_PATH = path.join(__dirname, 'copilot_auth.json');
 

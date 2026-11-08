@@ -143,6 +143,8 @@ function listSheet(settings, title, opts) {
             if (st) { st.y += dy; st.drag = true; }
         },
         release() { const st = list.scroll[this.key()]; if (st) st.drag = false; },
+        /** the list is still gliding to where it should be (or a finger drags it): draw it again soon */
+        moving() { const st = list.scroll[this.key()]; return !!st && (st.drag || Math.abs(st.y - st.show) >= 0.5); },
         move(d) {
             this.controller = true;
             const n = this.rows().length;

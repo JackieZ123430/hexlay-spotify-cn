@@ -308,65 +308,73 @@ class SpotifyClient {
         this.initialFetch();
     }
 
-    _authPaths() {
-        return [
-            this.ctx && this.ctx.dataDir ? path.join(this.ctx.dataDir, 'spotify_auth.json') : null,
-            path.join(__dirname, 'spotify_auth.json')
-        ].filter(Boolean);
+    /**
+     * The login's one file: spotify_auth.json in the app's data folder (readable by the app only), with the
+     * pairing channel and key (cloud_pair.js). Without a data folder (a test, a bench run) next to the code.
+     */
+    _authPath() {
+        return this.ctx && this.ctx.dataDir ? path.join(this.ctx.dataDir, 'spotify_auth.json') : path.join(__dirname, 'spotify_auth.json');
     }
 
-    /* Merges the tokens into each spotify_auth.json, keeping what else it holds
-     * (the cloud pairing channel and secretKey), written atomically. */
+    /** Where Spotify before 1.0.23 also kept a copy of the login: next to the code (moved by _loadAuth). */
+    _legacyAuthPath() {
+        const p = path.join(__dirname, 'spotify_auth.json');
+        return p !== this._authPath() ? p : null;
+    }
+
+    /** Every place a login may be: a logout clears them all. */
+    _authPaths() {
+        return [this._authPath(), this._legacyAuthPath()].filter(Boolean);
+    }
+
+    /* Merges the tokens into spotify_auth.json, keeping what else it holds (the cloud pairing
+     * channel and secretKey), written atomically. */
     _persistAuth() {
-        this._authPaths().forEach(p => {
-            try {
-                updateAuthFile(p, (existing) => Object.assign(existing, {
-                    token: this.token,
-                    refreshToken: this.refreshToken,
-                    expiresAt: this.expiresAt,
-                    clientId: this.clientId,
-                    clientSecret: this.clientSecret,
-                    savedAt: new Date().toISOString()
-                }));
-                this.log.info('SpotifyClient: Saved auth tokens to ' + p);
-            } catch (e) {
-                this.log.warn('SpotifyClient: Could not save tokens to ' + p + ': ' + e.message);
-            }
-        });
+        const p = this._authPath();
+        try {
+            updateAuthFile(p, (existing) => Object.assign(existing, {
+                token: this.token,
+                refreshToken: this.refreshToken,
+                expiresAt: this.expiresAt,
+                clientId: this.clientId,
+                clientSecret: this.clientSecret,
+                savedAt: new Date().toISOString()
+            }));
+            this.log.info('SpotifyClient: Saved auth tokens to ' + p);
+            return true;
+        } catch (e) {
+            this.log.warn('SpotifyClient: Could not save tokens to ' + p + ': ' + e.message);
+            return false;
+        }
     }
 
     _loadAuth() {
-        try {
-            const dataPath = this.ctx && this.ctx.dataDir ? path.join(this.ctx.dataDir, 'spotify_auth.json') : null;
-            const localPath = path.join(__dirname, 'spotify_auth.json');
-
-            // Check dataPath first; if dataPath has no valid tokens, fall back to localPath
-            let configPath = null;
-            if (dataPath && fs.existsSync(dataPath)) {
-                try {
-                    const d = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
-                    if (d && (d.token || d.refreshToken)) configPath = dataPath;
-                } catch (e) {}
+        const read = (p) => {
+            try { return p && fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) || {} : null; } catch (e) { return null; }
+        };
+        const signedIn = (d) => !!(d && (d.token || d.refreshToken));
+        const main = this._authPath(), legacy = this._legacyAuthPath();
+        let data = read(main), from = main;
+        // an older version's copy next to the code, and none in the data folder: it moves there once
+        const old = legacy ? read(legacy) : null;
+        if (!signedIn(data) && signedIn(old)) { data = old; from = legacy; }
+        if (!signedIn(data)) return;
+        this.token = data.token;
+        this.refreshToken = data.refreshToken;
+        this.expiresAt = data.expiresAt || 0;
+        this.clientId = data.clientId;
+        this.clientSecret = data.clientSecret;
+        this._lastDeviceId = data.lastDeviceId || null;
+        this.isOnline = true;
+        this.log.info('Loaded Spotify auth token from ' + from);
+        if (from === legacy) {
+            if (data.lastDeviceId) { try { updateAuthFile(main, (ex) => { ex.lastDeviceId = data.lastDeviceId; return ex; }); } catch (e) { /* below */ } }
+            if (this._persistAuth()) {
+                try { fs.unlinkSync(legacy); this.log.info('SpotifyClient: moved the login from ' + legacy + ' to the data folder'); } catch (e) { /* read-only: left there */ }
             }
-            if (!configPath && fs.existsSync(localPath)) {
-                configPath = localPath;
-            }
-
-            if (configPath && fs.existsSync(configPath)) {
-                const data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-                if (data.token || data.refreshToken) {
-                    this.token = data.token;
-                    this.refreshToken = data.refreshToken;
-                    this.expiresAt = data.expiresAt || 0;
-                    this.clientId = data.clientId;
-                    this.clientSecret = data.clientSecret;
-                    this._lastDeviceId = data.lastDeviceId || null;
-                    this.isOnline = true;
-                    this.log.info('Loaded Spotify auth token from ' + configPath);
-                }
-            }
-        } catch (e) {
-            this.log.warn('Could not read auth: ' + e);
+        } else if (signedIn(old)) {
+            // the data folder has the login: a stale copy next to the code goes
+            try { fs.unlinkSync(legacy); } catch (e) { /* read-only: left there */ }
         }
     }
 

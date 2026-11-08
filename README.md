@@ -30,7 +30,7 @@ This repository is built on the open-source BMW iDrive 7 platform:
 
 | App | Version | Needs internet | Touches vehicle ECUs |
 | :--- | :---: | :---: | :--- |
-| [Spotify](#1-spotify-spotify) | 1.0.22 | Yes | No |
+| [Spotify](#1-spotify-spotify) | 1.0.23 | Yes | No |
 | [M-Copilot](#2-m-copilot-m_copilot) | 1.0.20 | Yes | No (reads driving signals, service list and fault memory) |
 
 > [!NOTE]
@@ -149,9 +149,9 @@ To build locally: `python3 kit/tools/build.py <app_id>` writes `dist/<app_id>@<v
 * **Keys on the phone**: the pages read the key from the QR link, remove it from the address bar at once, and keep it as a **non-extractable** WebCrypto key in the browser's IndexedDB: the pages can use it, but no script can read the key back out. [`docs/index.html`](https://hexlay.github.io/idrive7-custom-apps/) lists the cars a phone has (**My cars**) and scans QR codes in the page; only this site's own pairing links are accepted. The 8-character code shown on the car only finds a car the phone already has, so a code seen on the screen is no use to anyone else.
 * **Hardened pages**: a Content Security Policy limits where the pages may connect (`ntfy.sh`, and Spotify's token endpoint on the Spotify page) and load code from (this site only; the QR decoder is vendored in [`docs/vendor`](docs/vendor), not loaded from a CDN), no referrer is sent, and the pages refuse to run inside another site's frame. The Spotify login uses PKCE with a random verifier and a random `state` checked on return, so a login the page didn't start is never sent to a car.
 * **Verified TLS**: all requests that carry tokens or keys verify the server's certificate chain and hostname; only the head unit's possibly wrong clock is tolerated.
-* **Local data**: tokens (`spotify_auth.json`) and app state stay in each app's data folder on the head unit.
+* **Local data**: tokens (`spotify_auth.json`, `copilot_auth.json`) and app state stay in each app's data folder on the head unit, one copy each (readable by the app only); a copy an older version kept next to the app's code is moved there.
 * **Git protection**: auth, state and key files (`*_auth.json`, `*_state.json`, `*.key`, `*.pem`) are excluded in `.gitignore`, and the build never packages them.
-* **Tested**: `node kit/tools/test_carlink.js` runs the page library against the car modules (tampering, replays, foreign links, the relay's limits); `node kit/tools/test_spotify.js` runs Spotify's client against a fake Web API, and `kit/tools/test_zh.js` / `test_zh.py` check the language builds.
+* **Tested**: `node kit/tools/test_carlink.js` runs the page library against the car modules (tampering, replays, foreign links, the relay's limits); `node kit/tools/test_spotify.js` runs Spotify's client against a fake Web API, `test_spotify_auth.js` checks where it keeps the login, and `kit/tools/test_zh.js` / `test_zh.py` check the language builds.
 
 ---
 

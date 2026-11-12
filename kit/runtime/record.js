@@ -98,7 +98,7 @@ class Recorder {
     /** logical px the screen has below the app's page (display.js), 0 if none */
     get extra() { if (this._extra) this.extraUsed = true; return this._extra; }
     set extra(v) { this._extra = v || 0; }
-    reset() { this.n = 0; this._cnStamped = false; this.targets = []; this.scroll = false; this.extraUsed = false; if (this.layersUsed) this.layersUsed.clear(); this.atlases.clear(); this.ramps.clear(); this.images.clear(); return this; }
+    reset() { this.creditBounds = null; this.n = 0; this._cnStamped = false; this.targets = []; this.scroll = false; this.extraUsed = false; if (this.layersUsed) this.layersUsed.clear(); this.atlases.clear(); this.ramps.clear(); this.images.clear(); return this; }
     _grow(k) {
         if (this.n + k <= this.u.length) return;
         let len = this.u.length * 2;

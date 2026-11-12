@@ -1,5 +1,9 @@
 # BMW iDrive 7 (MGU) — Custom Apps Suite
 
+[English](README.md) · [简体中文 Spotify 指南](README.zh-CN.md)
+
+Build the optional Simplified Chinese Spotify UI with `python3 kit/tools/build.py --language zh-CN spotify` and your own `oap-sdk/`. Chinese translation by 小白151 (JackieZ123430).
+
 <p align="center">
   <b>Custom applications for BMW iDrive 7 (MGU High / Intel Atom A3960), drawn on the head unit's GPU (its renderer composites at 60 fps) and installed through the MGU Store.</b>
 </p>

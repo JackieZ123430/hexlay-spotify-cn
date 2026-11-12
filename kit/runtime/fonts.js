@@ -28,7 +28,13 @@ function family(name) {
 /** Smallest baked size >= requested (downscaling looks better), else largest. */
 function get(name, size, text) {
     // A shared CJK atlas avoids duplicating hundreds of glyphs in every numeric size.
-    if (text && /[\u3000-\u9fff\uff00-\uffef]/.test(text)) name = 'cjk';
+    if (text && /[\u3000-\u9fff\uff00-\uffef]/.test(text)) {
+        name = 'cjk';
+        const primary = family(name), titles = family('cjk-titles');
+        if (titles && (!primary || Array.from(text).some((ch) => !primary[0].glyphs[ch.codePointAt(0)]))) {
+            name = 'cjk-titles';
+        }
+    }
     // Georgian: its base family again with the Georgian letters added (kit/tools/bake_georgian.py),
     // bold from bold-ka and the rest from label-ka, so the Latin around it looks the same
     else if (text && GEORGIAN.test(text) && family(name === 'bold' ? 'bold-ka' : 'label-ka')) name = name === 'bold' ? 'bold-ka' : 'label-ka';

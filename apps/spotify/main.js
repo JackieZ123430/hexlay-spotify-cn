@@ -14,6 +14,13 @@
 const mgu = require('./kit/mgu');
 const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
+const { t: translate } = require('./kit/i18n');
+
+const MEDIA = { literal: true };
+const MEDIA_BOLD = { literal: true, font: 'bold' };
+function message(key, values) {
+    return translate(key).replace(/\{(\w+)\}/g, (_, name) => String(values[name]));
+}
 const { SpotifyClient } = require('./api');
 const { CloudPairManager } = require('./cloud_pair');
 const { AlbumArtManager, ART_IMG_ID } = require('./art');
@@ -295,7 +302,7 @@ function drawSpinnerBefore(cv, str, cx, y, size, col) {
 
 /** str cut (with "..") to fit maxW pixels at this size: room decides, not a character count. */
 function fitText(cv, str, maxW, size, opts) {
-    str = String(str || '');
+    str = opts && opts.literal ? String(str || '') : translate(str || '');
     if (!cv.textWidth || cv.textWidth(str, size, opts) <= maxW) return str;
     let lo = 0, hi = str.length;
     while (lo < hi) {
@@ -528,9 +535,9 @@ mgu.run({
             const tSize = sz(cv, 15), mSize = sz(cv, 12);
             const tY = dockY + dockH / 2 - 3, mY = tY + mSize + 6;
             if (curTrk) {
-                cv.text(fitText(cv, curTrk.title, dockTextW, tSize, { font: 'bold' }), textX, tY, tSize, isPlaying ? t.accent : t.text, { font: 'bold' });
+                cv.text(fitText(cv, curTrk.title, dockTextW, tSize, MEDIA_BOLD), textX, tY, tSize, isPlaying ? t.accent : t.text, MEDIA_BOLD);
                 const metaStr = curTrk.artist + (curTrk.album ? '  -  ' + curTrk.album : '');
-                cv.text(fitText(cv, metaStr, dockTextW, mSize), textX, mY, mSize, t.dim);
+                cv.text(fitText(cv, metaStr, dockTextW, mSize, MEDIA), textX, mY, mSize, t.dim, MEDIA);
             } else {
                 cv.text('No Track Playing', textX, tY, tSize, t.dim, { font: 'bold' });
                 cv.text(fitText(cv, 'Select any song from Playlists or Liked Songs to begin', dockTextW, mSize), textX, mY, mSize, t.dim);
@@ -619,9 +626,9 @@ mgu.run({
             const timeR = o.playing ? tagX - 14 : x + w - 22;
             const metaX = x + Math.round(w * (o.heart ? 0.42 : 0.36));
             const metaR = timeR - sz(cv, 48);
-            cv.text(fitText(cv, trk.title, metaX - 18 - tx, m.title, { font: 'bold' }), tx, base(m.title), m.title, o.playing ? t.accent : t.text, { font: 'bold' });
+            cv.text(fitText(cv, trk.title, metaX - 18 - tx, m.title, MEDIA_BOLD), tx, base(m.title), m.title, o.playing ? t.accent : t.text, MEDIA_BOLD);
             const metaText = trk.artist + (trk.album ? '  -  ' + trk.album : '');
-            cv.text(fitText(cv, metaText, metaR - metaX, m.meta), metaX, base(m.meta), m.meta, t.dim);
+            cv.text(fitText(cv, metaText, metaR - metaX, m.meta, MEDIA), metaX, base(m.meta), m.meta, t.dim, MEDIA);
             cv.text(fmtTime(trk.durationMs), timeR, base(m.num), m.num, t.dim, { align: 'right', font: 'num' });
             if (o.playing) {
                 const ts = sz(cv, 9.5);
@@ -678,7 +685,7 @@ mgu.run({
             cv.scroll = true;
 
             // Left Pane: Playlists (w: 500)
-            const plTitle = 'Your Playlists (' + (selectedPlaylistIdx + 1) + '/' + playlists.length + ')';
+            const plTitle = message('Your Playlists ({selected}/{total})', { selected: selectedPlaylistIdx + 1, total: playlists.length });
             G.panelExact(cv, t, 24, 44, 500, m.panelH, plTitle);
 
             // Left Pane Scrollbar
@@ -707,8 +714,8 @@ mgu.run({
                 const plTextW = (isPlPlaying ? 452 : 486) - 62;     // up to the equalizer, or the row's end
                 const nSize = sz(cv, 17), dSize = sz(cv, 12.5);
                 const nY = py + ph / 2 - (ph * 0.06), dY = nY + dSize + ph * 0.14;
-                cv.text(fitText(cv, pl.name, plTextW, nSize, { font: 'bold' }), 62, nY, nSize, isSel ? t.text : '#e0e0e0', { font: 'bold' });
-                cv.text(fitText(cv, (pl.trackCount || 0) + ' songs  -  ' + (pl.description || 'Playlist'), plTextW, dSize), 62, dY, dSize, t.dim);
+                cv.text(fitText(cv, pl.name, plTextW, nSize, MEDIA_BOLD), 62, nY, nSize, isSel ? t.text : '#e0e0e0', MEDIA_BOLD);
+                cv.text(fitText(cv, message('{count} songs', { count: pl.trackCount || 0 }) + '  -  ' + (pl.description || translate('Playlist')), plTextW, dSize, MEDIA), 62, dY, dSize, t.dim, MEDIA);
 
                 if (isPlPlaying) {
                     drawMiniEqualizer(cv, 470, py + ph / 2, t.accent, spotify.isPlaying, spectrumSeed);
@@ -727,7 +734,7 @@ mgu.run({
             const ctxHere = !spotify.contextUri || !/:playlist:/.test(spotify.contextUri) || playingFrom(curPl);
             const trackTotal = curPl.trackCount || (curPl.tracks ? curPl.tracks.length : 0);
 
-            G.panelExact(cv, t, 540, 44, 1036, metrics(cv).panelH, fitText(cv, curPl.name, 760, 26, { font: 'bold' }) + ' (' + trackTotal + ' tracks)');
+            G.panelExact(cv, t, 540, 44, 1036, metrics(cv).panelH, fitText(cv, curPl.name, 760, 26, MEDIA_BOLD) + ' (' + message('{count} tracks', { count: trackTotal }) + ')', MEDIA);
 
             // the songs of the playlist shown: fetched (and retried) from here, whatever selected it
             spotify.ensureTracks(curPl);
@@ -759,7 +766,7 @@ mgu.run({
                 const visibleTracks = curPl.tracks.slice(trackScroll, trackScroll + VISIBLE_TRK);
                 if (moreTrk && trackScroll + VISIBLE_TRK > curPl.tracks.length) {
                     drawLoadingRow(cv, t, 556, m.listTop + (curPl.tracks.length - trackScroll) * m.songStep, 980,
-                        'Loading more songs (' + curPl.tracks.length + ' of ' + (curPl._total || trackTotal) + ')...', m.songH);
+                        message('Loading more songs ({loaded} of {total})...', { loaded: curPl.tracks.length, total: curPl._total || trackTotal }), m.songH);
                 }
 
                 visibleTracks.forEach((trk, vIdx) => {
@@ -802,7 +809,7 @@ mgu.run({
             cv.scroll = true;
             const startIdx = total > 0 ? likedScroll + 1 : 0;
             const endIdx = Math.min(likedScroll + VISIBLE_LIKED, liked.length, total);
-            const title = 'Liked Songs (' + (total > 0 ? (startIdx + '-' + endIdx + ' of ' + total) : '0') + ' tracks)';
+            const title = message('Liked Songs ({range})', { range: total > 0 ? message('{start}-{end} of {total} tracks', { start: startIdx, end: endIdx, total }) : translate('0 tracks') });
 
             G.panelExact(cv, t, 24, 44, 1552, m.panelH, title);
 
@@ -827,7 +834,7 @@ mgu.run({
             const visible = liked.slice(likedScroll, likedScroll + VISIBLE_LIKED);
             if (moreLiked && likedScroll + VISIBLE_LIKED > liked.length) {
                 drawLoadingRow(cv, t, 40, m.listTop + (liked.length - likedScroll) * m.songStep, 1500,
-                    'Loading more liked songs (' + liked.length + ' of ' + total + ')...', m.songH);
+                    message('Loading more liked songs ({loaded} of {total})...', { loaded: liked.length, total }), m.songH);
             }
             visible.forEach((trk, vIdx) => {
                 const realIdx = likedScroll + vIdx;
@@ -893,11 +900,11 @@ mgu.run({
                 const devY = 106, titleY = devY + devH + 14 + tSize, artistY = titleY + aSize + 14, albumY = artistY + alSize + 12;
 
                 // where it plays: a pill as wide as its text, a live dot when music plays
-                const devOpts = { font: 'bold', spacing: 1 };
-                const devName = spotify.activeDevice ? spotify.activeDevice.toUpperCase() : '';
+                const devOpts = { font: 'bold', spacing: 1, literal: true };
+                const devName = spotify.activeDevice || '';
                 const devLabel = !devName ? 'SPOTIFY CONNECT'
-                    : spotify.stalled ? devName + '  -  NOT RESPONDING'
-                    : (isPlaying ? 'PLAYING ON  ' : 'PAUSED ON  ') + devName;
+                    : spotify.stalled ? devName + '  -  ' + translate('NOT RESPONDING')
+                    : translate(isPlaying ? 'PLAYING ON  ' : 'PAUSED ON  ') + devName;
                 const devText = fitText(cv, devLabel, metaW - 20 - devH * 1.5, devSize, devOpts);
                 const devW = cv.textWidth(devText, devSize, devOpts) + devH * 1.5 + 14;
                 cv.roundRect(metaX, devY, devW, devH, devH / 2, withAlpha(t.accent, 0.16));
@@ -905,10 +912,10 @@ mgu.run({
                 cv.text(devText, metaX + devH * 1.1, devY + devH / 2 + devSize * 0.36, devSize, t.accent, devOpts);
 
                 // Title, artist, album: cut only where the panel ends
-                cv.text(fitText(cv, curTrk.title, metaW, tSize, { font: 'bold' }), metaX, titleY, tSize, t.text, { font: 'bold' });
-                cv.text(fitText(cv, curTrk.artist, metaW, aSize), metaX, artistY, aSize, '#d4d8de');
+                cv.text(fitText(cv, curTrk.title, metaW, tSize, MEDIA_BOLD), metaX, titleY, tSize, t.text, MEDIA_BOLD);
+                cv.text(fitText(cv, curTrk.artist, metaW, aSize, MEDIA), metaX, artistY, aSize, '#d4d8de', MEDIA);
                 if (curTrk.album) {
-                    cv.text(fitText(cv, curTrk.album, metaW, alSize), metaX, albumY, alSize, t.dim);
+                    cv.text(fitText(cv, curTrk.album, metaW, alSize, MEDIA), metaX, albumY, alSize, t.dim, MEDIA);
                 }
 
                 // what it plays from: the playlist, Liked Songs or the album
@@ -923,7 +930,7 @@ mgu.run({
                 if (fromKind) {
                     const fkSize = sz(cv, 9.5), fnSize = sz(cv, 14), fkY = albumY + 22 + fkSize;
                     cv.text('PLAYING FROM ' + fromKind, metaX, fkY, fkSize, t.dim, { font: 'bold', spacing: 1.5 });
-                    if (fromName) cv.text(fitText(cv, fromName, metaW, fnSize, { font: 'bold' }), metaX, fkY + fnSize + 8, fnSize, t.text, { font: 'bold' });
+                    if (fromName) cv.text(fitText(cv, fromName, metaW, fnSize, MEDIA_BOLD), metaX, fkY + fnSize + 8, fnSize, t.text, MEDIA_BOLD);
                 }
 
                 // Progress Bar
@@ -1040,9 +1047,9 @@ mgu.run({
                 cv.roundRect(938, qy, 620, qH, 8, t.track);
                 cv.text(String(queueScroll + idx + 1), 938 + sz(cv, 16), base(m.num), m.num, t.dim, { align: 'center', font: 'num' });
                 const titleX = 938 + sz(cv, 36), artistX = 1250;
-                cv.text(fitText(cv, trk.title, artistX - 14 - titleX, m.title, { font: 'bold' }), titleX, base(m.title), m.title, t.text, { font: 'bold' });
+                cv.text(fitText(cv, trk.title, artistX - 14 - titleX, m.title, MEDIA_BOLD), titleX, base(m.title), m.title, t.text, MEDIA_BOLD);
                 const timeR = 1540;
-                cv.text(fitText(cv, trk.artist, timeR - sz(cv, 44) - artistX, m.meta), artistX, base(m.meta), m.meta, t.dim);
+                cv.text(fitText(cv, trk.artist, timeR - sz(cv, 44) - artistX, m.meta, MEDIA), artistX, base(m.meta), m.meta, t.dim, MEDIA);
                 const startKey = 'q:' + trk.id;
                 if (busyOn('start', startKey)) drawSpinner(cv, timeR - 10, qc, sz(cv, 7), t.accent);
                 else cv.text(fmtTime(trk.durationMs), timeR, base(m.num), m.num, t.dim, { align: 'right', font: 'num' });
@@ -1081,17 +1088,17 @@ mgu.run({
                 cv.text('CONNECTED TO SPOTIFY', cx, 202, 20, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
                 const prof = spotify.profile;
                 const plan = prof && prof.product ? prof.product.charAt(0).toUpperCase() + prof.product.slice(1) : '';
-                cv.text(prof ? fitText(cv, prof.name + (plan ? '  -  ' + plan : ''), 480, 16) : 'Signed in', cx, 226, 16, '#cbd5e1', { align: 'center' });
+                cv.text(prof ? fitText(cv, prof.name + (plan ? '  -  ' + plan : ''), 480, 16, MEDIA) : translate('Signed in'), cx, 226, 16, '#cbd5e1', { align: 'center', literal: true });
 
                 // where the music plays: a pill with a live dot, or how to start
                 const pillW = 380, pillX = cx - pillW / 2, pillY = 240, pillH = 32;
                 if (spotify.activeDevice) {
                     cv.roundRect(pillX, pillY, pillW, pillH, 16, withAlpha(GREEN, 0.14));
-                    const label = fitText(cv, 'Playing on ' + spotify.activeDevice, pillW - 50, 15, { font: 'bold' });
-                    const lw = cv.textWidth(label, 15, { font: 'bold' });
+                    const label = fitText(cv, translate('Playing on ') + spotify.activeDevice, pillW - 50, 15, MEDIA_BOLD);
+                    const lw = cv.textWidth(label, 15, MEDIA_BOLD);
                     const lx = cx - (lw + 18) / 2;
                     cv.circle(lx + 5, pillY + pillH / 2, 5, spotify.isPlaying ? GREEN : withAlpha(GREEN, 0.5));
-                    cv.text(label, lx + 18, pillY + 21, 15, GREEN, { font: 'bold' });
+                    cv.text(label, lx + 18, pillY + 21, 15, GREEN, MEDIA_BOLD);
                 } else {
                     cv.roundRect(pillX, pillY, pillW, pillH, 16, withAlpha('#ffffff', 0.06));
                     cv.text(fitText(cv, 'No device playing - open Spotify on your phone', pillW - 24, 14), cx, pillY + 21, 14, '#94a3b8', { align: 'center' });
@@ -1100,7 +1107,7 @@ mgu.run({
                 // the library at a glance
                 const nPl = (spotify.playlists || []).length;
                 const nLiked = spotify.likedTotal || (spotify.likedSongs || []).length;
-                cv.text(nPl + ' playlist' + (nPl === 1 ? '' : 's') + '   |   ' + nLiked + ' liked song' + (nLiked === 1 ? '' : 's'), cx, 294, 14, '#64748b', { align: 'center' });
+                cv.text(message(nPl === 1 ? '{count} playlist' : '{count} playlists', { count: nPl }) + '   |   ' + message(nLiked === 1 ? '{count} liked song' : '{count} liked songs', { count: nLiked }), cx, 294, 14, '#64748b', { align: 'center' });
 
                 // disconnecting or switching account is the phone's: the car follows it live. The
                 // phone page's QR code puts this car on a phone again (a new phone, cleared browser)
@@ -1199,7 +1206,7 @@ mgu.run({
                     // the action: where it plays, or "play here"
                     const bw = sz(cv, 104), bh = sz(cv, 30), bx = 644 + 908 - 20 - bw, by = mid - bh / 2;
                     const textX = iconX + iconR + 18;
-                    cv.text(fitText(cv, dev.name, bx - 20 - textX, nSize, { font: 'bold' }), textX, mid - 4, nSize, isCur ? t.text : '#dddddd', { font: 'bold' });
+                    cv.text(fitText(cv, dev.name, bx - 20 - textX, nSize, MEDIA_BOLD), textX, mid - 4, nSize, isCur ? t.text : '#dddddd', MEDIA_BOLD);
                     const vol = typeof dev.volume === 'number' ? '  |  Volume ' + dev.volume + '%' : '';
                     cv.text(fitText(cv, (isCur ? (spotify.isPlaying ? 'Playing now' : 'Paused here') : dev.type) + vol, bx - 20 - textX, sSize), textX, mid + sSize + 4, sSize, isCur ? t.accent : t.dim);
                     const bBase = by + bh / 2 + bSize * 0.36;
@@ -1303,7 +1310,7 @@ mgu.run({
 
             // G20 Live Cockpit frame tabs along the top: keep badges compact so tabs & Settings are never crowded out
             G.frame(cv, t, PAGES, page, [
-                { text: spotify.activeDevice ? trunc(spotify.activeDevice, 28) : 'SPOTIFY' },
+                { text: spotify.activeDevice ? trunc(spotify.activeDevice, 28) : 'SPOTIFY', literal: !!spotify.activeDevice },
                 spotify.stalled
                     ? { text: 'NOT RESPONDING', color: '#ffb703' }
                     : { text: spotify.isPlaying ? 'PLAYING' : 'PAUSED', color: spotify.isPlaying ? '#1ed760' : t.dim }

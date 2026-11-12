@@ -193,7 +193,7 @@ def build_ui(spec, language='en'):
         # Chinese builds only: credit for the Chinese translation (localize.py sets the Chinese title)
         if language == 'zh-CN':
             credit_title, credit_link = sid(app, 'CN_CREDITS_TITLE'), sid(app, 'CN_CREDITS_LINK')
-            strings[credit_title], strings[credit_link] = zh_credit()['settingsTitle'], zh_credit()['settingsLink']
+            strings[credit_title], strings[credit_link] = zh_credit(app)['settingsTitle'], zh_credit(app)['settingsLink']
             items.append(comp('tworow', 'CN_CREDITS', rows=[{
                 'Text1stRow': {'value': credit_title, 'type': 'StringId'},
                 'Text2ndRow': {'value': credit_link, 'type': 'StringId'},
@@ -452,7 +452,7 @@ def build(app_id, language='en'):
     for k, why in sorted(unit_missing.items()):
         print('  this unit: %s - %s' % (k, why))
     xml, uidesc, strings, state_ids = build_ui(spec, language)
-    unicode_resources(uidesc, strings, language)
+    unicode_resources(uidesc, strings, language, app_id)
     for lang, tbl in spec.get('strings', {}).items():
         strings.update(tbl)
 
@@ -515,10 +515,14 @@ def build(app_id, language='en'):
     for f in ('LICENSE', 'LICENSE.MIT'):
         if os.path.exists(os.path.join(ROOT, f)):     # (a store that fetched only the older shared list)
             shutil.copy(os.path.join(ROOT, f), os.path.join(src, f))
+    if language == 'zh-CN' and app_id == 'spotify':
+        for source, target in (('spotify-zh-CN.json', 'cjk.json'), ('cjk-titles.json', 'cjk-titles.json')):
+            shutil.copy(os.path.join(KIT, 'localization', 'fonts', source),
+                        os.path.join(src, 'javascript', 'kit', 'fonts', target))
     if language == 'zh-CN':
         # The translation credit in the installed Chinese entry code, as plain comments.
         entry = os.path.join(src, 'javascript', 'app.js')
-        credit = ''.join('// %s\n' % line for line in zh_credit()['comment'])
+        credit = ''.join('// %s\n' % line for line in zh_credit(app_id)['comment'])
         with open(entry, 'rb') as file:
             body = file.read()
         with open(entry, 'wb') as file:
@@ -527,9 +531,9 @@ def build(app_id, language='en'):
     rt_spec['mguInternet'] = bool(spec.get('mguInternet') or spec.get('internet'))
     rt_spec['stateIds'] = state_ids
     json.dump(rt_spec, open(os.path.join(src, 'javascript', 'kit', 'app-spec.json'), 'w', encoding='utf-8', newline='\n'), indent=1)
-    locale = {'language': language, 'strings': load_locale(language)}
+    locale = {'language': language, 'strings': load_locale(language, app_id)}
     if language == 'zh-CN':
-        locale['credit'] = zh_credit()['corner']
+        locale['credit'] = zh_credit(app_id)['corner']
     json.dump(locale, open(os.path.join(src, 'javascript', 'kit', 'locale.json'), 'w', encoding='utf-8', newline='\n'), ensure_ascii=False)
     if unit_missing:   # logged by kit/runtime/mgu.js when the app starts
         json.dump(unit_missing, open(os.path.join(src, 'javascript', 'kit', 'missing-interfaces.json'), 'w', encoding='utf-8', newline='\n'), indent=1)

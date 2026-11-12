@@ -122,9 +122,10 @@ function panel(cv, t, x, y, w, h, title) { return box(cv, t, x, y, w, stretch(cv
  * (cv.extra: display.js). (read only then: a page whose panels all end higher up is centred in the room instead)
  */
 function stretch(cv, y, h) { return y + h >= 500 && cv.extra ? h + cv.extra : h; }
-function box(cv, t, x, y, w, h, title) {
+function box(cv, t, x, y, w, h, title, options) {
     x = Math.round(x); y = Math.round(y); w = Math.round(w); h = Math.round(h);
-    const L = layer(['panel', w, h, title || '', t.name].join('|'), w, h, (c) => drawPanel(c, t, 0, 0, w, h, title), cv.textScale);
+    const literal = !!(options && options.literal);
+    const L = layer(['panel', w, h, title || '', t.name, literal].join('|'), w, h, (c) => drawPanel(c, t, 0, 0, w, h, title, literal), cv.textScale);
     cv.blit(L, x, y);
     return { x, y, w, h };
 }
@@ -140,7 +141,7 @@ const MARGIN = 22;
  * so it ends MARGIN over the panel's real bottom, room px lower (G.panel's stretch: cv.extra, else 0).
  */
 function toMargin(room, m) { return room + m - MARGIN; }
-function drawPanel(cv, t, x, y, w, h, title) {
+function drawPanel(cv, t, x, y, w, h, title, literal) {
     // flat light grey overlay; top: a short bold bar in the theme's stripe colours (M tricolour:
     // light blue, dark blue, red; the last part with an angled end), then a thin white line;
     // large white title in normal case
@@ -152,7 +153,7 @@ function drawPanel(cv, t, x, y, w, h, title) {
         else cv.fillRect(sx, y, sw, 5, c);
     });
     cv.fillRect(x + BW + 2, y + 2, w - BW - 2, 1.5, withAlpha('#ffffff', 0.9));
-    if (title) cv.text(String(title), x + 18, y + 42, 26, t.text, { font: 'bold' });
+    if (title) cv.text(String(title), x + 18, y + 42, 26, t.text, { font: 'bold', literal });
 }
 
 /* ---------------- radial dial ---------------- */
@@ -679,7 +680,7 @@ function frame(cv, t, tabs, sel, badges) {
     const opt = { align: 'center', font: 'bold', spacing: 1.5 };
     const live = (badges || []).filter(Boolean);
     const labels = (tabs || []).map((n) => upperText(n));
-    const badgesW = live.reduce((a, b) => a + Math.max(24 * 3.5, cv.textWidth(b.text, 18, opt) + 24) + 24 * 0.4, 0);
+    const badgesW = live.reduce((a, b) => a + Math.max(24 * 3.5, cv.textWidth(b.text, 18, Object.assign({}, opt, { literal: b.literal })) + 24) + 24 * 0.4, 0);
     const widths = tabWidths(cv, labels, 20, opt, 150, 48, W - 32 - badgesW, 20);
     let x = 16;
     cv.tabRects = [];
@@ -694,7 +695,8 @@ function frame(cv, t, tabs, sel, badges) {
         if (i < tabs.length - 1) cv.fillRect(x + tw, 9, 1, BAR_H - 18, withAlpha('#ffffff', 0.12));
         x += tw;
     });
-    badgeRow(cv, t, W - 16, 6, 24, 18, (badges || []).filter(Boolean));
+    const badgeLeft = badgeRow(cv, t, W - 16, 6, 24, 18, live);
+    cv.creditBounds = { left: x + 8, right: badgeLeft - 12 };
 }
 
 /** Badges right-aligned at xr (right edge), top y, height h, text size. Returns the left edge. */
@@ -702,9 +704,10 @@ function badgeRow(cv, t, xr, y, h, size, badges) {
     const opt = { align: 'center', font: 'bold', spacing: 1.5 };
     let bx = xr;
     badges.forEach((b) => {
-        const bw = Math.max(h * 3.5, cv.textWidth(b.text, size, opt) + h), c = t[b.color] || b.color || t.warn;
+        const textOptions = Object.assign({}, opt, { literal: b.literal });
+        const bw = Math.max(h * 3.5, cv.textWidth(b.text, size, textOptions) + h), c = t[b.color] || b.color || t.warn;
         cv.roundRect(bx - bw, y, bw, h, h * 0.2, withAlpha(c, 0.2));
-        cv.text(b.text, bx - bw / 2, y + h / 2 + size * 0.36, size, c, opt);
+        cv.text(b.text, bx - bw / 2, y + h / 2 + size * 0.36, size, c, textOptions);
         bx -= bw + h * 0.4;
     });
     return bx;
@@ -757,7 +760,7 @@ function headerCompact(cv, t, x, y, w, h, title, tabs, sel, badges, k) {
     const bopt = { align: 'center', font: 'bold', spacing: 1.5 };
     const names = (tabs || []).map((n) => upperText(n));
     const bz = Math.min(z, 1.15), bh = Math.round(30 * bz), bsize = Math.round(17 * bz);
-    const bws = (badges || []).map((b) => Math.max(bh * 3.5, cv.textWidth(b.text, bsize, bopt) + bh));
+    const bws = (badges || []).map((b) => Math.max(bh * 3.5, cv.textWidth(b.text, bsize, Object.assign({}, bopt, { literal: b.literal })) + bh));
     const badgesW = bws.reduce((a, b) => a + b + bh * 0.4, 0);
     const tsize = 32, titleW = title ? cv.textWidth(title, tsize) : 0;
     const room = w - 20 - (badgesW ? badgesW + 12 : 0);

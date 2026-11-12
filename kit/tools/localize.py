@@ -8,19 +8,24 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 LOCALES = ROOT / 'kit/runtime/locales'
 
 
-def zh_credit():
+def zh_credit(app_id=None):
     """The translation credit (corner, settings rows, entry comment): Chinese (zh-CN) builds only."""
-    return json.loads((ROOT / 'kit/localization/credit.zh-CN.json').read_text(encoding='utf-8'))
+    path = ROOT / 'kit/localization'
+    name = 'credit.spotify.zh-CN.json' if app_id == 'spotify' else 'credit.zh-CN.json'
+    return json.loads((path / name).read_text(encoding='utf-8'))
 
 
 def languages():
     return ['en'] + sorted(p.stem for p in LOCALES.glob('*.json') if p.stem != 'en')
 
 
-def load_locale(language):
+def load_locale(language, app_id=None):
     if language not in languages():
         raise ValueError('Unknown language: ' + language)
-    return {} if language == 'en' else json.loads((LOCALES / (language + '.json')).read_text(encoding='utf-8'))
+    if language == 'en':
+        return {}
+    path = ROOT / 'apps/spotify/zh-CN.json' if language == 'zh-CN' and app_id == 'spotify' else LOCALES / (language + '.json')
+    return json.loads(path.read_text(encoding='utf-8'))
 
 
 def text(value, words):
@@ -28,16 +33,19 @@ def text(value, words):
     return words.get(s, s).replace(' (default)', ' ' + words.get('(default)', '(default)'))
 
 
-def package_version(version, language):
+def package_version(version, language, app_id=None):
     revisions = json.loads((Path(__file__).parent / 'locale-revisions.json').read_text(encoding='utf-8'))
-    return version if language == 'en' else version + '-' + language.lower().replace('-', '.') + '.' + str(revisions.get(language, 1))
+    revision = revisions.get('%s:%s' % (app_id, language), revisions.get(language, 1))
+    return version if language == 'en' else version + '-' + language.lower().replace('-', '.') + '.' + str(revision)
 
 
 def localize_spec(spec, language):
-    words = load_locale(language)
+    words = load_locale(language, spec.get('id'))
     s = copy.deepcopy(spec)
-    s['version'] = package_version(s['version'], language)
+    s['version'] = package_version(s['version'], language, spec.get('id'))
     s['title'] = text(s['title'], words)
+    if language != 'en' and 'description' in s:
+        s['description'] = text(s['description'], words)
     for screen in s.get('screens', []):
         if 'title' in screen:
             screen['title'] = text(screen['title'], words)
@@ -53,9 +61,9 @@ def localize_spec(spec, language):
     return s
 
 
-def unicode_resources(ui, strings, language='en'):
+def unicode_resources(ui, strings, language='en', app_id=None):
     """Localize static resources; give initial Text cells stable Unicode StringIds."""
-    words = load_locale(language)
+    words = load_locale(language, app_id)
     counter = [0]
 
     def visit(obj):
@@ -77,7 +85,7 @@ def unicode_resources(ui, strings, language='en'):
     for key in strings:
         strings[key] = text(strings[key], words)
         if language == 'zh-CN' and key.endswith('_CN_CREDITS_TITLE'):
-            strings[key] = zh_credit()['settingsTitle']
+            strings[key] = zh_credit(app_id)['settingsTitle']
     for n in range(256):
         strings['SID_CN_DYNAMIC_%04d' % n] = ''
     if len(strings) > 1024:

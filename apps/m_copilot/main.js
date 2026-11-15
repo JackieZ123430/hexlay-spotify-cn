@@ -531,7 +531,13 @@ mgu.run({
          * Read the fault memory of every control unit (UDS 0x19 02 0C over TASU, read-only) so the AI
          * talks about real stored faults. Kept for 5 minutes.
          */
-        async function scanFaults() {
+        // one fault memory read at a time: a question asked while one runs (after a Cancel) waits for it
+        let faultScan = null;
+        function scanFaults() {
+            if (!faultScan) { const done = () => { faultScan = null; }; faultScan = readFaults(); faultScan.then(done, done); }
+            return faultScan;
+        }
+        async function readFaults() {
             const ccNow = JSON.stringify(telemetry.checkControl || []);
             if (telemetry.dtcScan && !telemetry.dtcScan.error && !telemetry.dtcScan.partial && telemetry.dtcScan.cc === ccNow
                 && Date.now() - telemetry.dtcScan.at < 5 * 60 * 1000) return;
@@ -585,8 +591,23 @@ mgu.run({
             { title: 'Safe to keep driving?', query: 'Is it safe to keep driving the car normally as it is now? Say what to watch for.' },
             { title: 'Explain more', query: 'Explain that in more detail for my car.' },
         ];
+        /**
+         * Cancel (the button under a pending answer): the answer is dropped, the request to the AI closed,
+         * and what was still being read for it (fault memory, engine computer) stops after its current step.
+         * A new question can be asked at once.
+         */
+        function cancelAnswer() {
+            if (!isThinking) return;
+            askSeq++;
+            ai.cancel();
+            setThinking(false);
+            canFollowUp = false;
+            currentResponse = 'Cancelled. Choose a topic or ask your own question.';
+            notify('Answer cancelled.');
+            render(true).catch(() => {});
+        }
         async function askCopilot(queryText, title, opts) {
-            if (isThinking) { notify('M-Copilot is still answering...'); return; }
+            if (isThinking) { notify('M-Copilot is still answering: Cancel stops it.'); return; }
             if (!ai.hasInternet) {
                 notify('No Internet: Please verify phone hotspot or cellular uplink.');
                 return;
@@ -603,12 +624,16 @@ mgu.run({
             const seq = ++askSeq;
             setThinking(true);
             currentResponse = 'Asking M-Copilot with your car\'s live data...';
+            const gone = () => seq !== askSeq;          // cancelled (or a newer question): stop here
             try {
                 // who the car is (once per car), then the fault memory for the topics and questions about it
                 await identifyCar();
+                if (gone()) return;
                 if ((opts && opts.faults) || /\b(fault|dtc|error code|check engine|warning light|engine light)/i.test(queryText)) await scanFaults();
+                if (gone()) return;
                 // the engine unit's own values at the moment of asking (a few hundred ms once known)
                 await engineSnapshot();
+                if (gone()) return;
                 // the latest live values at the moment of asking (not demo data: onCarSample drops those)
                 if (car) onCarSample(car.data());
                 // demo switched on by hand (emulator, bench): the simulator's readings, labelled as such.
@@ -622,7 +647,7 @@ mgu.run({
                 const t = d && d.demo && settings.get('demo') === 'on' ? simulated(d) : telemetry;
                 ai.lastOk = false;
                 const answer = await ai.ask(queryText, t, { fresh: !!(opts && opts.fresh) });
-                if (seq === askSeq) { currentResponse = answer; canFollowUp = !!ai.lastOk; }
+                if (seq === askSeq && answer !== null) { currentResponse = answer; canFollowUp = !!ai.lastOk; }
             } catch (e) {
                 if (seq === askSeq) currentResponse = 'Error: ' + e.message;
             } finally {
@@ -1056,6 +1081,8 @@ mgu.run({
 
             // follow-up questions along the bottom after a real answer
             const chips = canFollowUp && !isThinking, chipH = sz(cv, 32), chipY = ry + rh - chipH - 12, chipSize = sz(cv, 12.5);
+            // while it answers: Cancel, where the follow-ups go (touch or the controller's focus)
+            if (isThinking) drawButton(cv, t, rx + 8, chipY, cv.textWidth('Cancel', chipSize) + sz(cv, 44), chipH, 'Cancel', 'cancel_answer', cancelAnswer, { size: chipSize });
             if (chips) {
                 let cx = rx + 8;
                 FOLLOW_UPS.forEach((f, i) => {
@@ -1072,7 +1099,8 @@ mgu.run({
             const shown = isThinking ? currentResponse + '  ' + Math.floor((Date.now() - thinkStart) / 1000) + ' s' : currentResponse;
             // (about 0.42 em a character in the label font: the card's width, a little to spare)
             const lines = wrapLines(shown, Math.floor((rw - 64) / (size * 0.42)));
-            const maxVisibleLines = Math.floor((rh - 24 - (chips ? chipH + 18 : 0)) / lineH);
+            const bar = chips || isThinking;        // a row of buttons under the text
+            const maxVisibleLines = Math.floor((rh - 24 - (bar ? chipH + 18 : 0)) / lineH);
             dialogueRows = { count: lines.length, visible: maxVisibleLines };
             cv.scroll = true;
             const maxScroll = Math.max(0, lines.length - maxVisibleLines);
@@ -1093,13 +1121,13 @@ mgu.run({
 
             // Scrollbar & Page indicator when content exceeds the page
             if (lines.length > maxVisibleLines) {
-                const sbX = rx + rw - 6, sbY = ry + 4, sbH = (chips ? chipY - ry - 6 : rh) - 36;
+                const sbX = rx + rw - 6, sbY = ry + 4, sbH = (bar ? chipY - ry - 6 : rh) - 36;
                 G.scrollbar(cv, t, sbX, sbY, sbH, lines.length, maxVisibleLines, dialogueScroll);
 
                 // Page indicator
                 const curPage = Math.floor(dialogueScroll / maxVisibleLines) + 1;
                 const totPages = Math.ceil(lines.length / maxVisibleLines);
-                const textH = chips ? chipY - ry - 6 : rh;
+                const textH = bar ? chipY - ry - 6 : rh;
                 cv.text(curPage + ' / ' + totPages, rx + rw - 18, ry + textH - 10, 12, faint(t), { align: 'right', font: 'num' });
 
                 // Touch targets to scroll

@@ -45,6 +45,8 @@ class AiBridge {
         this.isCheckingInternet = false;
         this.agent = tlsDates.agent();      // reused connections: no TLS handshake per question
         this.history = [];                  // [{ q, a }], the last exchanges (follow-up questions)
+        this.inflight = new Set();          // the requests waiting for an answer: cancel() ends them
+        this.cancelGen = 0;                 // bumped by cancel(): an ask() from before it gives up
         this.historyAt = 0;
 
         this.checkInternetConnection().catch(() => {});
@@ -465,9 +467,23 @@ class AiBridge {
         this.historyAt = Date.now();
     }
 
-    /** Ask with the car's current state. Resolves with the answer text (errors as readable text). */
+    /**
+     * The driver cancelled: the requests waiting for an answer are closed at once (their connection with
+     * them) and the ask() that sent them gives up, without trying another model. Nothing is remembered.
+     */
+    cancel() {
+        this.cancelGen++;
+        this.inflight.forEach((x) => x.cancel());
+        this.inflight.clear();
+    }
+
+    /**
+     * Ask with the car's current state. Resolves with the answer text (errors as readable text);
+     * after cancel() with null.
+     */
     async ask(prompt, telemetry, options) {
         options = options || {};
+        const gen = this.cancelGen;
         if (!this.hasInternet) {
             await this.checkInternetConnection();
             if (!this.hasInternet) throw new Error('No internet uplink. Connect phone hotspot or vehicle Wi-Fi.');
@@ -495,6 +511,7 @@ class AiBridge {
         if (provider === 'gemini' || (this.config.mode === 'gemini' && this.config.geminiApiKey)) res = await this.queryGemini(prompt, system, past);
         else if (provider === 'claude' || (this.config.apiKey && this.config.apiKey.startsWith('sk-ant-'))) res = await this.queryAnthropic(prompt, system, past);
         else res = await this.queryOpenAICompatible(prompt, system, past, provider);
+        if (res.cancelled || gen !== this.cancelGen) { this.lastOk = false; return null; }
         if (res.ok) this._remember(prompt, res.text);
         this.lastOk = !!res.ok;            // main.js offers follow-up chips after a real answer only
         return res.text;
@@ -510,7 +527,7 @@ class AiBridge {
         const u = opts && opts.url;
         return new Promise((resolve) => {
             let done = false;
-            const finish = (v) => { if (!done) { done = true; resolve(v); } };
+            let finish = (v) => { if (!done) { done = true; resolve(v); } };
             const isHttp = u && u.protocol === 'http:';
             const send = isHttp ? http.request : tlsDates.request;
             let req;
@@ -540,6 +557,11 @@ class AiBridge {
             req.on('finish', () => { sent = true; });
             req.on('error', (e) => finish({ error: e.message }));
             req.on('timeout', () => { try { req.destroy(); } catch (e) {} finish({ error: 'timed out', slow: sent }); });
+            // cancel(): the request closed now, its answer (if one still comes) not read
+            const entry = { cancel: () => { try { req.destroy(); } catch (e) {} finish({ error: 'cancelled', cancelled: true }); } };
+            this.inflight.add(entry);
+            const settle = finish;
+            finish = (v) => { this.inflight.delete(entry); settle(v); };
             req.write(body);
             req.end();
         });
@@ -578,6 +600,7 @@ class AiBridge {
             const r = await this._post('generativelanguage.googleapis.com', `/v1beta/models/${encodeURIComponent(model)}:generateContent`,
                 { 'x-goog-api-key': this.config.geminiApiKey }, bodyFor(model),       // the key in a header, not in the URL
                 { timeoutMs: lastTry ? REQUEST_TIMEOUT_MS : MODEL_TRY_MS });
+            if (r.cancelled) return { ok: false, cancelled: true, text: '' };
             if (r.error) {
                 if (r.slow && !lastTry) { markBusy(model, 'did not answer in time'); last = 'took too long to answer'; continue; }
                 return { ok: false, text: r.slow ? 'Gemini took too long to answer. Please try again.'
@@ -621,6 +644,7 @@ class AiBridge {
         const model = this.config.model && /^claude-/.test(this.config.model) ? this.config.model : CLAUDE_DEFAULT_MODEL;
         const r = await this._post('api.anthropic.com', '/v1/messages', { 'x-api-key': this.config.apiKey, 'anthropic-version': ANTHROPIC_VERSION },
             { model, max_tokens: 2048, system, messages, output_config: { effort: 'low' } });
+        if (r.cancelled) return { ok: false, cancelled: true, text: '' };
         if (r.error) return { ok: false, text: r.slow ? 'Claude took too long to answer. Please try again.' : 'Claude: ' + r.error + '. Please check the phone hotspot connection.' };
         const j = r.json || {};
         if (j.type === 'error' || j.error) return { ok: false, text: 'Claude: ' + ((j.error && j.error.message) || ('HTTP ' + r.status)) };
@@ -656,6 +680,7 @@ class AiBridge {
         messages.push({ role: 'user', content: prompt });
         const r = await this._post(u.hostname, u.path || '/', Object.assign({ Authorization: 'Bearer ' + token }, extraHeaders),
             { model, messages, max_tokens: 600, temperature: 0.4 }, { url: u });
+        if (r.cancelled) return { ok: false, cancelled: true, text: '' };
         if (r.error) return { ok: false, text: r.slow ? 'The AI took too long to answer. Please try again.' : 'AI: ' + r.error + '. Please check the phone hotspot connection.' };
         const j = r.json || {};
         const msg = j.choices && j.choices[0] && j.choices[0].message;

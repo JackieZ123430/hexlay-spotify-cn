@@ -32,6 +32,7 @@ This repository is built on the open-source BMW iDrive 7 platform:
 | :--- | :---: | :---: | :--- |
 | [Spotify](#1-spotify-spotify) | 1.0.28 | Yes | No |
 | [M-Copilot](#2-m-copilot-m_copilot) | 1.0.27 | Yes | No (reads driving signals, service list and fault memory) |
+| [System Monitor](#3-system-monitor-sys_monitor) | 1.0.0 | No | No (reads the head unit's own memory and processes) |
 
 > [!NOTE]
 > **M-Cinema (YouTube player) has been removed**: playback was unreliable on some firmware and the sound was poor, and CarPlay and Android Auto workarounds play YouTube better.
@@ -98,6 +99,26 @@ This repository is built on the open-source BMW iDrive 7 platform:
 
 ---
 
+### 3. System Monitor (`sys_monitor`)
+**What uses the head unit's memory, as a computer's activity monitor shows it.**
+
+![System Monitor](docs/screenshots/sys_monitor.png)
+
+* **Overview**: memory in use of the head unit's total, as a figure and a bar (green, amber when it gets full, red when nearly full), what is still available, the cache and the swap. A chart of the last three minutes of memory and processor use, the number of processes, the processor's cores and how long the head unit has been up, and the apps and programs using the most memory.
+* **Processes**: every app and program with its memory, its share of the RAM and its processor use. Each iDrive app runs as its own user id, so its processes are told apart by that instead of all being `node`. MainApp and the System Monitor are shown by name; the other apps as **iDrive app 12230** (their uid): the installer makes each app's folder readable to that app and MainApp only, so another app can't read their names (run with MainApp's rights, it names them: the kit's title, or the app's own RHMI name). A program's full name is shown even where Linux cuts it to 15 characters. With **Group processes by app** (the default) an app's or program's processes are added up into one row, with how many there are; off, each process has its own row with its PID. Tap a heading (*Name*, *Memory*, *Processor*) to sort by it; the list scrolls with a finger or the controller, row by row as the HMI's own lists.
+* **Details**: tap a row for its memory, share of RAM, processor use, threads or processes and what is swapped out. For one process also its PID, parent, user, state, how long it has run, its memory split into its own, the files it has open and what it shares, and its command line; for a group, each of its processes.
+* **Read only**: it reads Linux `/proc` and nothing else: it never ends, pauses or changes a process (it runs without the rights to, and ending one could take the HMI down). Processes the head unit doesn't let an app read are counted, *n not readable*, not guessed. Should a head unit mount `/proc` so that apps see only their own processes (`hidepid`), the app says so instead of showing an almost empty list; the memory figures are the whole head unit's either way.
+* **Checked on Linux as on the car**: the built package, installed with the installer's owners and modes (`oap_<uid>`, 750), run as an app's uid on the head unit's Node 8.9.4 and 8.16.2: memory per process equal to `ps`, a busy loop read as exactly one core, other apps' processes readable, their folders not, `/proc` with `hidepid=2` / `invisible`, and 1,500 samples of 430 processes coming and going (about 16 ms each on a desktop processor, no memory growth).
+* **Foreground only, light on the head unit**: it reads `/proc` only while it is on screen, every 2 s by default (*Update every*: 1, 2, 5 or 10 s), and draws a frame only when something changed. The history starts when the app opens.
+* **Settings tab**: colour theme, grouping and the update rate, drawn as the head unit's settings list.
+* On a computer without `/proc` (the browser emulator on Windows) it shows sample data, marked **Sample data** in the header; the screenshots here are of it.
+
+| Processes | Details |
+| :---: | :---: |
+| ![System Monitor Processes](docs/screenshots/sys_monitor_processes.png) | ![System Monitor Details](docs/screenshots/sys_monitor_details.png) |
+
+---
+
 ## How to Install via MGU Store
 
 The recommended way to install and update these apps is the [**MGU Store**](https://github.com/robertnisipeanu/mgu-store):
@@ -107,7 +128,7 @@ The recommended way to install and update these apps is the [**MGU Store**](http
    ```text
    hexlay/idrive7-custom-apps
    ```
-3. Tap **OK**. The MGU Store reads `mgu-repo.json` and lists the two apps. They need the GPU renderer (`idrive7-renderd`) and the controller gate (`mgu-inputgate`), which the store doesn't install from this repository: add [cauliflowermossgrape/idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps) as a source too and install them from there (most cars with these apps have them already). `kit/renderd` here is a copy of their source, used by the browser emulator and the SSH deploy kit.
+3. Tap **OK**. The MGU Store reads `mgu-repo.json` and lists the three apps. They need the GPU renderer (`idrive7-renderd`) and the controller gate (`mgu-inputgate`), which the store doesn't install from this repository: add [cauliflowermossgrape/idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps) as a source too and install them from there (most cars with these apps have them already). `kit/renderd` here is a copy of their source, used by the browser emulator and the SSH deploy kit.
 4. Tap an app to install it. Updates appear in the store when a new version is pushed.
 
 ### Older firmware (e.g. MainApp 6.5.5)
@@ -162,7 +183,7 @@ To build locally: `python3 kit/tools/build.py <app_id>` writes `dist/<app_id>@<v
 * **Verified TLS**: all requests that carry tokens or keys verify the server's certificate chain and hostname; only the head unit's possibly wrong clock is tolerated.
 * **Local data**: tokens (`spotify_auth.json`, `copilot_auth.json`) and app state stay in each app's data folder on the head unit, one copy each (readable by the app only); a copy an older version kept next to the app's code is moved there.
 * **Git protection**: auth, state and key files (`*_auth.json`, `*_state.json`, `*.key`, `*.pem`) are excluded in `.gitignore`, and the build never packages them.
-* **Tested**: `node kit/tools/test_carlink.js` runs the page library against the car modules (tampering, replays, foreign links, the relay's limits); `node kit/tools/test_spotify.js` runs Spotify's client against a fake Web API, `test_spotify_auth.js` checks where it keeps the login, `test_copilot_signals.js` feeds M-Copilot's signal decoding what cars send (names, wire numbers, plug-in hybrid driving modes, psi tyres, "no value"), `test_copilot_engines.js` runs its engine reads against stand-in engine units (B48, B58, V8s with one or two engine computers, a B57 diesel), `test_copilot_cancel.js` cancels a question to an AI that never answers, and `kit/tools/test_zh.js` / `test_zh.py` check the language builds. All but `test_carlink.js` (the phone pages' WebCrypto) also run on the head unit's Node 8.9.4 and 8.16.2, in CI on every push.
+* **Tested**: `node kit/tools/test_carlink.js` runs the page library against the car modules (tampering, replays, foreign links, the relay's limits); `node kit/tools/test_spotify.js` runs Spotify's client against a fake Web API, `test_spotify_auth.js` checks where it keeps the login, `test_copilot_signals.js` feeds M-Copilot's signal decoding what cars send (names, wire numbers, plug-in hybrid driving modes, psi tyres, "no value"), `test_copilot_engines.js` runs its engine reads against stand-in engine units (B48, B58, V8s with one or two engine computers, a B57 diesel), `test_copilot_cancel.js` cancels a question to an AI that never answers, `test_sys_monitor.js` runs the System Monitor's `/proc` reading against a made-up `/proc` and app folder, and `kit/tools/test_zh.js` / `test_zh.py` check the language builds. All but `test_carlink.js` (the phone pages' WebCrypto) also run on the head unit's Node 8.9.4 and 8.16.2, in CI on every push.
 
 ---
 

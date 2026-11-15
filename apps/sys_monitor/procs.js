@@ -1,18 +1,28 @@
 'use strict';
 /**
- * procs.js - what uses the head unit's memory and processor, read from Linux /proc. Read only: nothing is
- * written, signalled or changed.
+ * procs.js - what uses the head unit's memory and processor, read from Linux /proc. A viewer: it only reads
+ * files; it never writes one, starts a program, signals or ends a process, or opens a connection
+ * (kit/tools/test_sys_monitor.js fails the build if this file or main.js ever does).
  *
  *   const s = new Sampler({ root: '/proc', oapDir: '/var/opt/public/oap', self: { uid, title } });
  *   const snap = s.sample();   // { at, mem, cpu, ncpu, procs, hidden, restricted, uptime }
  *   group(snap.procs, true)    // what each app (or program) uses, its processes added up
  *
- * Every iDrive app (OAP app: BMW's and these) runs as its own user id, installed in <oapDir>/oap_<uid>; its
- * processes are told by that uid. Naming one takes reading its folder, which the installer makes readable to
- * that app and MainApp only (mode 750): from another app that fails, and the app is "iDrive app <uid>". What
- * names it where its folder can be read: the kit's title (source/javascript/kit/app-spec.json, this
- * repository's apps), else its RHMI name (rhmiData/application.json). This app names itself (self.title);
- * oap_12201 is MainApp, the app manager.
+ * Memory: a process's own memory (mem) is its private resident memory (RssAnon: its heap, stacks, the
+ * buffers it allocated), which is what it adds to the RAM in use. The resident size (rss) also counts the
+ * program and library files it maps, shared with every other process that maps them (all the node apps map
+ * the same node binary): added up over processes it comes out far above the RAM in use, so it is shown in a
+ * row's details only. Kernels before 4.5 have no RssAnon: then resident minus shared (/proc/<pid>/statm).
+ *
+ * Which app a process is: every iDrive app (OAP app: BMW's, the MGU Store's, these) runs as its own uid,
+ * installed in <oapDir>/oap_<uid>. Its name, from what an app may read on the car:
+ *   1. this app (self.title); oap_12201 is MainApp, the app manager
+ *   2. an app the MGU Store installed: its deploy tool's /var/opt/mgu-deploy/state.json (mode 0644), apps
+ *      { <app id>: { uid, version } }, read again when it changes
+ *   3. the Store's own tools' uids (the updater's downloads and builds): /var/opt/mgu-uplink/uids.d/<tool>
+ *   4. the app's folder, where it can be read (MainApp's rights; not from another app: the installer makes it
+ *      750, readable to that app and MainApp only): the kit's title, else the RHMI name
+ *   5. else "iDrive app <uid>": BMW's own apps (MainApp keeps their uids in its own folder)
  *
  * What the head unit may not let an app see is handled, never guessed: a process whose files can't be read is
  * counted (hidden); /proc mounted with hidepid shows an app only its own processes (restricted); an unreadable
@@ -25,11 +35,19 @@ const os = require('os');
 const path = require('path');
 
 const KB = 1024;
+const PAGE = 4096;                  // x86 page size (/proc/<pid>/statm counts pages)
 // clock ticks a second in /proc/<pid>/stat (USER_HZ: 100 on x86 Linux)
 const HZ = 100;
 const MAINAPP_UID = 12201;
-// the first uid of an app (the installer hands them out downwards from 12299; BMW's own apps are 12201 and up)
+// the first uid of an app (MainApp hands out 12203..12450; the Store's tools sit above)
 const FIRST_APP_UID = 10000;
+const STORE_STATE = '/var/opt/mgu-deploy/state.json';
+const UPLINK_UIDS = '/var/opt/mgu-uplink/uids.d';
+// app and tool ids whose title isn't their id tidied up
+const TITLES = {
+    robertn_store: 'MGU Store', spotify: 'Spotify', m_copilot: 'M-Copilot', sys_monitor: 'System Monitor',
+    'mgu-updater': 'MGU Store updater', 'mgu-uplink': 'MGU Store uplink', 'mgu-render': 'MGU renderer',
+};
 
 /** A file's text, or null; err (when given) gets the error's code. */
 function readText(file, err) {
@@ -37,8 +55,20 @@ function readText(file, err) {
 }
 function readJson(file) {
     const s = readText(file);
-    if (s == null || s.length > 256 * KB) return null;
+    if (s == null || s.length > 1024 * KB) return null;
     try { return JSON.parse(s); } catch (e) { return null; }
+}
+function mtime(file) {
+    try { return fs.statSync(file).mtime.getTime(); } catch (e) { return 0; }
+}
+function list(dir) {
+    try { return fs.readdirSync(dir); } catch (e) { return []; }
+}
+
+/** An app's or tool's id as a title: the known ones by name, others tidied ("car_vitals" -> "Car Vitals"). */
+function title(id) {
+    if (Object.prototype.hasOwnProperty.call(TITLES, id)) return TITLES[id];
+    return String(id).split(/[_-]+/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') || String(id);
 }
 
 /** /proc/meminfo -> sizes in bytes, or null when it has no MemTotal. */
@@ -60,6 +90,7 @@ function parseMeminfo(text) {
         free: n('MemFree'),
         cache,
         shmem: n('Shmem'),
+        anon: m.AnonPages != null ? m.AnonPages : null,    // all processes' private memory, as the kernel counts it
         kernel: n('Slab') + n('KernelStack') + n('PageTables'),
         swapTotal: n('SwapTotal'),
         swapUsed: Math.max(0, n('SwapTotal') - n('SwapFree')),
@@ -70,7 +101,7 @@ function parseMeminfo(text) {
 function osMem() {
     const total = os.totalmem(), available = Math.min(total, os.freemem());
     if (!(total > 0)) return null;
-    return { total, available, used: total - available, free: available, cache: null, shmem: null, kernel: null, swapTotal: 0, swapUsed: 0, approx: true };
+    return { total, available, used: total - available, free: available, cache: null, shmem: null, anon: null, kernel: null, swapTotal: 0, swapUsed: 0, approx: true };
 }
 
 /** /proc/<pid>/status -> { name, state, ppid, uid, rss, anon, file, shm, swap, threads } (sizes in bytes; rss null for kernel threads). */
@@ -93,6 +124,13 @@ function parseStatus(text) {
         else if (k === 'Threads') o.threads = Number(v);
     });
     return o;
+}
+
+/** /proc/<pid>/statm -> { resident, shared } in bytes, or null. */
+function parseStatm(text) {
+    const f = String(text || '').trim().split(/\s+/).map(Number);
+    if (f.length < 3 || !isFinite(f[1]) || !isFinite(f[2])) return null;
+    return { resident: f[1] * PAGE, shared: f[2] * PAGE };
 }
 
 /** /proc/<pid>/stat -> { ticks (user + system), start (ticks after boot) }, or null. The name may hold spaces and ')'. */
@@ -148,14 +186,45 @@ function hidepid(mounts, root) {
 }
 
 /**
- * uid -> the iDrive app installed as oap_<uid>: { name, named } (named false: the app's folder can't be read, and
- * it is "iDrive app <uid>"), or null for a uid that is no app. Cached: an app keeps its uid while installed.
+ * uid -> what runs as it: { name, named, kind: 'app' | 'tool', store } (named false: an iDrive app whose name
+ * can't be read, "iDrive app <uid>"; store: installed by the MGU Store), or null for a uid that is neither an
+ * app nor a Store tool. The Store's records are read again when they change (refresh).
  */
 class AppNames {
-    constructor(oapDir, self) {
-        this.dir = oapDir;
-        this.self = self || {};
+    constructor(opts) {
+        opts = opts || {};
+        this.dir = opts.oapDir;
+        this.self = opts.self || {};
+        this.storeFile = opts.storeState === undefined ? STORE_STATE : opts.storeState;
+        this.uidsDir = opts.uplinkUids === undefined ? UPLINK_UIDS : opts.uplinkUids;
         this.cache = new Map();
+        this.store = new Map();     // uid -> app id (the Store's deploy tool)
+        this.tools = new Map();     // uid -> tool id (the uplink's drop-ins)
+        this.sig = null;
+    }
+    /** Read the Store's records again if they changed since; true when they did. */
+    refresh() {
+        const files = this.uidsDir ? list(this.uidsDir).filter((n) => !/^\./.test(n)).sort() : [];
+        const sig = [this.storeFile ? mtime(this.storeFile) : 0].concat(files.map((n) => n + ':' + mtime(path.join(this.uidsDir, n)))).join('|');
+        if (sig === this.sig) return false;
+        this.sig = sig;
+        this.store = new Map(); this.tools = new Map();
+        const st = this.storeFile ? readJson(this.storeFile) : null;
+        const apps = st && st.apps && typeof st.apps === 'object' ? st.apps : {};
+        Object.keys(apps).forEach((id) => {
+            const uid = Number(apps[id] && apps[id].uid);
+            if (uid >= FIRST_APP_UID && uid % 1 === 0) this.store.set(uid, id);
+        });
+        files.forEach((n) => {
+            String(readText(path.join(this.uidsDir, n)) || '').split('\n').forEach((l) => {
+                l.split('#')[0].split(/[\s,]+/).forEach((s) => {
+                    const uid = Number(s);
+                    if (s && uid >= FIRST_APP_UID && uid % 1 === 0 && !this.tools.has(uid)) this.tools.set(uid, n);
+                });
+            });
+        });
+        this.cache.clear();
+        return true;
     }
     get(uid) {
         if (!(uid >= FIRST_APP_UID)) return null;
@@ -165,25 +234,29 @@ class AppNames {
         return v;
     }
     _look(uid) {
-        if (uid === this.self.uid && this.self.title) return { name: this.self.title, named: true };
-        if (uid === MAINAPP_UID) return { name: 'MainApp', named: true };
+        const app = (name, named, store) => ({ name, named, kind: 'app', store: !!store });
+        if (uid === this.self.uid && this.self.title) return app(this.self.title, true, this.store.has(uid));
+        if (uid === MAINAPP_UID) return app('MainApp', true, false);
+        if (this.store.has(uid)) return app(title(this.store.get(uid)), true, true);
+        if (this.tools.has(uid)) return { name: title(this.tools.get(uid)), named: true, kind: 'tool', store: true };
         if (!this.dir) return null;
         const base = path.join(this.dir, 'oap_' + uid);
         const spec = readJson(path.join(base, 'source', 'javascript', 'kit', 'app-spec.json'));
-        if (spec && typeof spec.title === 'string' && spec.title) return { name: spec.title, named: true };
+        if (spec && typeof spec.title === 'string' && spec.title) return app(spec.title, true, false);
         const desc = readJson(path.join(base, 'rhmiData', 'application.json'));
         const a = desc && desc.application;
-        if (a && typeof a.name === 'string' && a.name) return { name: a.name, named: true };
+        if (a && typeof a.name === 'string' && a.name) return app(a.name, true, false);
         // (the folder itself can be seen from another app: only what is inside it can't)
         let installed = false;
         try { installed = fs.statSync(base).isDirectory(); } catch (e) { /* no such app */ }
-        return installed ? { name: 'iDrive app ' + uid, named: false } : null;
+        return installed ? app('iDrive app ' + uid, false, false) : null;
     }
 }
 
 /**
  * Samples /proc. CPU use is measured between two samples: the first sample has cpu null for every process.
- * opts: { root ('/proc'), oapDir (where the apps are installed), self: { pid, uid, title } (this app) }
+ * opts: { root ('/proc'), oapDir (where the apps are installed), self: { pid, uid, title } (this app),
+ *         storeState, uplinkUids (the MGU Store's records; null: none) }
  */
 class Sampler {
     constructor(opts) {
@@ -192,7 +265,11 @@ class Sampler {
         const self = opts.self || {};
         this.selfPid = self.pid || process.pid;
         this.selfUid = self.uid != null ? self.uid : (typeof process.getuid === 'function' ? process.getuid() : -1);
-        this.names = new AppNames(opts.oapDir === undefined ? '/var/opt/public/oap' : opts.oapDir, { uid: this.selfUid, title: self.title });
+        this.names = new AppNames({
+            oapDir: opts.oapDir === undefined ? '/var/opt/public/oap' : opts.oapDir,
+            self: { uid: this.selfUid, title: self.title },
+            storeState: opts.storeState, uplinkUids: opts.uplinkUids,
+        });
         this.prev = null;           // { cpu, ticks: Map pid -> ticks }
         this.cmdCache = new Map();  // pid -> its arguments (they don't change)
         this.mounts = undefined;    // /proc/self/mounts, read once
@@ -204,19 +281,19 @@ class Sampler {
 
     sample() {
         const r = this.root;
+        this.names.refresh();
         const mem = parseMeminfo(readText(path.join(r, 'meminfo'))) || osMem();
         const cpuNow = parseCpu(readText(path.join(r, 'stat')));
         const up = Number(String(readText(path.join(r, 'uptime')) || '').split(' ')[0]) || null;
-        let pids = [];
-        try { pids = fs.readdirSync(r).filter((n) => /^\d+$/.test(n)).map(Number); } catch (e) { /* no /proc */ }
+        const pids = list(r).filter((n) => /^\d+$/.test(n)).map(Number);
         const prev = this.prev;
         const dTotal = prev && cpuNow ? cpuNow.total - prev.cpu.total : 0;
         const ticks = new Map();
         const procs = [];
         let hidden = 0;
         pids.forEach((pid) => {
-            const err = {};
-            const st = readText(path.join(r, String(pid), 'status'), err);
+            const dir = path.join(r, String(pid)), err = {};
+            const st = readText(path.join(dir, 'status'), err);
             if (st == null) {
                 // ended since the folder was listed (ENOENT, ESRCH): not there. Anything else: not ours to read.
                 if (err.code !== 'ENOENT' && err.code !== 'ESRCH') hidden++;
@@ -224,7 +301,12 @@ class Sampler {
             }
             const s = parseStatus(st);
             if (s.rss == null) return;                       // a kernel thread (or ended meanwhile): no memory of its own
-            const stat = parseStat(readText(path.join(r, String(pid), 'stat')));
+            let own = s.anon;
+            if (own == null) {                               // a kernel before 4.5: resident minus shared
+                const sm = parseStatm(readText(path.join(dir, 'statm')));
+                own = sm ? Math.max(0, sm.resident - sm.shared) : s.rss;
+            }
+            const stat = parseStat(readText(path.join(dir, 'stat')));
             let cpu = null;
             if (stat) {
                 ticks.set(pid, stat.ticks);
@@ -235,8 +317,9 @@ class Sampler {
             const app = this.names.get(s.uid);
             procs.push({
                 pid, name: s.name.length === COMM_MAX ? fullName(s.name, this.args(pid)) : s.name, state: s.state, ppid: s.ppid, uid: s.uid,
-                rss: s.rss, anon: s.anon, file: s.file, shm: s.shm, swap: s.swap, threads: s.threads,
-                cpu, app: app ? app.name : null, named: app ? app.named : null, self: pid === this.selfPid,
+                mem: own, rss: s.rss, anon: s.anon, file: s.file, shm: s.shm, swap: s.swap, threads: s.threads, cpu,
+                app: app ? app.name : null, named: app ? app.named : null, kind: app ? app.kind : null, store: app ? app.store : false,
+                self: pid === this.selfPid,
                 age: stat && stat.start != null && up != null ? Math.max(0, up - stat.start / HZ) : null,
             });
         });
@@ -264,12 +347,12 @@ class Sampler {
     command(pid) { return this.args(pid).join(' ').trim(); }
 }
 
-/** A row's label: the app's name for an iDrive app's process, else the program's. */
+/** A row's label: the app's (or Store tool's) name, else the program's. */
 function label(p) { return p.app || p.name || ('PID ' + p.pid); }
 
 /**
  * Processes added up per app / program (byApp), or one row each. Rows:
- * { key, label, count, rss, swap, cpu (null until measured), threads, pids, app, self, procs }
+ * { key, label, count, mem (own memory), rss, swap, cpu (null until measured), threads, pids, app, kind, store, self, procs }
  */
 function group(procs, byApp) {
     const rows = new Map();
@@ -277,10 +360,11 @@ function group(procs, byApp) {
         const key = byApp ? (p.app ? 'app:' + p.uid : 'name:' + p.name) : 'pid:' + p.pid;
         let g = rows.get(key);
         if (!g) {
-            g = { key, label: label(p), count: 0, rss: 0, swap: 0, cpu: null, threads: 0, pids: [], app: !!p.app, self: false, procs: [] };
+            g = { key, label: label(p), count: 0, mem: 0, rss: 0, swap: 0, cpu: null, threads: 0, pids: [], app: !!p.app, kind: p.kind, store: !!p.store, self: false, procs: [] };
             rows.set(key, g);
         }
         g.count++;
+        g.mem += p.mem || 0;
         g.rss += p.rss || 0;
         g.swap += p.swap || 0;
         g.threads += p.threads || 0;
@@ -292,23 +376,38 @@ function group(procs, byApp) {
     return Array.from(rows.values());
 }
 
-/** Sort rows: by 'mem' (most first), 'cpu' (most first) or 'name' (A to Z). */
+/** Sort rows: by 'mem' / 'cpu' / 'grow' (most first; grow: row.grow, set by the caller) or 'name' (A to Z). */
 function sortRows(rows, by) {
     const lower = (r) => r.label.toLowerCase();
     const name = (a, b) => (lower(a) < lower(b) ? -1 : lower(a) > lower(b) ? 1 : 0);
+    const num = (v) => (v == null ? -Infinity : v);
     const cmp = by === 'name' ? name
-        : by === 'cpu' ? (a, b) => ((b.cpu || 0) - (a.cpu || 0)) || (b.rss - a.rss) || name(a, b)
-            : (a, b) => (b.rss - a.rss) || name(a, b);
+        : by === 'cpu' ? (a, b) => (num(b.cpu) - num(a.cpu)) || (b.mem - a.mem) || name(a, b)
+            : by === 'grow' ? (a, b) => (num(b.grow) - num(a.grow)) || (b.mem - a.mem) || name(a, b)
+                : (a, b) => (b.mem - a.mem) || name(a, b);
     return rows.slice().sort(cmp);
+}
+
+/**
+ * Where the memory in use goes: iDrive apps (their processes' own memory), other programs (theirs), and the
+ * rest: the system and what is shared (the kernel, program and library files in memory, shared and graphics
+ * buffers). { apps, programs, system }, bytes.
+ */
+function breakdown(snap) {
+    let apps = 0, programs = 0;
+    snap.procs.forEach((p) => { if (p.kind === 'app') apps += p.mem || 0; else programs += p.mem || 0; });
+    const used = snap.mem ? snap.mem.used : apps + programs;
+    return { apps, programs, system: Math.max(0, used - apps - programs) };
 }
 
 /** Bytes as the HMI would write them: 3.80 GB, 612 MB, 880 KB. */
 function fmtBytes(n) {
     if (n == null || !isFinite(n)) return '--';
-    if (n >= 1024 * 1024 * 1024) return (n / (1024 * 1024 * 1024)).toFixed(n >= 10 * 1024 * 1024 * 1024 ? 1 : 2) + ' GB';
-    if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(n >= 100 * 1024 * 1024 ? 0 : 1) + ' MB';
-    if (n >= 1024) return Math.round(n / 1024) + ' KB';
-    return Math.round(n) + ' B';
+    const a = Math.abs(n), sign = n < 0 ? '-' : '';
+    if (a >= 1024 * 1024 * 1024) return sign + (a / (1024 * 1024 * 1024)).toFixed(a >= 10 * 1024 * 1024 * 1024 ? 1 : 2) + ' GB';
+    if (a >= 1024 * 1024) return sign + (a / (1024 * 1024)).toFixed(a >= 100 * 1024 * 1024 ? 0 : 1) + ' MB';
+    if (a >= 1024) return sign + Math.round(a / 1024) + ' KB';
+    return sign + Math.round(a) + ' B';
 }
 
 /** A duration in seconds as "3 d 4 h", "2 h 13 min", "12 min", "40 s". */
@@ -322,4 +421,7 @@ function fmtAge(s) {
     return s + ' s';
 }
 
-module.exports = { Sampler, AppNames, group, sortRows, label, parseMeminfo, parseStatus, parseStat, parseCpu, cmdline, fullName, hidepid, osMem, fmtBytes, fmtAge, HZ };
+module.exports = {
+    Sampler, AppNames, group, sortRows, breakdown, label, title, parseMeminfo, parseStatus, parseStatm, parseStat, parseCpu,
+    cmdline, fullName, hidepid, osMem, fmtBytes, fmtAge, HZ, STORE_STATE, UPLINK_UIDS,
+};

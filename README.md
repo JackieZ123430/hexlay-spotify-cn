@@ -31,7 +31,7 @@ This repository is built on the open-source BMW iDrive 7 platform:
 | App | Version | Needs internet | Touches vehicle ECUs |
 | :--- | :---: | :---: | :--- |
 | [Spotify](#1-spotify-spotify) | 1.0.29 | Yes | No |
-| [M-Copilot](#2-m-copilot-m_copilot) | 1.0.29 | Yes | No (reads driving signals, service list and fault memory) |
+| [M-Copilot](#2-m-copilot-m_copilot) | 1.0.30 | Yes | No (reads driving signals, service list and fault memory) |
 | [System Monitor](#3-system-monitor-sys_monitor) | 1.0.2 | No | No (reads the head unit's own memory and processes) |
 
 > [!NOTE]

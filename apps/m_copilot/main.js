@@ -1215,7 +1215,8 @@ mgu.run({
             vi: 'de.bmw.infrastructure.VehicleInformation', tpms: 'de.bmw.infotainment.vehicle.TPMS', env: 'de.bmw.infrastructure.EnvironmentalInformation', kombi: 'de.bmw.infotainment.KombiIF',
             cond: 'de.bmw.infrastructure.VehicleCondition', veh: 'de.bmw.infotainment.vehicle.Vehicle', cc: 'de.bmw.infotainment.checkcontrol.CheckControlMaster', k2: 'de.bmw.infotainment.KombiInterface_2',
             tasu: 'com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu' };
-        const fix = (v, d) => (typeof v === 'number' && isFinite(v) ? v.toFixed(d || 0) : null);
+        // a number with d decimals; a value that rounds to zero has no minus sign (boost a hair under the outside air: "0.00", not "-0.00")
+        const fix = (v, d) => { if (typeof v !== 'number' || !isFinite(v)) return null; const s = v.toFixed(d || 0); return /^-0(\.0+)?$/.test(s) ? s.slice(1) : s; };
         let checking = null;                // 'engine' / 'faults' while a button's read runs
         /** a signal row: green with the value, or why there is none */
         function sigState(value, iface, field) {

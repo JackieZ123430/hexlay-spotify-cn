@@ -16,7 +16,10 @@ const KOMBI = 'de.bmw.infotainment.KombiIF', FES = 'de.bmw.infotainment.drivinge
 const VI = 'de.bmw.infrastructure.VehicleInformation', ENV = 'de.bmw.infrastructure.EnvironmentalInformation', K2 = 'de.bmw.infotainment.KombiInterface_2';
 
 // the engine units' answers (kPa absolute for pressures, as app.json "config.dme" scales them)
-const IDLE = { baro: 100.8, boostTarget: 101.5, boostActual: 101.2, iat: 31, loadTarget: 18.75, loadActual: 18, timing: 6, hpfp: 52, lpfp: 5.5, v12: 14.32 };
+// (a function: read at each request, so a page that reads live is seen moving)
+const wobble = (mid, amp, ms) => () => mid + amp * Math.sin(Date.now() / ms);
+const IDLE = { baro: 100.8, boostTarget: 101.5, boostActual: wobble(101.2, 0.4, 2300), iat: wobble(31, 2, 5000), loadTarget: 18.75, loadActual: wobble(18, 1.5, 1700),
+    timing: wobble(6, 1.5, 1300), hpfp: wobble(52, 4, 2900), lpfp: 5.5, v12: wobble(14.32, 0.05, 3100) };
 const PROFILES = {
     b58: { 0x12: { f150: '0F2424', values: IDLE, misfire: [0, 0, 0, 0, 0, 0] } },
     n63: { 0x12: { f150: '0F242C', values: IDLE, misfire: [0, 0, 0, 0] }, 0x13: { f150: '0F242C', misfire: [0, 0, 0, 0] } },
@@ -56,8 +59,9 @@ function start(hu, name) {
         for (const k of Object.keys(u.values || {})) {
             for (const c of cands[k] || []) {
                 if ((c.ecu == null ? 0x12 : c.ecu) !== ecu) continue;
-                if (c.obd && sid === 0x01 && data[0] === parseInt(c.obd, 16)) return [0x41, data[0]].concat(encode(c, u.values[k]));
-                if (c.did && sid === 0x22 && ((data[0] << 8) | data[1]) === parseInt(c.did, 16)) return [0x62, data[0], data[1]].concat(encode(c, u.values[k]));
+                const val = typeof u.values[k] === 'function' ? u.values[k]() : u.values[k];
+                if (c.obd && sid === 0x01 && data[0] === parseInt(c.obd, 16)) return [0x41, data[0]].concat(encode(c, val));
+                if (c.did && sid === 0x22 && ((data[0] << 8) | data[1]) === parseInt(c.did, 16)) return [0x62, data[0], data[1]].concat(encode(c, val));
             }
         }
         return nrc;

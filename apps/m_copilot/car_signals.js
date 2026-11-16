@@ -215,7 +215,12 @@ function carSignals(telemetry, opts) {
         },
         'de.bmw.infotainment.drivingexcitement.FES': {
             statusFESVehicleDynamicSwitchHMI: (v) => en('mode', DRIVE_MODES, 'driving mode', true)(v && v.actualValueModeDrivingExperience),
-            statusSwitchDriveDynamicSport2: (v) => { const r = num(v && v.displayBoostPressure); telemetry.boost = r !== null && r !== 255 && r >= 0 ? r * 0.01 : null; },
+            // in the car's pressure unit, as BMW's sport display shows it: 0.01 bar (or 1 kPa) a step, 0.1 psi a step on a
+            // car set to psi (idrive7-apps #186: 20 psi sent as raw 200 was read as 2.0 bar)
+            statusSwitchDriveDynamicSport2: (v) => {
+                const r = num(v && v.displayBoostPressure);
+                telemetry.boost = r !== null && r !== 255 && r >= 0 ? (units().press === 'PSI' ? r * 0.1 / 14.5038 : r * 0.01) : null;
+            },
             // the sport display's share of the engine's maximum power and torque
             statusVehicleDynamicEngine: (v) => {
                 v = v || {};

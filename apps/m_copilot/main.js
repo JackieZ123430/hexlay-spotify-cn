@@ -464,7 +464,9 @@ mgu.run({
             if (diagMaking) return diagMaking;
             const { Diag } = require('./kit/diag');
             diagAt = Date.now();
-            diagMaking = new Diag(signals, log).init().then((d) => { diag = d; diagMaking = null; return d; }, (e) => { diagMaking = null; throw e; });
+            const link = new Diag(signals, log);
+            link.quiet = true;                  // not every request in the log: the Data check page reads all the time (as M Vitals)
+            diagMaking = link.init().then((d) => { diag = d; diagMaking = null; return d; }, (e) => { diagMaking = null; throw e; });
             return diagMaking;
         }
 
@@ -525,6 +527,47 @@ mgu.run({
             } catch (e) {
                 log.warn('M-Copilot: engine snapshot skipped: ' + (e.message || e));
             }
+        }
+
+        /**
+         * The Data check page live, as M Vitals and Live Data read the engine unit while their page is on screen:
+         * a round of the engine computer's values, 400 ms rest, the next round (misfires and the HV battery every
+         * 4th). Read-only, one request at a time, and only while this page is on screen; never while the car is
+         * asleep or the engine is starting or stopping (the round waits a second and looks again). Answers come
+         * from these rounds too while they are fresh.
+         */
+        let liveTimer = null, liveRunning = false, liveRound = 0;
+        const liveWanted = () => page === 1 && onScreen();
+        // one loop only: a round still reading when the page is left and opened again carries on as the loop
+        function engineLive(on) {
+            if (!on) { if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; } return; }
+            if (!liveTimer && !liveRunning) liveTimer = setTimeout(liveTick, 0);
+        }
+        const liveOn = () => !!(liveTimer || liveRunning);
+        async function liveTick() {
+            liveTimer = null;
+            if (!liveWanted()) return;
+            liveRunning = true;
+            let rest = 1000;
+            try {
+                if (carAwake() !== 'asleep' && steady() && !checking) {
+                    const d = await diagLink();
+                    if (d.available && liveWanted()) {
+                        await identifyCar();
+                        if (!snapshot) { const EngineSnapshot = require('./engine_snapshot'); snapshot = new EngineSnapshot(d, ctx.spec && ctx.spec.config, log, () => vehicle.engineKind()); }
+                        const every4 = liveRound++ % 4 === 0;
+                        const r = await snapshot.read({ live: true, budgetMs: 2500, steady, hybrid: hybridCar(), needOil: telemetry.oilTemp === null,
+                            engine: engineState(), misfire: every4, hv: every4 });
+                        if (r) telemetry.engineSnap = r;
+                        rest = 400;
+                    }
+                }
+            } catch (e) {
+                log.warn('M-Copilot: live engine read: ' + (e.message || e));
+                rest = 3000;                    // the link not ready: try again in a moment
+            }
+            liveRunning = false;
+            if (liveWanted() && !liveTimer) liveTimer = setTimeout(liveTick, rest);
         }
 
         /**
@@ -1278,7 +1321,7 @@ mgu.run({
             D.car.forEach((r, i) => row(x1, w1, i, r[0], r[1]));
             head(x2, 'Live signals', w2);
             D.live.forEach((r, i) => row(x2, w2, i, r[0], r[1]));
-            head(x3, 'Engine computer', w3);
+            head(x3, liveOn() && diag && diag.available ? 'Engine computer · live' : 'Engine computer', w3);
             D.engine.forEach((r, i) => row(x3, w3, i, r[0], r[1]));
 
             // buttons: read now (the same safety rules: steady car, never while asleep)
@@ -1403,6 +1446,7 @@ mgu.run({
         ctx.onTab((i) => {
             page = i === 1 || i === 2 ? i : 0;
             showKeyboard = false;
+            engineLive(page === 1);
             return render(true);
         });
 
@@ -1417,9 +1461,11 @@ mgu.run({
             // phone page opened while the car is off; at most every 6 hours
             if (ai.isConfigured() && Date.now() - lastHello > 6 * 3600 * 1000) hello();
             ai.checkInternetConnection().catch(() => {});
+            engineLive(page === 1);
             render(true).catch(() => {});
         }
         function background() {
+            engineLive(false);
             stopCar();
             loadSampling(false);
             cloudPair.stopPolling();

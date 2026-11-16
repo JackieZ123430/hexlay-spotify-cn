@@ -128,6 +128,9 @@ function fresh() {
     assert.strictEqual(t.tyres, null);                                          // one corner without a value: none shown
     feed(TPMS, 'statusTyrePressure', { actualValuePressureTyreFLH: 410, actualValuePressureTyreFRH: 410, actualValuePressureTyreRLH: 420, actualValuePressureTyreRRH: 420 });
     near(t.tyres.fl, 41 / 14.5038, 'psi tyre');
+    // the sport display's boost in psi too: 0.1 psi a step (idrive7-apps #186)
+    feed(FES, 'statusSwitchDriveDynamicSport2', { displayBoostPressure: 200 });
+    near(t.boost, 20 / 14.5038, 'psi boost');
     feed(TPMS, 'statusTyreTemperature', { actualValueTemperatureTyreFLH: 122, actualValueTemperatureTyreFRH: 122, actualValueTemperatureTyreRLH: 122, actualValueTemperatureTyreRRH: 122 });
     near(t.tyreTemps.fl, (82 - 32) * 5 / 9, 'deg F tyre');
     const g = fresh();

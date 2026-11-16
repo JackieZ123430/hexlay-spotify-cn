@@ -21,13 +21,16 @@
  *
  *   const snap = new EngineSnapshot(diag, ctx.spec.config, log, () => vehicle.engineKind());
  *     engineKind() -> { dme2: 0x13 or null, diesel }
+ *   await snap.read({ live: true, misfire: false, ... })   the Data check page's live rounds (as M Vitals polls):
+ *     no cache; misfire / hv: false leaves those out this round and keeps their last values
  *   await snap.read({ budgetMs: 3500, steady, hybrid })  -> { at, values: { iat: 31, ... } } (cached 20 s)
  */
 const { DidReader } = require('./kit/dids');
 
 const CACHE_MS = 20000;
 const TIMEOUT_MS = 1500;            // per request: a unit that is silent costs this, not 4 s
-const GIVE_UP = 3;                  // a value that failed this often in a row is not asked again this session
+const GIVE_UP = 3;                  // a value that failed this often in a row is only asked again after RETRY_MS
+const RETRY_MS = 30000;             // (as M Vitals: a refusal under load, a unit slow to wake)
 
 class EngineSnapshot {
     constructor(diag, config, log, engineKind) {
@@ -38,6 +41,7 @@ class EngineSnapshot {
         this.rd = new DidReader(diag, { ecu: this.dme.ecu || 0x12 });
         this.hv = new DidReader(diag, { ecu: this.battery.ecu || 0x07 });
         this.fails = {};
+        this.failT = {};                // when each value last failed
         this.last = null;
         this.busy = null;
         this.baro = null;
@@ -65,12 +69,26 @@ class EngineSnapshot {
     }
 
     read(opts) {
-        // kept 20 s, unless the engine started or stopped since (its values then mean something else)
-        if (this.last && Date.now() - this.last.at < CACHE_MS && this.last.engine === ((opts && opts.engine) || null)) return Promise.resolve(this.last);
+        // kept 20 s, unless the engine started or stopped since (its values then mean something else); a live round reads anew
+        const live = !!(opts && opts.live);
+        if (!live && this.last && Date.now() - this.last.at < CACHE_MS && this.last.engine === ((opts && opts.engine) || null)) return Promise.resolve(this.last);
         if (this.busy) return this.busy;
-        this.busy = this._read(opts || {}).then((r) => { this.busy = null; if (r) this.last = r; return r; }, (e) => { this.busy = null; this.log.warn('M-Copilot: engine snapshot: ' + (e.message || e)); return this.last; });
+        this.busy = this._read(opts || {}).then((r) => {
+            this.busy = null;
+            if (r) {
+                // what this round left out (misfires, the HV battery: not every round) keeps its last value, same engine state
+                const prev = this.last;
+                if (prev && prev.engine === r.engine) (r.skipped || []).forEach((k) => { if (prev.values[k] !== undefined && r.values[k] === undefined) r.values[k] = prev.values[k]; });
+                if (r.values.misfire && prev && prev.values.misfirePartial && (r.skipped || []).indexOf('misfire') >= 0) r.values.misfirePartial = true;
+                this.last = r;
+            }
+            return r;
+        }, (e) => { this.busy = null; this.log.warn('M-Copilot: engine snapshot: ' + (e.message || e)); return this.last; });
         return this.busy;
     }
+
+    /** A value that failed GIVE_UP times in a row rests: asked again RETRY_MS after its last failure. */
+    _resting(name) { return (this.fails[name] || 0) >= GIVE_UP && Date.now() - (this.failT[name] || 0) < RETRY_MS; }
 
     /** Every 10 minutes the values given up on are asked again (a refusal under load, a unit slow to wake). */
     _refresh() {
@@ -85,11 +103,12 @@ class EngineSnapshot {
         this._refresh();
         const until = Date.now() + (opts.budgetMs || 3500);
         const ok = () => Date.now() < until && (!opts.steady || opts.steady());
-        const values = {};
+        const values = {}, skipped = [];
         const one = async (name, list, rd) => {
-            if (!list || !list.length || (this.fails[name] || 0) >= GIVE_UP || !ok()) return null;
+            if (!list || !list.length || this._resting(name) || !ok()) return null;
             const v = await EngineSnapshot.within(rd || this.rd, name, list, ok);
             this.fails[name] = v === null ? (this.fails[name] || 0) + 1 : 0;
+            if (v === null) this.failT[name] = Date.now();
             return v;
         };
         const d = this.dme;
@@ -117,19 +136,22 @@ class EngineSnapshot {
         if (opts.needOil) { const o = await one('oil', d.oil); if (o !== null) values.oil = o; }
         const v12 = await one('v12', this.battery.v12);
         if (v12 !== null) values.v12 = v12;
-        if (running && ok() && d.misfire) {
+        // misfire counts change slowly: a live round may leave them out (opts.misfire false), keeping the last
+        if (running && d.misfire && opts.misfire === false) skipped.push('misfire');
+        else if (running && ok() && d.misfire) {
             const m = await this._misfire(ok);
             if (m) { values.misfire = m.counts; if (m.partial) values.misfirePartial = true; }
         }
         // the high-voltage battery: hybrids / EVs only (a car whose unit never answers is not asked again)
-        if (opts.hybrid && !this.hvMissing) {
+        if (opts.hybrid && !this.hvMissing && opts.hv === false) skipped.push('hvSoc', 'hvSoh');
+        else if (opts.hybrid && !this.hvMissing) {
             const soc = await one('hvSoc', this.battery.soc, this.hv);
             if (soc === null && (this.fails.hvSoc || 0) >= GIVE_UP) this.hvMissing = true;
             if (soc !== null) values.hvSoc = soc;
             const soh = await one('hvSoh', this.battery.soh, this.hv);
             if (soh !== null) values.hvSoh = soh;
         }
-        return { at: Date.now(), values, engine: opts.engine || null };
+        return { at: Date.now(), values, engine: opts.engine || null, skipped };
     }
 
     /**
@@ -196,10 +218,10 @@ class EngineSnapshot {
      */
     async _misfire(ok) {
         const m = this.dme.misfire || {}, ecu = m.ecu == null ? (this.dme.ecu || 0x12) : m.ecu, tid = parseInt(m.tid || '0C', 16);
-        if ((this.fails.misfire || 0) >= GIVE_UP) return null;
+        if (this._resting('misfire')) return null;
         const one = await this._misfireUnit(ecu, this.mis1, tid, ok);
         if (!one) {
-            if (this.mis1.mode === null) this.fails.misfire = (this.fails.misfire || 0) + 1;
+            if (this.mis1.mode === null) { this.fails.misfire = (this.fails.misfire || 0) + 1; this.failT.misfire = Date.now(); }
             return null;
         }
         this.fails.misfire = 0;

@@ -178,6 +178,40 @@ const checkPetrol = (r) => {
     assert.strictEqual(b57.report.find((x) => x.name === 'timing').na, 'diesel: no spark ignition');
     assert.ok(/diesel/.test(b57.lines.join('\n')));
 
+    // live rounds (the Data check page, as M Vitals polls): no cache, misfires / HV every 4th round keeping their last
+    // values, a value the unit refuses rests 30 s after its third refusal
+    {
+        const units = { 0x12: { f150: '0F2424', values: Object.assign({}, PETROL), misfire: { mids: [0, 0, 1, 0, 0, 0] }, refuse: /^4AB0$|^F470$|^OBD 70$/ } };
+        const d = car(units);
+        const snap = new EngineSnapshot(d, CONFIG, quiet, () => ({ dme2: null, diesel: false }));
+        const round = (misfire) => snap.read({ live: true, budgetMs: 20000, engine: 'on', steady: () => true, misfire, hv: misfire });
+        const r1 = await round(true);
+        assert.deepStrictEqual(r1.values.misfire, [0, 0, 1, 0, 0, 0]);
+        units[0x12].values.iat = 41;                                  // the engine unit's value moves
+        units[0x12].misfire.mids = [0, 0, 7, 0, 0, 0];
+        const asked = d.asked.length;
+        const r2 = await round(false);
+        assert.ok(d.asked.length > asked, 'a live round reads anew (no 20 s cache)');
+        near(r2.values.iat, 41, 'live intake air');
+        assert.deepStrictEqual(r2.values.misfire, [0, 0, 1, 0, 0, 0], 'misfires left out this round: the last counts kept');
+        assert.ok(d.asked.slice(asked).every((x) => !/^12:6:/.test(x)), 'no misfire request in a round without them');
+        const r3 = await round(true);
+        assert.deepStrictEqual(r3.values.misfire, [0, 0, 7, 0, 0, 0]);
+        // boost target refused three times: then left alone for 30 s, asked again after
+        await round(false);
+        const before = d.asked.length;
+        await round(false);
+        assert.ok(d.asked.slice(before).every((x) => !/^12:22:4a,b0$/.test(x)), 'a refused value rests');
+        snap.failT.boostTarget -= 31000;
+        const before2 = d.asked.length;
+        await round(false);
+        assert.ok(d.asked.slice(before2).some((x) => /^12:22:4a,b0$/.test(x)), 'asked again after 30 s');
+        // a plain read (a question) within 20 s takes the live round's values
+        const n = d.asked.length;
+        await snap.read({ budgetMs: 20000, engine: 'on', steady: () => true });
+        assert.strictEqual(d.asked.length, n, 'a question uses the fresh live values');
+    }
+
     // an older vehicle.json (before the second unit was known) is read again once
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-eng-'));
     try {
@@ -191,5 +225,5 @@ const checkPetrol = (r) => {
         fs.readdirSync(dir).forEach((f) => fs.unlinkSync(path.join(dir, f)));
         fs.rmdirSync(dir);
     }
-    console.log('test_copilot_engines: all passed (B48, B58, V8 x5, B57)');
+    console.log('test_copilot_engines: all passed (B48, B58, V8 x5, B57, live rounds)');
 })().catch((e) => { console.error(e); process.exit(1); });

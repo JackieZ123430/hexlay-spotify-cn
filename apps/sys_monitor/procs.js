@@ -46,7 +46,7 @@ const UPLINK_UIDS = '/var/opt/mgu-uplink/uids.d';
 // app and tool ids whose title isn't their id tidied up
 const TITLES = {
     robertn_store: 'MGU Store', spotify: 'Spotify', m_copilot: 'M-Copilot', sys_monitor: 'System Monitor',
-    'mgu-updater': 'MGU Store updater', 'mgu-uplink': 'MGU Store uplink', 'mgu-render': 'MGU renderer',
+    'mgu-updater': 'MGU Store updater', 'mgu-uplink': 'MGU Store uplink', 'mgu-render': 'MGU renderer', 'mgu-deploy': 'MGU Store installer',
 };
 
 /** A file's text, or null; err (when given) gets the error's code. */
@@ -143,17 +143,69 @@ function parseStat(text) {
     return { ticks: utime + stime, start: isFinite(start) ? start : null };
 }
 
-/** /proc/stat -> { total, idle, ncpu } (ticks since boot, all processors). */
+/** One /proc/stat cpu line -> its ticks: { total, idle, user, system, iowait }. */
+function cpuTicks(line) {
+    const v = line.trim().split(/\s+/).slice(1).map((n) => Number(n) || 0);
+    // user nice system idle iowait irq softirq steal (guest time is already in user)
+    return {
+        total: v.slice(0, 8).reduce((a, b) => a + b, 0),
+        idle: (v[3] || 0) + (v[4] || 0),
+        user: (v[0] || 0) + (v[1] || 0),
+        system: (v[2] || 0) + (v[5] || 0) + (v[6] || 0) + (v[7] || 0),
+        iowait: v[4] || 0,
+    };
+}
+/** /proc/stat -> the whole processor's ticks since boot, ncpu, and each core's (cores). */
 function parseCpu(text) {
     const lines = String(text || '').split('\n');
     const first = lines[0] || '';
     if (!/^cpu\s/.test(first)) return null;
-    const v = first.trim().split(/\s+/).slice(1).map(Number);
-    // user nice system idle iowait irq softirq steal (guest time is already in user)
-    const total = v.slice(0, 8).reduce((a, b) => a + (b || 0), 0);
-    const idle = (v[3] || 0) + (v[4] || 0);
-    const ncpu = lines.filter((l) => /^cpu\d+\s/.test(l)).length || 1;
-    return { total, idle, ncpu };
+    const cores = lines.filter((l) => /^cpu\d+\s/.test(l)).map(cpuTicks);
+    return Object.assign(cpuTicks(first), { ncpu: cores.length || 1, cores });
+}
+/** What share of the time between two cpuTicks (a, b) went to each kind, in %: { busy, user, system, iowait }. */
+function cpuShare(a, b) {
+    const d = b.total - a.total;
+    if (!(d > 0)) return null;
+    const pc = (k) => Math.max(0, Math.min(100, (b[k] - a[k]) / d * 100));
+    return { busy: Math.max(0, Math.min(100, 100 - pc('idle'))), user: pc('user'), system: pc('system'), iowait: pc('iowait') };
+}
+
+/** /proc/loadavg -> { one, five, fifteen, running, threads } (load: processes running or waiting to, averaged). */
+function parseLoadavg(text) {
+    const f = String(text || '').trim().split(/\s+/);
+    const l = f.slice(0, 3).map(Number), rt = /^(\d+)\/(\d+)$/.exec(f[3] || '');
+    if (l.length < 3 || l.some((n) => !isFinite(n))) return null;
+    return { one: l[0], five: l[1], fifteen: l[2], running: rt ? Number(rt[1]) : null, threads: rt ? Number(rt[2]) : null };
+}
+
+/**
+ * The processor's temperature from the kernel's thermal zones ({ c, zone }): the package sensor (x86_pkg_temp)
+ * where there is one, else the hottest zone named for the processor; null when none can be read.
+ */
+function pickTemp(zones) {
+    const ok = zones.filter((z) => isFinite(z.c) && z.c > -40 && z.c < 150);
+    const pkg = ok.find((z) => /x86_pkg_temp/i.test(z.type));
+    if (pkg) return { c: pkg.c, zone: pkg.type };
+    const cpu = ok.filter((z) => /cpu|pkg|core|soc|proc/i.test(z.type)).sort((a, b) => b.c - a.c)[0];
+    return cpu ? { c: cpu.c, zone: cpu.type } : null;
+}
+
+// interpreters whose processes are named after the script they run
+const INTERP = /^(node|nodejs|python[\d.]*|perl|ruby|lua[\d.]*)$/;
+/**
+ * The program an interpreter (node, python) runs, from its arguments: a tool of /var/opt/<tool>/ by its title, else
+ * the script's name (its folder's for index / app / main). null when none can be told.
+ */
+function scriptName(argv) {
+    const s = argv.slice(1).find((a) => a && a.charAt(0) !== '-' && !/\s/.test(a) && (/\.(js|mjs|cjs|py|pl|rb|lua)$/.test(a) || a.indexOf('/') >= 0));
+    if (!s) return null;
+    const oap = /\/oap_(\d+)\//.exec(s);
+    if (oap) return 'iDrive app ' + oap[1];
+    const tool = /^\/var\/opt\/([^/]+)\//.exec(s);
+    if (tool && Object.prototype.hasOwnProperty.call(TITLES, tool[1])) return TITLES[tool[1]];
+    const parts = s.split('/').filter(Boolean), base = (parts.pop() || '').replace(/\.(js|mjs|cjs|py|pl|rb|lua)$/, '');
+    return /^(index|app|main|server|start)$/.test(base) && parts.length ? parts.pop() : base || null;
 }
 
 /** The command line's arguments (NUL-separated in /proc/<pid>/cmdline). */
@@ -270,9 +322,39 @@ class Sampler {
             self: { uid: this.selfUid, title: self.title },
             storeState: opts.storeState, uplinkUids: opts.uplinkUids,
         });
+        this.sys = opts.sys === undefined ? '/sys' : opts.sys;
         this.prev = null;           // { cpu, ticks: Map pid -> ticks }
         this.cmdCache = new Map();  // pid -> its arguments (they don't change)
         this.mounts = undefined;    // /proc/self/mounts, read once
+        this.sensors = null;        // the thermal zones' and cpufreq files, found once
+    }
+    /** The files the processor's temperature and clock are in (sysfs; any may be missing or unreadable). */
+    _sensors() {
+        if (this.sensors) return this.sensors;
+        const s = { zones: [], freq: [], max: null };
+        if (this.sys) {
+            const tz = path.join(this.sys, 'class', 'thermal');
+            list(tz).filter((n) => /^thermal_zone\d+$/.test(n)).forEach((n) => {
+                const type = String(readText(path.join(tz, n, 'type')) || '').trim();
+                if (type) s.zones.push({ type, file: path.join(tz, n, 'temp') });
+            });
+            const cpus = path.join(this.sys, 'devices', 'system', 'cpu');
+            list(cpus).filter((n) => /^cpu\d+$/.test(n)).forEach((n) => {
+                const f = path.join(cpus, n, 'cpufreq');
+                if (readText(path.join(f, 'scaling_cur_freq')) != null) s.freq.push(path.join(f, 'scaling_cur_freq'));
+                const mx = Number(readText(path.join(f, 'cpuinfo_max_freq')));
+                if (mx > 0) s.max = Math.max(s.max || 0, mx * 1000);
+            });
+        }
+        this.sensors = s;
+        return s;
+    }
+    /** { temp: { c, zone } | null, freq: { hz, max } | null } now. */
+    _processor() {
+        const s = this._sensors();
+        const temp = pickTemp(s.zones.map((z) => ({ type: z.type, c: Number(readText(z.file)) / 1000 })));
+        const hz = s.freq.map((f) => Number(readText(f)) * 1000).filter((v) => v > 0);
+        return { temp, freq: hz.length ? { hz: hz.reduce((a, b) => a + b, 0) / hz.length, max: s.max } : null };
     }
     /** Linux /proc is here (the head unit; not a Windows PC). */
     available() {
@@ -315,24 +397,40 @@ class Sampler {
                 if (before != null && dTotal > 0) cpu = Math.max(0, Math.min(100, (stat.ticks - before) / dTotal * 100));
             }
             const app = this.names.get(s.uid);
+            let name = s.name.length === COMM_MAX ? fullName(s.name, this.args(pid)) : s.name;
+            // a bare "node" or "python" that is no app: what it runs ("foreground_gate (node)", "MGU Store updater")
+            if (!app && INTERP.test(name)) {
+                const script = scriptName(this.args(pid));
+                // (a tool's or an app's title stands alone; a script's name says what runs it)
+                if (script) name = / /.test(script) ? script : script + ' (' + name + ')';
+            }
             procs.push({
-                pid, name: s.name.length === COMM_MAX ? fullName(s.name, this.args(pid)) : s.name, state: s.state, ppid: s.ppid, uid: s.uid,
+                pid, name, state: s.state, ppid: s.ppid, uid: s.uid,
                 mem: own, rss: s.rss, anon: s.anon, file: s.file, shm: s.shm, swap: s.swap, threads: s.threads, cpu,
                 app: app ? app.name : null, named: app ? app.named : null, kind: app ? app.kind : null, store: app ? app.store : false,
                 self: pid === this.selfPid,
                 age: stat && stat.start != null && up != null ? Math.max(0, up - stat.start / HZ) : null,
             });
         });
+        // the whole processor and each core since the last sample
         let cpu = null;
-        if (prev && cpuNow && dTotal > 0) cpu = { busy: Math.max(0, Math.min(100, 100 - (cpuNow.idle - prev.cpu.idle) / dTotal * 100)), ncpu: cpuNow.ncpu };
+        const share = prev && cpuNow ? cpuShare(prev.cpu, cpuNow) : null;
+        if (share) {
+            cpu = Object.assign(share, {
+                ncpu: cpuNow.ncpu,
+                cores: cpuNow.cores.map((c, i) => { const s = prev.cpu.cores[i] && cpuShare(prev.cpu.cores[i], c); return s ? s.busy : null; }),
+            });
+        }
         if (cpuNow) this.prev = { cpu: cpuNow, ticks };
         // forget command lines of processes that ended
         this.cmdCache.forEach((v, pid) => { if (!ticks.has(pid)) this.cmdCache.delete(pid); });
         if (this.mounts === undefined) this.mounts = readText(path.join(r, 'self', 'mounts'));
         // only this app's own processes to be seen (it runs as an app's uid, as on the car): the others are hidden
         const restricted = hidepid(this.mounts, r) || (procs.length > 0 && this.selfUid >= FIRST_APP_UID && procs.every((p) => p.uid === this.selfUid));
+        const pr = this._processor();
         return {
             at: Date.now(), mem, cpu, ncpu: cpuNow ? cpuNow.ncpu : (os.cpus() || []).length || null,
+            load: parseLoadavg(readText(path.join(r, 'loadavg'))), temp: pr.temp, freq: pr.freq,
             procs, hidden, restricted, uptime: up,
         };
     }
@@ -423,5 +521,5 @@ function fmtAge(s) {
 
 module.exports = {
     Sampler, AppNames, group, sortRows, breakdown, label, title, parseMeminfo, parseStatus, parseStatm, parseStat, parseCpu,
-    cmdline, fullName, hidepid, osMem, fmtBytes, fmtAge, HZ, STORE_STATE, UPLINK_UIDS,
+    cpuShare, parseLoadavg, pickTemp, scriptName, cmdline, fullName, hidepid, osMem, fmtBytes, fmtAge, HZ, STORE_STATE, UPLINK_UIDS,
 };

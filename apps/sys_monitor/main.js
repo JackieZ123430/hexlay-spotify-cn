@@ -2,8 +2,10 @@
 /**
  * System Monitor - what uses the head unit's memory (and processor), on the central display.
  *
- *   Overview   memory in use and free, split into iDrive apps, other programs and the system; a live history
- *              of memory and processor use; the apps and programs using the most memory
+ *   Overview   memory in use and free, split into iDrive apps, other programs and the system; the processor;
+ *              a live history of memory and processor use; the apps and programs using the most memory
+ *   Processor  how busy it is, its load, temperature and clock (where the head unit lets an app read them),
+ *              each core, what the time went to, and the apps and programs keeping it busy
  *   Processes  every app and program with its own memory, share of RAM, how much it grew in the last
  *              3 minutes (a memory leak shows as a steady rise) and its processor use; a row per app (its
  *              processes added up) or per process (setting "Group processes by app"); tap a heading to sort,
@@ -24,7 +26,8 @@ const { Sampler, group, sortRows, breakdown, fmtBytes, fmtAge } = require('./pro
 const { SampleSampler } = require('./sample');
 
 const W = 1600, H = 520;
-const PAGES = ['Overview', 'Processes'];
+const PAGES = ['Overview', 'Processor', 'Processes'];
+const PG_OVERVIEW = 0, PG_CPU = 1, PG_PROCS = 2;
 const HISTORY_S = 180;                 // the chart's span, and the span growth is measured over
 const TREND_MIN_S = 30;                // growth is shown once a row has been seen this long
 const MB = 1024 * 1024;
@@ -161,8 +164,8 @@ mgu.run({
         /** The head unit lets an app see only its own processes: say so where the list would be. */
         function drawRestricted(cv, t, x, y) {
             cv.text('This head unit lets an app see only its own processes.', x, y, 26, t.dim);
-            cv.text(page === 0 ? 'The memory figures above are the whole head unit\'s.' : 'The memory figures on Overview are the whole head unit\'s.',
-                x, y + 36, 22, t.dim);
+            cv.text(page === PG_PROCS ? 'The memory and processor figures on Overview are the whole head unit\'s.'
+                : 'The figures above are the whole head unit\'s.', x, y + 36, 22, t.dim);
         }
         /** A row's name in bold, with "(this app)" and an "MGU Store" tag; cut to w. */
         function drawName(cv, t, r, x, y, w, size) {
@@ -184,8 +187,13 @@ mgu.run({
             const size = n > 4 ? 44 : 52, m = /^([+-]?[\d.,]+)\s*(.*)$/.exec(String(value));
             const num = m ? m[1] : String(value), unit = m ? m[2] : '';
             cv.text(num, x + 18, 142, size, col || t.text, { font: m ? 'num' : 'bold' });
-            if (unit) cv.text(unit, x + 18 + cv.textWidth(num, size, { font: m ? 'num' : 'bold' }) + 8, 142, Math.round(size * 0.5), t.dim, { font: 'bold' });
-            if (sub) cv.text(fitText(cv, sub, w * 0.45, 22), x + w - 18, 142, 22, t.dim, { align: 'right' });
+            let used = 18 + cv.textWidth(num, size, { font: m ? 'num' : 'bold' });
+            if (unit) {
+                cv.text(unit, x + used + 8, 142, Math.round(size * 0.5), t.dim, { font: 'bold' });
+                used += 8 + cv.textWidth(unit, Math.round(size * 0.5), { font: 'bold' });
+            }
+            // the note: in what the number leaves free
+            if (sub) cv.text(fitText(cv, sub, w - used - 36, 22), x + w - 18, 142, 22, t.dim, { align: 'right' });
         }
 
         /** A coloured dot and its text (legends): returns the width taken. */
@@ -200,14 +208,17 @@ mgu.run({
             const m = snap.mem, ex = G.pageBottom(cv) - G.BOTTOM;
             if (m) {
                 const frac = m.used / m.total, parts = breakdown(snap);
-                tile(cv, t, 0, 4, 'Memory in use', pct(frac * 100) + ' %', fmtBytes(m.used) + ' of ' + fmtBytes(m.total), pressure(t, frac));
-                tile(cv, t, 1, 4, 'iDrive apps', fmtBytes(parts.apps), 'MainApp and apps', t.text);
-                tile(cv, t, 2, 4, 'Other programs', fmtBytes(parts.programs), 'HMI, media, nav', t.text);
-                tile(cv, t, 3, 4, 'Available', fmtBytes(m.available), m.swapTotal ? 'swap ' + fmtBytes(m.swapUsed) : 'no swap', t.text);
+                tile(cv, t, 0, 5, 'Memory in use', pct(frac * 100) + ' %', fmtBytes(m.used) + ' of ' + fmtBytes(m.total), pressure(t, frac));
+                tile(cv, t, 1, 5, 'iDrive apps', fmtBytes(parts.apps), 'and MainApp', t.text);
+                tile(cv, t, 2, 5, 'Other programs', fmtBytes(parts.programs), 'HMI, nav', t.text);
+                tile(cv, t, 3, 5, 'Available', fmtBytes(m.available), m.swapTotal ? 'swap ' + fmtBytes(m.swapUsed) : 'no swap', t.text);
             } else {
-                tile(cv, t, 0, 2, 'Memory', '--', 'not reported by this head unit', t.dim);
-                tile(cv, t, 1, 2, 'Processes', String(snap.procs.length), '', t.text);
+                tile(cv, t, 0, 5, 'Memory', '--', 'not reported', t.dim);
+                tile(cv, t, 1, 5, 'Processes', String(snap.procs.length), '', t.text);
             }
+            // the processor, in the colour of its line in the chart below (a tap or press: the Processor page)
+            tile(cv, t, 4, 5, 'Processor', snap.cpu ? pct(snap.cpu.busy) + ' %' : '--', cpuNote(), t.cold);
+            if (cv.own) cv.target(24 + 4 * ((1552 - 64) / 5 + 16), 44, (1552 - 64) / 5, 115, () => { page = PG_CPU; redraw(); }, 'tile_cpu', 8);
 
             // left: what uses the most memory (a tap or press: its details)
             const p = G.panel(cv, t, 24, 176, 760, 336, 'Using the most memory');
@@ -255,11 +266,80 @@ mgu.run({
             return ex;
         }
 
+        /** The processor in a few words, under its tile: its load, else its cores. */
+        function cpuNote() {
+            return snap.load ? 'load ' + snap.load.one.toFixed(1) : snap.ncpu ? snap.ncpu + ' cores' : '';
+        }
+        /** A list of rows (the busiest, the largest) in panel p, from y: name, a bar, a value; a tap or press opens its details. */
+        function topList(cv, t, p, list, value, frac, keyPrefix) {
+            const n = Math.max(0, Math.min(list.length, Math.floor((p.y + p.h - 12 - 232) / 46)));
+            list.slice(0, n).forEach((r, i) => {
+                const y = 232 + i * 46, x = p.x + 24, w = p.w - 48;
+                if (cv.own) cv.target(x - 8, y - 4, w + 16, 42, () => openDetail(r), keyPrefix + r.key, 8);
+                cv.roundRect(x, y + 3, 8, 30, 4, r.self ? t.accent : withAlpha(t.dim, 0.5));
+                drawName(cv, t, r, x + 24, y + 28, w * 0.48, 24);
+                const bx = x + w * 0.56, bw = w * 0.24;
+                cv.roundRect(bx, y + 14, bw, 8, 4, t.track);
+                cv.roundRect(bx, y + 14, Math.max(8, bw * Math.max(0, Math.min(1, frac(r)))), 8, 4, t.bar || t.accent);
+                cv.text(value(r), x + w, y + 28, 26, t.text, { align: 'right', font: 'bold' });
+                if (i < n - 1) cv.fillRect(x, y + 40, w, 1, withAlpha(t.tick, 0.25));
+            });
+            return n;
+        }
+
+        /* ---------- Processor ---------- */
+        function drawProcessor(cv, t) {
+            const c = snap.cpu, load = snap.load, tiles = [];
+            tiles.push(['Processor', c ? pct(c.busy) + ' %' : '--', snap.ncpu ? snap.ncpu + ' cores' : '', t.cold]);
+            if (load) tiles.push(['Load', load.one.toFixed(2), '15 min ' + load.fifteen.toFixed(2), t.text]);
+            // (the head unit may keep its sensors from apps: then no tile, rather than a blank one)
+            if (snap.temp) tiles.push(['Temperature', Math.round(snap.temp.c) + ' °C', '', snap.temp.c >= 90 ? t.crit : snap.temp.c >= 80 ? t.warn : t.text]);
+            if (snap.freq) tiles.push(['Clock', (snap.freq.hz / 1e9).toFixed(2) + ' GHz', snap.freq.max ? 'max ' + (snap.freq.max / 1e9).toFixed(1) + ' GHz' : '', t.text]);
+            if (load && load.threads) tiles.push(['Threads', String(load.threads), load.running != null ? load.running + ' running' : '', t.text]);
+            tiles.forEach((d, i) => tile(cv, t, i, tiles.length, d[0], d[1], d[2], d[3]));
+
+            // left: each core, and what the time went to
+            const p = G.panel(cv, t, 24, 176, 760, 336, 'Cores');
+            const cores = c && c.cores ? c.cores : [], foot = 84;
+            if (!cores.length) cv.text(c ? 'This head unit doesn\'t say how busy each core is.' : 'Measuring...', 48, 260, 24, t.dim);
+            const rowH = Math.min(54, (p.y + p.h - foot - 226) / Math.max(1, cores.length));
+            cores.forEach((v, i) => {
+                const y = 226 + i * rowH, cy = y + rowH / 2;
+                cv.text('Core ' + (i + 1), 48, cy + 8, 22, t.dim, { font: 'bold' });
+                cv.roundRect(170, cy - 5, 480, 10, 5, t.track);
+                if (v != null) cv.roundRect(170, cy - 5, Math.max(10, 480 * v / 100), 10, 5, v >= 90 ? t.warn : t.cold);
+                cv.text(v == null ? '--' : pct(v) + ' %', 760, cy + 9, 24, t.text, { align: 'right', font: 'num' });
+            });
+            if (c) {
+                // the whole processor's time: apps' and programs' own work, the kernel's, waiting on storage
+                // as one bar over the whole processor's time (the rest: idle), its legend under it
+                const ly = p.y + p.h - 18, by = ly - 46, cols = [t.cold, withAlpha(t.text, 0.75), t.warn];
+                const parts = [['Programs', c.user], ['System', c.system], ['Waiting on storage', c.iowait]];
+                cv.roundRect(48, by, 712, 10, 5, t.track);
+                let bx = 48;
+                parts.forEach((d, i) => {
+                    const w = Math.max(0, Math.min(48 + 712 - bx, 712 * d[1] / 100));
+                    if (w >= 1) cv.fillRect(bx, by, w, 10, cols[i]);
+                    bx += w;
+                });
+                let lx = 48;
+                parts.forEach((d, i) => { lx += legend(cv, t, lx, ly, d[0] + '  ' + pct(d[1]) + ' %', cols[i]) + 28; });
+            }
+
+            // right: what keeps it busy
+            const q = G.panel(cv, t, 804, 176, 772, 336, 'Using the most processor');
+            if (snap.restricted) return drawRestricted(cv, t, 828, 270);
+            const busy = rows(true, 'cpu').filter((r) => r.cpu != null);
+            if (!busy.length) { cv.text(c ? 'Nothing is busy right now.' : 'Measuring...', 828, 270, 24, t.dim); return; }
+            const most = Math.max(1, busy[0].cpu);
+            topList(cv, t, q, busy, (r) => pct(r.cpu) + ' %', (r) => r.cpu / most, 'cpu_');
+        }
+
         /* ---------- Processes ---------- */
         const listGeo = { rowH: 46, count: 0, visible: 1 };
         let scrollAcc = 0;
         ctx.onScroll((dy) => {
-            if (page !== 1 || detail) return false;
+            if (page !== PG_PROCS || detail) return false;
             const max = Math.max(0, listGeo.count - listGeo.visible);
             scrollAcc += dy;
             const n = scrollAcc > 0 ? Math.floor(scrollAcc / listGeo.rowH) : Math.ceil(scrollAcc / listGeo.rowH);
@@ -395,7 +475,8 @@ mgu.run({
             const cv = ctx.canvas(W, H).clear(t.bg);
             if (!snap) cv.text('Reading memory...', 800, 280, 32, t.dim, { align: 'center' });
             else if (detail) drawDetail(cv, t);
-            else if (page === 0) drawOverview(cv, t);
+            else if (page === PG_OVERVIEW) drawOverview(cv, t);
+            else if (page === PG_CPU) drawProcessor(cv, t);
             else drawProcesses(cv, t);
             const m = snap && snap.mem;
             G.frame(cv, t, PAGES, page, [

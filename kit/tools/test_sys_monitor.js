@@ -98,7 +98,10 @@ function proc1(pid, name, uid, rssKb, ticks, extra) {
     write(path.join(proc, String(pid), 'cmdline'), (extra.cmd || name).split(' ').join('\0') + '\0');
     if (extra.statm) write(path.join(proc, String(pid), 'statm'), extra.statm);
 }
-function cpuLine(total, idle) { return 'cpu  ' + (total - idle) + ' 0 0 ' + idle + ' 0 0 0 0 0 0\ncpu0 1 0 0 1 0 0 0 0 0 0\ncpu1 1 0 0 1 0 0 0 0 0 0\nintr 0\n'; }
+// the whole processor, and two cores: core 1 does all the work, core 2 idles
+function cpuLine(total, idle) {
+    return 'cpu  ' + (total - idle) + ' 0 0 ' + idle + ' 0 0 0 0 0 0\ncpu0 ' + (total - idle) + ' 0 0 0 0 0 0 0 0 0\ncpu1 0 0 0 ' + idle + ' 0 0 0 0 0 0\nintr 0\n';
+}
 function future(file, s) { const t = new Date(Date.now() + s * 1000); fs.utimesSync(file, t, t); }
 
 try {
@@ -110,6 +113,20 @@ try {
     ].join('\n') + '\n');
     write(path.join(proc, 'stat'), cpuLine(10000, 8000));
     write(path.join(proc, 'uptime'), '5000.00 18000.00\n');
+    write(path.join(proc, 'loadavg'), '1.42 1.31 1.24 2/612 4567\n');
+    // the processor's sensors (sysfs): a board zone and the package one; two cores' clocks
+    const sys = path.join(tmp, 'sys');
+    write(path.join(sys, 'class', 'thermal', 'thermal_zone0', 'type'), 'acpitz\n');
+    write(path.join(sys, 'class', 'thermal', 'thermal_zone0', 'temp'), '45000\n');
+    write(path.join(sys, 'class', 'thermal', 'thermal_zone1', 'type'), 'x86_pkg_temp\n');
+    write(path.join(sys, 'class', 'thermal', 'thermal_zone1', 'temp'), '61000\n');
+    ['1800000', '2000000'].forEach((f, i) => {
+        write(path.join(sys, 'devices', 'system', 'cpu', 'cpu' + i, 'cpufreq', 'scaling_cur_freq'), f + '\n');
+        write(path.join(sys, 'devices', 'system', 'cpu', 'cpu' + i, 'cpufreq', 'cpuinfo_max_freq'), '2400000\n');
+    });
+    proc1(411, 'node', 0, 20000, 1, { cmd: 'node --max-old-space-size=64 /var/opt/idrive7-renderd/js/foreground_gate.js' });   // a script: by its name
+    proc1(412, 'node', 0, 20000, 1, { cmd: 'node /var/opt/mgu-updater/current/js/updater.js' });                              // a Store tool's: its title
+    proc1(413, 'node', 0, 20000, 1, { cmd: 'node -e setInterval(()=>0,1000)' });                                                  // nothing to tell: node
     proc1(1, 'systemd', 0, 12000, 50);
     proc1(2, 'kthreadd', 0, null, 0);                                      // kernel thread: no VmRSS
     proc1(300, 'HmiMain3D', 1001, 900000, 4000, { threads: 60, swap: 2048 });
@@ -154,7 +171,24 @@ try {
     assert.strictEqual(P.parseStat('garbage'), null);
     assert.deepStrictEqual(P.parseStatm('9000 2000 500 10 0 1500 0'), { resident: 2000 * 4096, shared: 500 * 4096 });
     assert.strictEqual(P.parseStatm(''), null);
-    assert.deepStrictEqual(P.parseCpu(cpuLine(10000, 8000)), { total: 10000, idle: 8000, ncpu: 2 });
+    const pc = P.parseCpu(cpuLine(10000, 8000));
+    assert.deepStrictEqual([pc.total, pc.idle, pc.user, pc.ncpu, pc.cores.length, pc.cores[0].total, pc.cores[1].idle], [10000, 8000, 2000, 2, 2, 2000, 8000]);
+    const sh = P.cpuShare(P.parseCpu('cpu  100 0 50 800 50 0 0 0'), P.parseCpu('cpu  200 0 100 1600 100 0 0 0'));
+    assert.deepStrictEqual([sh.busy, sh.user, sh.system, sh.iowait].map(Math.round), [15, 10, 5, 5], 'iowait is waiting, not busy');
+    assert.strictEqual(P.cpuShare(pc, pc), null, 'no time passed');
+    assert.deepStrictEqual(P.parseLoadavg('1.42 1.31 1.24 2/612 4567'), { one: 1.42, five: 1.31, fifteen: 1.24, running: 2, threads: 612 });
+    assert.strictEqual(P.parseLoadavg(''), null);
+    assert.deepStrictEqual(P.pickTemp([{ type: 'acpitz', c: 45 }, { type: 'x86_pkg_temp', c: 61 }]), { c: 61, zone: 'x86_pkg_temp' });
+    assert.deepStrictEqual(P.pickTemp([{ type: 'cpu-thermal', c: 55 }, { type: 'soc', c: 58 }, { type: 'battery', c: 70 }]), { c: 58, zone: 'soc' });
+    assert.strictEqual(P.pickTemp([{ type: 'acpitz', c: 45 }]), null, 'a board sensor is not the processor\'s');
+    assert.strictEqual(P.pickTemp([{ type: 'x86_pkg_temp', c: NaN }]), null, 'unreadable');
+    assert.strictEqual(P.scriptName(['node', '/var/opt/idrive7-renderd/js/foreground_gate.js']), 'foreground_gate');
+    assert.strictEqual(P.scriptName(['node', '--expose-gc', '/var/opt/mgu-updater/current/js/updater.js']), 'MGU Store updater');
+    assert.strictEqual(P.scriptName(['node', '/opt/x/server/index.js']), 'server', 'index.js: its folder');
+    assert.strictEqual(P.scriptName(['node', '/var/opt/public/oap/oap_12230/source/javascript/app.js']), 'iDrive app 12230');
+    assert.strictEqual(P.scriptName(['python3', '/usr/bin/networkd-dispatcher', '--run-startup-triggers']), 'networkd-dispatcher');
+    assert.strictEqual(P.scriptName(['node', '-e', 'setInterval(() => 0, 1000)']), null, 'inline code: nothing to name it by');
+    assert.strictEqual(P.scriptName(['node']), null);
     assert.strictEqual(P.cmdline('node\0/a b/app.js\0\0'), 'node /a b/app.js');
     // names the kernel cut to 15 characters: the full one from the command line, only when it starts the same
     assert.strictEqual(P.fullName('unattended-upgr', ['/usr/bin/python3', '/usr/bin/unattended-upgrade-shutdown']), 'unattended-upgrade-shutdown');
@@ -176,7 +210,7 @@ try {
     assert.strictEqual(P.title('x'), 'X');
 
     /* first sample: memory, processes, no processor use yet */
-    const s = new P.Sampler({ root: proc, oapDir: oap, self: { pid: 405, uid: 12240, title: 'System Monitor' }, storeState, uplinkUids: uidsD });
+    const s = new P.Sampler({ root: proc, oapDir: oap, self: { pid: 405, uid: 12240, title: 'System Monitor' }, storeState, uplinkUids: uidsD, sys });
     assert(s.available());
     const a = s.sample();
     assert.strictEqual(a.mem.total, 4000000 * KB);
@@ -185,8 +219,17 @@ try {
     assert.strictEqual(a.restricted, false);
     assert.strictEqual(a.hidden, canDeny ? 1 : 0, 'a process that ended is not "not readable"; one we may not read is');
     const pids = a.procs.map((p) => p.pid).sort((x, y) => x - y);
-    assert.deepStrictEqual(pids, [1, 300, 301, 400, 401, 402, 403, 404, 405, 406, 407, 408, 409, 410, 500, 501], 'kernel threads are left out');
+    assert.deepStrictEqual(pids, [1, 300, 301, 400, 401, 402, 403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 500, 501], 'kernel threads are left out');
     const by = (pid) => a.procs.find((p) => p.pid === pid);
+    // what a bare node runs
+    assert.strictEqual(by(411).name, 'foreground_gate (node)');
+    assert.strictEqual(by(412).name, 'MGU Store updater');
+    assert.strictEqual(by(413).name, 'node');
+    assert.strictEqual(by(400).app, 'Spotify', 'an app keeps its app name (no script naming)');
+    // load, temperature (the package sensor), clock (the cores' average)
+    assert.deepStrictEqual(a.load, { one: 1.42, five: 1.31, fifteen: 1.24, running: 2, threads: 612 });
+    assert.deepStrictEqual(a.temp, { c: 61, zone: 'x86_pkg_temp' });
+    assert.deepStrictEqual(a.freq, { hz: 1.9e9, max: 2.4e9 });
     // memory: each process's own (RssAnon); the resident size with its shared files beside it
     assert.strictEqual(by(300).mem, Math.round(900000 * 0.75) * KB);
     assert.strictEqual(by(300).rss, 900000 * KB);
@@ -219,6 +262,8 @@ try {
     future(storeState, 5);
     const b = s.sample();
     assert.strictEqual(Math.round(b.cpu.busy), 50);
+    assert.deepStrictEqual(b.cpu.cores.map(Math.round), [100, 0], 'core 1 did all of it');
+    assert.deepStrictEqual([b.cpu.user, b.cpu.system, b.cpu.iowait].map(Math.round), [50, 0, 0]);
     assert.strictEqual(Math.round(b.procs.find((p) => p.pid === 300).cpu), 25);
     assert.strictEqual(b.procs.find((p) => p.pid === 1).cpu, 0);
     assert.strictEqual(b.procs.find((p) => p.pid === 403).app, 'M-Copilot', 'the Store\'s records are read again when they change');
@@ -234,7 +279,8 @@ try {
     assert.strictEqual(g.find((r) => r.label === 'System Monitor').self, true);
     assert.strictEqual(g.find((r) => r.label === 'Spotify').count, 2, 'node and its helper: one app');
     assert.strictEqual(g.find((r) => r.label === 'MGU Store').store, true);
-    assert.strictEqual(g.find((r) => r.key === 'name:node').count, 1, 'the non-app node stays its own row');
+    assert.strictEqual(g.find((r) => r.key === 'name:node').count, 2, 'the nodes that are no app and run nothing nameable: one row');
+    assert(g.find((r) => r.key === 'name:foreground_gate (node)'), 'a named script: its own row');
     assert.strictEqual(P.group(b.procs, false).length, b.procs.length);
     assert.deepStrictEqual(P.sortRows(g, 'mem').slice(0, 3).map((r) => r.label), ['HmiMain3D', 'MainApp', 'Spotify']);
     assert.strictEqual(P.sortRows(g, 'cpu')[0].label, 'HmiMain3D');

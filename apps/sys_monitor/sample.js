@@ -21,6 +21,7 @@ const LIST = [
     ['node', 12447, 22, 64, 0.8, 10, 'System Monitor', 'app', true, app(12447), 0],
     ['node', 12460, 31, 78, 0.2, 9, 'MGU Store updater', 'tool', true, 'node /var/opt/mgu-updater/current/js/updater.js', 0],
     ['mgu-render', 0, 61, 92, 3.1, 6, null, null, false, '/var/opt/mgu-render/current/mgu-render', 0],
+    ['foreground_gate (node)', 0, 38, 72, 0.4, 7, null, null, false, 'node /var/opt/idrive7-renderd/js/foreground_gate.js', 0],
     ['mgu-uplink', 0, 14, 21, 0.3, 8, null, null, false, '/var/opt/mgu-uplink/current/mgu-uplink', 0],
     ['oapcontroller', 0, 41, 58, 0.3, 14, null, null, false, '/usr/bin/oapcontroller', 0],
     ['pulseaudio', 1002, 30, 44, 1.2, 5, null, null, false, '/usr/bin/pulseaudio --system', 0],
@@ -62,8 +63,15 @@ class SampleSampler {
             at: Date.now(),
             sample: true,
             mem: { total, available, used, free: Math.round(available * 0.35), cache: Math.round(available * 0.6), shmem: 96 * MB, anon: null, kernel: 180 * MB, swapTotal: 1024 * MB, swapUsed: 24 * MB },
-            cpu: t < 1 ? null : { busy: Math.max(0, 24 + wob(20, 8)), ncpu: 4 },
+            cpu: t < 1 ? null : (() => {
+                const cores = [0, 1, 2, 3].map((i) => Math.max(0, Math.min(100, [38, 21, 27, 12][i] + wob(30 + i, 10))));
+                const busy = cores.reduce((a, b) => a + b, 0) / 4;
+                return { busy, user: busy * 0.66, system: busy * 0.3, iowait: busy * 0.04, ncpu: 4, cores };
+            })(),
             ncpu: 4,
+            load: { one: 1.42 + wob(40, 0.2), five: 1.31, fifteen: 1.24, running: 2, threads: 612 },
+            temp: { c: 61 + wob(41, 2), zone: 'x86_pkg_temp' },
+            freq: { hz: 1.9e9 + wob(42, 0.3e9), max: 2.4e9 },
             procs,
             hidden: 0,
             restricted: false,

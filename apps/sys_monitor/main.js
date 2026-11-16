@@ -30,21 +30,12 @@ const TREND_MIN_S = 30;                // growth is shown once a row has been se
 const MB = 1024 * 1024;
 const TOP = 44;                        // panels start under the tab bar
 
-/* Sizes on this display (kit/runtime/panel.js), as in Spotify: sz(cv, n) is n at the reference size. */
-const kOf = (cv) => (cv.ui && cv.ui.k) || 1.44;
-const sz = (cv, n) => Math.round(n * kOf(cv));
-const ROW = { font: 'label', spacing: 0.6 };
-const NUM = { font: 'num' };
-const faint = (t) => t.faint || withAlpha(t.dim, 0.7);
-
 /** Memory use's colour: fine, getting full, nearly full. */
 function pressure(t, frac) { return frac >= 0.9 ? t.crit : frac >= 0.75 ? t.warn : t.ok; }
 function pct(n) { return n == null ? '--' : n < 10 ? n.toFixed(1) : String(Math.round(n)); }
 /** Growth over the last minutes: "+12.0 MB", "0" (under 1 MB either way: a heap's usual ups and downs), "--" (not seen long enough). */
 function fmtGrow(d) { return d == null ? '--' : Math.abs(d) < MB ? '0' : (d > 0 ? '+' : '') + fmtBytes(d); }
 function growCol(t, d, base) { return d == null || d < 10 * MB ? base : d >= 50 * MB ? t.crit : t.warn; }
-/** The three parts of the memory in use (breakdown): their colours. */
-const PARTS = (t) => [t.sel || t.accent, t.cold, withAlpha(t.dim, 0.55)];
 
 /** str cut (with "..") to fit maxW pixels at this size. */
 function fitText(cv, str, maxW, size, opts) {
@@ -56,26 +47,6 @@ function fitText(cv, str, maxW, size, opts) {
         if (cv.textWidth(str.slice(0, mid).replace(/\s+$/, '') + '..', size, opts) <= maxW) lo = mid; else hi = mid - 1;
     }
     return str.slice(0, lo).replace(/\s+$/, '') + '..';
-}
-
-/** A small chevron pointing down (the column the list is sorted by), its tip at x, y. */
-function downMark(cv, x, y, s, c) {
-    cv.line(x - s, y - s * 0.55, x, y, 2, c);
-    cv.line(x, y, x + s, y - s * 0.55, 2, c);
-}
-
-/** A button in the HMI's style, pressed by a tap or the controller (target key). */
-function drawButton(cv, t, x, y, w, h, label, key, run, o) {
-    o = o || {};
-    G.pushButton(cv, t, x, y, w, h, { primary: !!o.primary, focus: G.isFocus(cv, key) });
-    const size = Math.round(Math.min(sz(cv, 14), h * 0.44)), opts = { align: 'center', font: 'label', spacing: 0.5 };
-    // a "go on" chevron after the label; a "back" one (chevron 'left') before it
-    const back = o.chevron === 'left', lw = cv.textWidth(label, size, opts);
-    const cx = x + w / 2 + (o.chevron ? (back ? 1 : -1) * size * 0.45 : 0);
-    cv.text(label, cx, y + h / 2 + size * 0.36, size, t.text, opts);
-    if (back) G.chevron(cv, cx - lw / 2 - size * 0.85, y + h / 2, size * 0.42, t.dim, 'left');
-    else if (o.chevron) G.chevron(cv, cx + lw / 2 + size * 0.85, y + h / 2, size * 0.42, t.dim);
-    cv.target(x, y, w, h, run, key, 3, { own: true });
 }
 
 /** Where the apps are installed: the folder above this app's own (oap_<uid>/data), else the head unit's. */
@@ -189,122 +160,103 @@ mgu.run({
         function closeDetail() { detail = null; redraw(); }
         /** The head unit lets an app see only its own processes: say so where the list would be. */
         function drawRestricted(cv, t, x, y) {
-            cv.text('This head unit lets an app see only its own processes.', x, y, sz(cv, 14), t.dim, ROW);
+            cv.text('This head unit lets an app see only its own processes.', x, y, 26, t.dim);
             cv.text(page === 0 ? 'The memory figures above are the whole head unit\'s.' : 'The memory figures on Overview are the whole head unit\'s.',
-                x, y + sz(cv, 24), sz(cv, 12), faint(t), ROW);
+                x, y + 36, 22, t.dim);
         }
-        /** A row's name, with "(this app)" and an "MGU Store" mark; cut to w. */
-        function drawName(cv, t, r, x, y, w, size, col, focus) {
-            const name = fitText(cv, r.label + (r.self ? '  (this app)' : ''), w, size, ROW);
-            cv.text(name, x, y, size, col, ROW);
-            if (r.store && r.kind === 'app' && !r.self) {
-                const nx = x + cv.textWidth(name, size, ROW) + sz(cv, 10), ts = sz(cv, 10);
-                if (nx + cv.textWidth('MGU Store', ts, ROW) < x + w) cv.text('MGU Store', nx, y, ts, focus ? withAlpha('#ffffff', 0.75) : faint(t), ROW);
+        /** A row's name in bold, with "(this app)" and an "MGU Store" tag; cut to w. */
+        function drawName(cv, t, r, x, y, w, size) {
+            const tag = r.store && r.kind === 'app' && !r.self, tw = tag ? 150 : 0;
+            const name = fitText(cv, r.label + (r.self ? '  (this app)' : ''), w - tw, size, { font: 'bold' });
+            cv.text(name, x, y, size, t.text, { font: 'bold' });
+            if (tag) {
+                const nx = x + cv.textWidth(name, size, { font: 'bold' }) + 14;
+                cv.roundRect(nx, y - size * 0.8, 130, size * 0.95, 6, withAlpha(t.accent, 0.22));
+                cv.text('MGU STORE', nx + 65, y - size * 0.12, 16, t.accent, { align: 'center', font: 'bold', spacing: 0.5 });
             }
+        }
+
+        /** Tile i of n across the top (as Fault Scanner's): its label, a big value and a note under the label's right. */
+        function tile(cv, t, i, n, label, value, sub, col) {
+            const w = (1552 - (n - 1) * 16) / n, x = 24 + i * (w + 16);
+            G.panel(cv, t, x, 44, w, 115, label);
+            // the number in the number font (it has no letters), its unit after it in the text's
+            const size = n > 4 ? 44 : 52, m = /^([+-]?[\d.,]+)\s*(.*)$/.exec(String(value));
+            const num = m ? m[1] : String(value), unit = m ? m[2] : '';
+            cv.text(num, x + 18, 142, size, col || t.text, { font: m ? 'num' : 'bold' });
+            if (unit) cv.text(unit, x + 18 + cv.textWidth(num, size, { font: m ? 'num' : 'bold' }) + 8, 142, Math.round(size * 0.5), t.dim, { font: 'bold' });
+            if (sub) cv.text(fitText(cv, sub, w * 0.45, 22), x + w - 18, 142, 22, t.dim, { align: 'right' });
+        }
+
+        /** A coloured dot and its text (legends): returns the width taken. */
+        function legend(cv, t, x, y, text, col) {
+            cv.circle(x + 7, y - 7, 7, col);
+            cv.text(text, x + 22, y, 22, t.text);
+            return 22 + cv.textWidth(text, 22);
         }
 
         /* ---------- Overview ---------- */
         function drawOverview(cv, t) {
-            const m = snap.mem, ex = cv.extra || 0;
-            const panelH = 508 + ex - TOP;
-            const LX = 24, LW = 760, RX = 800, RW = 776;
-
-            // left: memory now, where it goes, and what uses the most
-            G.panelExact(cv, t, LX, TOP, LW, panelH, 'Memory');
-            const x = LX + 26, iw = LW - 52;
-            let y = TOP + 48;
-            if (!m) {
-                cv.text('This head unit doesn\'t say how much memory it has.', x, y + sz(cv, 30), sz(cv, 14), t.dim);
-                y += sz(cv, 60);
+            const m = snap.mem, ex = G.pageBottom(cv) - G.BOTTOM;
+            if (m) {
+                const frac = m.used / m.total, parts = breakdown(snap);
+                tile(cv, t, 0, 4, 'Memory in use', pct(frac * 100) + ' %', fmtBytes(m.used) + ' of ' + fmtBytes(m.total), pressure(t, frac));
+                tile(cv, t, 1, 4, 'iDrive apps', fmtBytes(parts.apps), 'MainApp and apps', t.text);
+                tile(cv, t, 2, 4, 'Other programs', fmtBytes(parts.programs), 'HMI, media, nav', t.text);
+                tile(cv, t, 3, 4, 'Available', fmtBytes(m.available), m.swapTotal ? 'swap ' + fmtBytes(m.swapUsed) : 'no swap', t.text);
             } else {
-                const frac = m.used / m.total, col = pressure(t, frac);
-                const big = sz(cv, 24);
-                y += big + sz(cv, 10);
-                const used = fmtBytes(m.used), uw = cv.textWidth(used, big, { font: 'light' });
-                cv.text(used, x, y, big, t.text, { font: 'light' });
-                cv.text('in use of ' + fmtBytes(m.total) + (m.approx ? ' (approximate)' : ''), x + uw + sz(cv, 10), y, sz(cv, 13), t.dim);
-                cv.text(pct(frac * 100) + ' %', x + iw, y, sz(cv, 19), col, { align: 'right', font: 'label' });
-                // the bar: what is in use, in its three parts, over the whole RAM
-                y += sz(cv, 11);
-                const bh = sz(cv, 9), parts = breakdown(snap), cols = PARTS(t);
-                cv.roundRect(x, y, iw, bh, bh / 2, withAlpha('#ffffff', 0.14));
-                let bx = x;
-                [parts.apps, parts.programs, parts.system].forEach((v, i) => {
-                    const w = Math.max(0, Math.min(x + iw - bx, v / m.total * iw));
-                    if (w >= 1) cv.fillRect(bx, y, w, bh, cols[i]);
-                    bx += w;
-                });
-                y += bh + sz(cv, 20);
-                let lx = x;
-                [['iDrive apps', parts.apps], ['Other programs', parts.programs], ['System and shared', parts.system]].forEach((p, i) => {
-                    lx += G.status(cv, t, lx, y, p[0] + '  ' + fmtBytes(p[1]), cols[i], sz(cv, 11)) + sz(cv, 22);
-                });
-                y += sz(cv, 30);
-                const stats = [
-                    ['Available', fmtBytes(m.available)],
-                    ['Cache', fmtBytes(m.cache)],
-                    ['Swap', m.swapTotal ? fmtBytes(m.swapUsed) + ' of ' + fmtBytes(m.swapTotal) : 'None'],
-                ];
-                const cw = iw / stats.length;
-                stats.forEach((c, i) => {
-                    cv.text(c[0], x + i * cw, y, sz(cv, 10), t.dim, { font: 'label', spacing: 0.4 });
-                    cv.text(fitText(cv, c[1], cw - 12, sz(cv, 14), ROW), x + i * cw, y + sz(cv, 19), sz(cv, 14), t.text, ROW);
-                });
-                y += sz(cv, 19) + sz(cv, 26);
+                tile(cv, t, 0, 2, 'Memory', '--', 'not reported by this head unit', t.dim);
+                tile(cv, t, 1, 2, 'Processes', String(snap.procs.length), '', t.text);
             }
-            G.sectionTitle(cv, t, x, y, iw, 'Using the most memory', sz(cv, 13));
-            y += sz(cv, 12);
-            if (snap.restricted) { drawRestricted(cv, t, x, y + sz(cv, 28)); return drawHistory(cv, t, m, panelH, RX, RW); }
-            const top = rows(true, 'mem');
-            const rowH = sz(cv, 27), bottom = TOP + panelH - 8;
-            const n = Math.max(0, Math.min(top.length, Math.floor((bottom - y) / rowH)));
-            const most = top.length ? top[0].mem : 1;
-            top.slice(0, n).forEach((r, i) => {
-                const ry = y + i * rowH, key = 'top_' + r.key, focus = G.isFocus(cv, key), cy = ry + rowH / 2;
-                G.listRow(cv, t, x - 10, ry, iw + 20, rowH, { focus, active: r.self });
-                const vs = sz(cv, 12);
-                const valX = x + iw - 4, growX = valX - sz(cv, 92), barW = sz(cv, 80), barX = growX - sz(cv, 70) - barW;
-                drawName(cv, t, r, x + 4, cy + vs * 0.36, barX - x - sz(cv, 16), vs, t.text, focus);
-                G.progress(cv, t, barX, cy - 2, barW, r.mem / most, 4, focus ? '#ffffff' : t.sel || t.accent);
-                cv.text(fmtGrow(r.grow), growX, cy + vs * 0.36, sz(cv, 11), growCol(t, r.grow, focus ? withAlpha('#ffffff', 0.75) : faint(t)), { align: 'right', font: 'num' });
-                cv.text(fmtBytes(r.mem), valX, cy + vs * 0.36, vs, focus ? '#ffffff' : t.dim, { align: 'right', font: 'num' });
-                cv.target(x - 10, ry, iw + 20, rowH, () => openDetail(r), key, 3, { own: true });
-            });
-            drawHistory(cv, t, m, panelH, RX, RW);
-        }
 
-        /** The Overview's right panel: the history of memory and processor use, and a few facts. */
-        function drawHistory(cv, t, m, panelH, RX, RW) {
-            G.panelExact(cv, t, RX, TOP, RW, panelH, 'Last ' + Math.round(HISTORY_S / 60) + ' minutes');
+            // left: what uses the most memory (a tap or press: its details)
+            const p = G.panel(cv, t, 24, 176, 760, 336, 'Using the most memory');
+            if (snap.restricted) drawRestricted(cv, t, 48, 270);
+            else {
+                const top = rows(true, 'mem'), most = top.length ? top[0].mem : 1;
+                const n = Math.max(0, Math.min(top.length, Math.floor((p.y + p.h - 12 - 232) / 46)));
+                top.slice(0, n).forEach((r, i) => {
+                    const y = 232 + i * 46;
+                    if (cv.own) cv.target(40, y - 4, 728, 42, () => openDetail(r), 'top_' + r.key, 8);
+                    cv.roundRect(48, y + 3, 8, 30, 4, r.self ? t.accent : growCol(t, r.grow, withAlpha(t.dim, 0.5)));
+                    drawName(cv, t, r, 72, y + 28, 340, 24);
+                    cv.roundRect(430, y + 14, 150, 8, 4, t.track);
+                    cv.roundRect(430, y + 14, Math.max(8, 150 * r.mem / most), 8, 4, t.bar || t.accent);
+                    cv.text(fmtGrow(r.grow), 660, y + 27, 20, growCol(t, r.grow, t.dim), { align: 'right', font: 'num' });
+                    cv.text(fmtBytes(r.mem), 760, y + 28, 26, t.text, { align: 'right', font: 'bold' });
+                    if (i < n - 1) cv.fillRect(48, y + 40, 712, 1, withAlpha(t.tick, 0.25));
+                });
+            }
+
+            // right: memory and processor over the last minutes
+            const q = G.panel(cv, t, 804, 176, 772, 336, 'Last ' + Math.round(HISTORY_S / 60) + ' minutes');
             const now = snap.at;
             const memPts = history.filter((h) => h[1] != null).map((h) => [(h[0] - now) / 1000, h[1]]);
             const cpuPts = history.filter((h) => h[2] != null).map((h) => [(h[0] - now) / 1000, h[2]]);
-            const legendH = sz(cv, 64);
-            const chartY = TOP + 60, chartH = TOP + panelH - chartY - legendH;
-            G.chart(cv, t, RX + 16, chartY, RW - 36, chartH, {
+            const memCol = m ? pressure(t, m.used / m.total) : t.accent;
+            G.chart(cv, t, 820, 226, 740, q.y + q.h - 226 - 52, {
                 xMin: -HISTORY_S, xMax: 0, yMin: 0, yMax: 100, xStep: 60, yStep: 25,
                 // (no label at the left end: it would sit on the 0 %)
                 xFmt: (v) => (v === 0 ? 'now' : v <= -HISTORY_S ? '' : Math.round(-v / 60) + ' min'), yFmt: (v) => v + '%',
                 series: [
-                    { pts: memPts, color: m ? pressure(t, m.used / m.total) : t.accent, fill: 0.18, width: 2.5 },
+                    { pts: memPts, color: memCol, fill: 0.18, width: 2.5 },
                     { pts: cpuPts, color: t.cold, width: 2 },
                 ],
                 empty: 'Collecting...',
             });
-            let ly = TOP + panelH - legendH + sz(cv, 30);
-            const ls = sz(cv, 13);
-            let lx = RX + 26;
-            lx += G.status(cv, t, lx, ly, 'Memory  ' + (m ? pct(m.used / m.total * 100) + ' %' : '--'), m ? pressure(t, m.used / m.total) : t.dim, ls) + sz(cv, 30);
-            G.status(cv, t, lx, ly, 'Processor  ' + (snap.cpu ? pct(snap.cpu.busy) + ' %' : '--'), t.cold, ls);
-            ly += sz(cv, 24);
+            const ly = q.y + q.h - 18;
+            let lx = 830;
+            lx += legend(cv, t, lx, ly, 'Memory  ' + (m ? pct(m.used / m.total * 100) + ' %' : '--'), memCol) + 30;
+            legend(cv, t, lx, ly, 'Processor  ' + (snap.cpu ? pct(snap.cpu.busy) + ' %' : '--'), t.cold);
             const facts = [snap.procs.length + (snap.procs.length === 1 ? ' process' : ' processes')];
             if (snap.ncpu) facts.push(snap.ncpu + ' cores');
             if (snap.uptime != null) facts.push('up ' + fmtAge(snap.uptime));
-            cv.text(facts.join('   ·   '), RX + 26, ly, sz(cv, 12), faint(t));
+            cv.text(facts.join('  ·  '), 1552, ly, 20, t.dim, { align: 'right' });
+            return ex;
         }
 
         /* ---------- Processes ---------- */
-        const listGeo = { rowH: 1, count: 0, visible: 1 };
+        const listGeo = { rowH: 46, count: 0, visible: 1 };
         let scrollAcc = 0;
         ctx.onScroll((dy) => {
             if (page !== 1 || detail) return false;
@@ -322,23 +274,19 @@ mgu.run({
 
         function drawProcesses(cv, t) {
             const grouped = !!settings.get('group'), list = rows(grouped, sortBy), total = snap.mem ? snap.mem.total : null;
-            const ex = cv.extra || 0, panelH = 508 + ex - TOP;
-            const title = (grouped ? 'Apps and programs' : 'Processes') + '  ·  ' + list.length;
-            G.panelExact(cv, t, 24, TOP, 1552, panelH, title);
-            const note = 'Memory: each one\'s own, without shared files' + (snap.hidden ? '   ·   ' + snap.hidden + ' not readable' : '');
-            cv.text(note, 1552, TOP + 33, sz(cv, 11), faint(t), { align: 'right' });
+            const title = (grouped ? 'Apps and programs' : 'Processes') + '  ' + list.length;
+            const p = G.panel(cv, t, 24, 44, 1552, 468, title);
+            const note = 'Memory: each one\'s own, without shared files' + (snap.hidden ? '  ·  ' + snap.hidden + ' not readable' : '');
+            cv.text(note, 1552, 80, 20, t.dim, { align: 'right' });
 
-            // the headings: tap one to sort by it
-            const hs = sz(cv, 12), hy = TOP + 48 + sz(cv, 26);
-            const X = { name: 60, count: 760, mem: 960, pct: 1110, grow: 1280, cpu: 1440 };
+            // the column headings: tap one to sort by it (the one sorted by in the theme's colour)
+            const hy = 128;
+            const X = { name: 72, count: 760, mem: 960, pct: 1120, grow: 1300, cpu: 1470 };
             const heading = (label, x, align, by) => {
-                const on = by && sortBy === by, key = 'sort_' + by;
-                const w = cv.textWidth(label, hs, { font: 'label' }) + (on ? hs : 0);
-                const x0 = align === 'right' ? x - w : x;
-                if (by && G.isFocus(cv, key)) G.focusBar(cv, t, x0 - 10, hy - hs - 8, w + 20, hs + 18, 3);
-                cv.text(label, align === 'right' && on ? x - hs : x, hy, hs, on ? t.text : t.dim, { align, font: 'label', spacing: 0.4 });
-                if (on) downMark(cv, align === 'right' ? x - hs * 0.4 : x0 + w - hs * 0.4, hy - hs * 0.2, hs * 0.3, t.text);
-                if (by) cv.target(x0 - 10, hy - hs - 12, w + 20, hs + 26, () => { sortBy = by; scroll = 0; redraw(); }, key, 3, { own: true });
+                const on = by && sortBy === by, opt = { align, font: 'bold', spacing: 1.2 };
+                const text = label.toUpperCase() + (on ? '  v' : ''), w = cv.textWidth(text, 18, opt);
+                cv.text(text, x, hy, 18, on ? t.sel || t.accent : t.dim, opt);
+                if (by && cv.own) cv.target((align === 'right' ? x - w : x) - 12, hy - 30, w + 24, 44, () => { sortBy = by; scroll = 0; redraw(); }, 'sort_' + by, 8);
             };
             heading('Name', X.name, 'left', 'name');
             heading(grouped ? 'Processes' : 'PID', X.count, 'right', null);
@@ -346,104 +294,93 @@ mgu.run({
             heading('% of RAM', X.pct, 'right', null);
             heading('Last 3 min', X.grow, 'right', 'grow');
             heading('Processor', X.cpu, 'right', 'cpu');
+            cv.fillRect(48, hy + 12, 1504, 2, withAlpha(t.tick, 0.5));
 
-            const listTop = hy + sz(cv, 14), rowH = sz(cv, 33), listBottom = TOP + panelH - 8;
+            const listTop = hy + 22, rowH = 46, listBottom = p.y + p.h - 12;
             const visible = Math.max(1, Math.floor((listBottom - listTop) / rowH));
             scroll = Math.max(0, Math.min(scroll, Math.max(0, list.length - visible)));
             listGeo.rowH = rowH; listGeo.count = list.length; listGeo.visible = visible;
-            cv.scroll = true;
-            const vs = sz(cv, 14), by = (y) => y + vs * 0.36;
+            if (list.length > visible) cv.scroll = true;
             list.slice(scroll, scroll + visible).forEach((r, vi) => {
-                const y = listTop + vi * rowH, cy = y + rowH / 2, key = 'row_' + r.key, focus = G.isFocus(cv, key);
-                G.listRow(cv, t, 40, y, 1500, rowH, { focus, active: r.self });
-                const val = focus ? '#ffffff' : t.text, dim = focus ? withAlpha('#ffffff', 0.8) : t.dim;
-                drawName(cv, t, r, X.name, by(cy), X.count - 150 - X.name, vs, val, focus);
-                cv.text(grouped ? String(r.count) : String(r.pids[0]), X.count, by(cy), vs, dim, { align: 'right', font: 'num' });
-                cv.text(fmtBytes(r.mem), X.mem, by(cy), vs, val, { align: 'right', font: 'num' });
-                cv.text(total ? pct(r.mem / total * 100) + ' %' : '--', X.pct, by(cy), vs, dim, { align: 'right', font: 'num' });
-                cv.text(fmtGrow(r.grow), X.grow, by(cy), vs, growCol(t, r.grow, dim), { align: 'right', font: 'num' });
-                cv.text(r.cpu == null ? '--' : pct(r.cpu) + ' %', X.cpu, by(cy), vs, dim, { align: 'right', font: 'num' });
-                G.chevron(cv, 1516, cy, sz(cv, 6), dim);
-                cv.target(40, y, 1500, rowH, () => openDetail(r), key, 3, { list: 'procs', row: scroll + vi, step: rowH, own: true });
+                const y = listTop + vi * rowH, ty = y + 30;
+                if (cv.own) cv.target(40, y, 1504, rowH - 4, () => openDetail(r), 'row_' + r.key, 8);
+                cv.roundRect(48, y + 6, 8, 30, 4, r.self ? t.accent : growCol(t, r.grow, withAlpha(t.dim, 0.5)));
+                drawName(cv, t, r, X.name, ty, X.count - 160 - X.name, 26);
+                cv.text(grouped ? String(r.count) : String(r.pids[0]), X.count, ty, 24, t.dim, { align: 'right', font: 'num' });
+                cv.text(fmtBytes(r.mem), X.mem, ty, 26, t.text, { align: 'right', font: 'bold' });
+                cv.text(total ? pct(r.mem / total * 100) + ' %' : '--', X.pct, ty, 24, t.dim, { align: 'right', font: 'num' });
+                cv.text(fmtGrow(r.grow), X.grow, ty, 24, growCol(t, r.grow, t.dim), { align: 'right', font: 'num' });
+                cv.text(r.cpu == null ? '--' : pct(r.cpu) + ' %', X.cpu, ty, 24, t.dim, { align: 'right', font: 'num' });
+                if (vi < visible - 1 && scroll + vi < list.length - 1) cv.fillRect(48, y + rowH - 3, 1504, 1, withAlpha(t.tick, 0.25));
             });
-            if (snap.restricted && list.length <= visible) drawRestricted(cv, t, 60, listTop + list.length * rowH + sz(cv, 34));
-            else if (!list.length) cv.text('No processes could be read.', 800, listTop + sz(cv, 40), sz(cv, 15), t.dim, { align: 'center' });
-            G.scrollbar(cv, t, 1556, listTop, listBottom - listTop, list.length, visible, scroll);
+            if (snap.restricted && list.length <= visible) drawRestricted(cv, t, 72, listTop + list.length * rowH + 44);
+            else if (!list.length) cv.text('No processes could be read.', 800, listTop + 60, 28, t.dim, { align: 'center' });
+            // where the list is: a bar at the panel's right edge
+            if (list.length > visible) {
+                const vis = listBottom - listTop, bh = Math.max(40, vis * visible / list.length);
+                cv.roundRect(1561, listTop + (vis - bh) * scroll / Math.max(1, list.length - visible), 6, bh, 3, withAlpha(t.text, 0.3));
+            }
         }
 
         /* ---------- a row's details ---------- */
-        function tile(cv, t, x, y, w, h, label, value, color) {
-            cv.roundRect(x, y, w, h, 10, withAlpha('#ffffff', 0.06));
-            cv.text(label.toUpperCase(), x + sz(cv, 14), y + sz(cv, 22), sz(cv, 10), t.dim, { font: 'bold', spacing: 1.5 });
-            cv.text(fitText(cv, value, w - sz(cv, 28), sz(cv, 22), { font: 'bold' }), x + sz(cv, 14), y + h - sz(cv, 16), sz(cv, 22), color || t.text, { font: 'bold' });
-        }
         function drawDetail(cv, t) {
-            const ex = cv.extra || 0, panelH = 508 + ex - TOP;
             const r = rows(detail.key.indexOf('pid:') !== 0, 'mem').find((g) => g.key === detail.key);
-            G.panelExact(cv, t, 24, TOP, 1552, panelH, r ? r.label + (r.self ? '  (this app)' : '') : detail.label);
-            const bw = sz(cv, 110), bh = sz(cv, 30);
-            drawButton(cv, t, 1552 - bw, TOP + 6, bw, bh, 'Back', 'btn_back', closeDetail, { chevron: 'left' });
-            const x = 50, iw = 1500;
+            const name = r ? r.label + (r.self ? '  (this app)' : '') : detail.label;
             if (!r) {
-                cv.text('This ' + (detail.key.indexOf('pid:') === 0 ? 'process' : 'program') + ' has ended.', x, TOP + 48 + sz(cv, 36), sz(cv, 16), t.dim);
+                const p = G.panel(cv, t, 24, 44, 1552, 468, name);
+                G.button(cv, t, 42 + cv.textWidth(name, 26, { font: 'bold' }) + 28, 57, 0, 40, 'Back', closeDetail, { key: 'back' });
+                cv.text('This ' + (detail.key.indexOf('pid:') === 0 ? 'process' : 'program') + ' has ended.', 800, p.y + p.h / 2, 30, t.dim, { align: 'center' });
                 return;
             }
             const total = snap.mem ? snap.mem.total : null;
-            let y = TOP + 48 + sz(cv, 10);
-            const th = sz(cv, 62), gap = 18;
-            const tiles = [
-                ['Its own memory', fmtBytes(r.mem)],
-                ['Share of RAM', total ? pct(r.mem / total * 100) + ' %' : '--'],
-                ['Last 3 minutes', fmtGrow(r.grow), growCol(t, r.grow, null)],
-                ['Processor', r.cpu == null ? '--' : pct(r.cpu) + ' %'],
-                r.count > 1 ? ['Processes', String(r.count)] : ['Threads', String(r.threads)],
-            ];
-            const tw = (iw - gap * (tiles.length - 1)) / tiles.length;
-            tiles.forEach((d, i) => tile(cv, t, x + i * (tw + gap), y, tw, th, d[0], d[1], d[2]));
-            y += th + sz(cv, 28);
-            const ls = sz(cv, 13), lh = sz(cv, 22);
+            tile(cv, t, 0, 5, 'Own memory', fmtBytes(r.mem), '', t.text);
+            tile(cv, t, 1, 5, 'Share of RAM', total ? pct(r.mem / total * 100) + ' %' : '--', '', t.text);
+            tile(cv, t, 2, 5, 'Last 3 minutes', fmtGrow(r.grow), '', growCol(t, r.grow, t.text));
+            tile(cv, t, 3, 5, 'Processor', r.cpu == null ? '--' : pct(r.cpu) + ' %', '', t.cold);
+            tile(cv, t, 4, 5, r.count > 1 ? 'Processes' : 'Threads', String(r.count > 1 ? r.count : r.threads), '', t.text);
+
+            const p = G.panel(cv, t, 24, 176, 1552, 336, name);
+            // Back right after the title, as Fault Scanner puts its buttons (where the kit runs the screen; else the bar's page button)
+            G.button(cv, t, 42 + cv.textWidth(fitText(cv, name, 900, 26, { font: 'bold' }), 26, { font: 'bold' }) + 28, 189, 0, 40, 'Back', closeDetail, { key: 'back' });
+            const x = 48, iw = 1504, row = (y, label, value) => {
+                cv.text(label.toUpperCase(), x, y, 20, t.dim, { font: 'bold', spacing: 1.2 });
+                cv.text(fitText(cv, value, iw - 300, 24), x + 280, y, 24, t.text);
+            };
             const uid = r.procs[0] ? r.procs[0].uid : null;
-            cv.text('This is ' + kindText(r) + (uid != null && r.kind ? ' (user ' + uid + ')' : '') + '.', x, y, ls, t.text, ROW);
-            y += lh + 4;
-            cv.text('With the program and library files it shares with others ' + fmtBytes(r.rss) + '   ·   swapped out ' + fmtBytes(r.swap), x, y, ls, t.dim, ROW);
-            y += lh + 4;
+            let y = 262;
+            row(y, 'What it is', kindText(r) + (uid != null && r.kind ? ' (user ' + uid + ')' : ''));
+            y += 40;
+            row(y, 'With shared files', fmtBytes(r.rss) + '  ·  swapped out ' + fmtBytes(r.swap));
+            y += 40;
             if (r.count === 1) {
-                const p = r.procs[0];
+                const pr = r.procs[0];
                 const states = { R: 'running', S: 'sleeping', D: 'waiting on a device', T: 'stopped', Z: 'ended (zombie)', I: 'idle' };
-                const facts = ['PID ' + p.pid, 'parent ' + p.ppid, states[p.state] || p.state];
-                if (p.age != null) facts.push('running for ' + fmtAge(p.age));
-                if (p.file != null) facts.push('files ' + fmtBytes(p.file), 'shared memory ' + fmtBytes(p.shm));
-                cv.text(facts.join('   ·   '), x, y, ls, t.dim, ROW);
-                y += lh + 2;
-                const cmd = sampler.command(p.pid);
-                if (cmd) {
-                    G.sectionTitle(cv, t, x, y + sz(cv, 10), iw, 'Command', sz(cv, 13));
-                    y += sz(cv, 32);
-                    cv.text(fitText(cv, cmd, iw, sz(cv, 12), NUM), x, y, sz(cv, 12), t.dim, NUM);
-                }
+                const facts = ['PID ' + pr.pid, 'parent ' + pr.ppid, states[pr.state] || pr.state];
+                if (pr.age != null) facts.push('running for ' + fmtAge(pr.age));
+                row(y, 'Process', facts.join('  ·  '));
+                y += 40;
+                if (pr.file != null) { row(y, 'Files, shared', fmtBytes(pr.file) + '  ·  shared memory ' + fmtBytes(pr.shm)); y += 40; }
+                const cmd = sampler.command(pr.pid);
+                if (cmd) row(y, 'Command', cmd);
                 return;
             }
             // a group: its processes, the largest first
-            G.sectionTitle(cv, t, x, y + sz(cv, 4), iw, 'Its processes', sz(cv, 13));
-            y += sz(cv, 16);
-            const procRow = sz(cv, 26), bottom = TOP + panelH - 8;
-            const procs = r.procs.slice().sort((a, b) => b.mem - a.mem);
-            const n = Math.max(0, Math.floor((bottom - y) / procRow));
-            procs.slice(0, n).forEach((p, i) => {
-                const ry = y + i * procRow, cy = ry + procRow / 2, s = sz(cv, 12);
-                G.listRow(cv, t, x - 10, ry, iw + 20, procRow, { active: p.self });
-                cv.text('PID ' + p.pid, x, cy + s * 0.36, s, t.dim, NUM);
-                cv.text(fmtBytes(p.mem), x + 360, cy + s * 0.36, s, t.text, { align: 'right', font: 'num' });
-                cv.text(p.cpu == null ? '--' : pct(p.cpu) + ' %', x + 500, cy + s * 0.36, s, t.dim, { align: 'right', font: 'num' });
-                cv.text(fitText(cv, sampler.command(p.pid) || p.name, iw - 560, s, NUM), x + 560, cy + s * 0.36, s, t.dim, NUM);
+            cv.fillRect(x, y - 16, iw, 1, withAlpha(t.tick, 0.25));
+            const procs = r.procs.slice().sort((a, b) => b.mem - a.mem), bottom = p.y + p.h - 12;
+            const n = Math.max(0, Math.floor((bottom - y) / 34));
+            procs.slice(0, n).forEach((pr, i) => {
+                const ry = y + i * 34;
+                cv.text('PID ' + pr.pid, x, ry, 22, t.dim, { font: 'num' });
+                cv.text(fmtBytes(pr.mem), x + 360, ry, 24, t.text, { align: 'right', font: 'bold' });
+                cv.text(pr.cpu == null ? '--' : pct(pr.cpu) + ' %', x + 500, ry, 22, t.dim, { align: 'right', font: 'num' });
+                cv.text(fitText(cv, sampler.command(pr.pid) || pr.name, iw - 560, 22), x + 560, ry, 22, t.dim);
             });
-            if (procs.length > n) cv.text('and ' + (procs.length - n) + ' more', x + iw - sz(cv, 130), TOP + 33, sz(cv, 12), faint(t), { align: 'right' });
+            if (procs.length > n) cv.text('and ' + (procs.length - n) + ' more', 1552, 212, 22, t.dim, { align: 'right' });
         }
 
         /* ---------- frame ---------- */
         function frameSig() {
-            return [page, detail && detail.key, ctx.display && ctx.display.focusKey, scroll, seq, sortBy,
-                settings.get('theme'), settings.get('group')].join('|');
+            return [page, detail && detail.key, scroll, seq, sortBy, settings.get('theme'), settings.get('group')].join('|');
         }
         let lastSig = '', lastDrawAt = 0;
         function loopFrame() {
@@ -456,15 +393,14 @@ mgu.run({
             lastDrawAt = Date.now();
             const t = ctx.theme();
             const cv = ctx.canvas(W, H).clear(t.bg);
-            G.background(cv, t, 0, 0, W, H + (cv.extra || 0));
-            if (!snap) cv.text('Reading memory...', 800, 260, sz(cv, 16), t.dim, { align: 'center' });
+            if (!snap) cv.text('Reading memory...', 800, 280, 32, t.dim, { align: 'center' });
             else if (detail) drawDetail(cv, t);
             else if (page === 0) drawOverview(cv, t);
             else drawProcesses(cv, t);
             const m = snap && snap.mem;
             G.frame(cv, t, PAGES, page, [
-                sample ? { text: 'Sample data', color: t.warn }
-                    : m ? { text: 'Memory ' + pct(m.used / m.total * 100) + ' %', color: pressure(t, m.used / m.total) } : null,
+                sample ? { text: 'SAMPLE DATA' }
+                    : m ? { text: 'MEMORY ' + pct(m.used / m.total * 100) + ' %', color: pressure(t, m.used / m.total) } : null,
             ]);
             await ui.image('MAIN_GFX', cv);
         }

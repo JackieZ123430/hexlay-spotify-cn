@@ -270,9 +270,8 @@ class Display {
     _ring() {
         const tl = this._tabList();
         const tabs = tl.tabs.length > 1 || tl.settings >= 0 ? tl.tabs.map((x, i) => ({ k: 'tab:' + i, tab: i })) : [];
-        const tgts = (this.pageTargets || []).filter((q) => !q.touch).map((q) => ({ k: 'tgt:' + q.key, tgt: q }));
-        // a page whose lists go row by row (targets with a list) has no separate scrolling stop: the knob scrolls them
-        const scroll = this.pageScroll && this.onScroll && !tgts.some((p) => p.tgt.list != null) ? [{ k: 'scroll', scroll: true }] : [];
+        const scroll = this.pageScroll && this.onScroll ? [{ k: 'scroll', scroll: true }] : [];
+        const tgts = (this.pageTargets || []).map((q) => ({ k: 'tgt:' + q.key, tgt: q }));
         const top = this.pageScroll && this.pageScroll.y != null ? this.pageScroll.y : -Infinity;
         const over = tgts.filter((p) => p.tgt.y + p.tgt.h <= top);
         return tabs.concat(over, scroll, tgts.filter((p) => over.indexOf(p) < 0), this.buttons().map((b) => ({ k: 'bar:' + b.id, bar: b.id })));
@@ -380,42 +379,19 @@ class Display {
         // pushed up / down / left / right: the nearest place that way; left with nothing there goes back (leaves the app)
         if (tilt) {
             const to = this._toward(tilt, here);
-            if (to) this._focusOwn(to); else if (tilt === 'W') this._back();
+            if (to) { this._focus(to); this._repaint(); } else if (tilt === 'W') this._back();
             return;
         }
         // one row of places for the knob: the header's tabs, the page's buttons and rows, the bar
         const ring = this._ring();
         let i = ring.findIndex((p) => p.k === this.focusKey);
         if (d && i >= 0 && ring[i].scroll && this._scrollBy(d * 70)) return;
-        // in a list (targets with list / row), as the HMI's own lists: one row a click; past the rows shown the
-        // list scrolls a row and the controller lands on the row that comes (present: pendingFocus)
-        // (a quick spin comes as one event of several clicks: as many rows)
-        const cur = i >= 0 && ring[i].tgt && ring[i].tgt.list != null ? ring[i].tgt : null;
-        if (d && cur) {
-            const want = cur.row + d;
-            const next = ring.find((p) => p.tgt && p.tgt.list === cur.list && p.tgt.row === want);
-            if (next) { this._focusOwn(next); return; }
-            // the rows shown that way: the list scrolls by as many rows as the turn goes past the last one
-            const shown = ring.filter((p) => p.tgt && p.tgt.list === cur.list).map((p) => p.tgt.row);
-            const edge = d > 0 ? Math.max.apply(null, shown) : Math.min.apply(null, shown), past = want - edge;
-            if (shown.length && (d > 0 ? past > 0 : past < 0)) {
-                // (set first: the scroll draws the app's next frame at once, and that frame takes the controller there)
-                this.pendingFocus = { list: cur.list, row: want, at: Date.now() };
-                if (this.onScroll && this._scrollBy(past * (cur.step || cur.h), { x: cur.x + cur.w / 2, y: cur.y + cur.h / 2 })) return;
-                this.pendingFocus = null;
-                // the list can't go further: its last (first) row first, as the HMI's lists stop there; only a
-                // turn from that row leaves the list
-                if (edge !== cur.row) {
-                    const last = ring.find((p) => p.tgt && p.tgt.list === cur.list && p.tgt.row === edge);
-                    if (last) { this._focusOwn(last); return; }
-                }
-            }
-        }
         if (d && ring.length) {
             // the first turn lands on the page shown (or the first place there is)
             const sel = this._tabList().sel;
             i = i < 0 ? Math.max(0, ring.findIndex((p) => p.tab === sel)) : Math.max(0, Math.min(ring.length - 1, i + d));
-            this._focusOwn(ring[i]);
+            this._focus(ring[i]);
+            this._repaint();
         }
         if (press && i >= 0) {
             const p = ring[i];
@@ -446,8 +422,7 @@ class Display {
     }
     /**
      * The place nearest the controller's one in direction dir (N, S, E, W), by the places' centres: the
-     * distance that way, the sideways one counting double, a place alongside (overlapping it across the way)
-     * before any other. Nothing focused yet: the page's tab (left: none).
+     * distance that way, the sideways one counting double. Nothing focused yet: the page's tab (left: none).
      */
     _toward(dir, here) {
         const ring = this._ring().filter((p) => !p.scroll || this.focusKey === 'scroll');
@@ -462,26 +437,13 @@ class Display {
             const dx = r.x + r.w / 2 - cx, dy = r.y + r.h / 2 - cy;
             const ahead = dir === 'E' ? dx : dir === 'W' ? -dx : dir === 'S' ? dy : -dy, side = dir === 'E' || dir === 'W' ? Math.abs(dy) : Math.abs(dx);
             if (ahead <= 4) return;
-            // what lies alongside first (a list beside a list, a row's neighbour), as the HMI moves its focus
-            const across = dir === 'E' || dir === 'W' ? r.y < cr.y + cr.h && r.y + r.h > cr.y : r.x < cr.x + cr.w && r.x + r.w > cr.x;
-            const sc = ahead + 2 * side + (across ? 0 : 2000);
+            const sc = ahead + 2 * side;
             if (sc < score) { score = sc; best = p; }
         });
         return best;
     }
-    /**
-     * The controller moves to place p: the header and bar show it at once; a page target whose focus bar the app
-     * draws (own), or one it leaves, asks the app for its next frame (the bar is under the target's text).
-     */
-    _focusOwn(p) {
-        const before = (this.pageTargets || []).find((q) => 'tgt:' + q.key === this.focusKey);
-        this._focus(p);
-        this._repaint();
-        if ((p && p.tgt && p.tgt.own) || (before && before.own)) { this.lastWords = null; this.tickHandlers.forEach((fn) => fn()); }
-    }
     /** The controller is on place p of the ring (null: nowhere). */
     _focus(p) {
-        this.pendingFocus = null;            // (a move of the controller's own wins over a list row still to come)
         this.focusKey = p ? p.k : null;
         this.focusTab = p && p.tab != null ? p.tab : null;
         this.focused = p && p.bar ? p.bar : null;
@@ -494,7 +456,6 @@ class Display {
      */
     _touch(phase, x, y) {
         const inside = (r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
-        if (phase === 1) this.pendingFocus = null;
         if (this.own()) {
             const pl = this.place, sx = x * pl.scale + pl.ox, sy = y * pl.scale + pl.oy;
             const bar = sy >= pl.h - this.barH() ? this.buttons().find((b) => sx >= b.x - this.barOff - pl.x && sx < b.x - this.barOff - pl.x + b.w) : null;
@@ -779,8 +740,6 @@ class Display {
         r.place = this.active() ? this.place : null;
         // the kit runs the screen: buttons drawn on the page (G.button) take the place of the bar's
         r.own = this.own() && this.active();
-        // the page target the controller is on (its key): the app draws the focus bar under it (target's own)
-        r.focusKey = r.own && this.focusKey && this.focusKey.indexOf('tgt:') === 0 ? this.focusKey.slice(4) : null;
         r.extra = r.own && this.place.extra ? this.place.extra : 0;
         // sizes for this panel: controls and text in millimetres (panel.js); no text smaller than readable
         r.ui = this.sizes();
@@ -796,19 +755,7 @@ class Display {
         if (!(r instanceof Recorder)) return softImage(name, r);
         if (r.chrome && r.chrome.tabs) this.tabInfo = r.chrome.tabs;
         else if (r.tabInfo) this.tabInfo = r.tabInfo;
-        if (!this.sheet) {
-            this.pageTargets = r.targets || []; this.pageScroll = r.scroll && typeof r.scroll === 'object' ? r.scroll : !!r.scroll;
-            const pf = this.pendingFocus;
-            if (pf) {
-                const rows = this.pageTargets.filter((t) => t.list === pf.list && t.row != null);
-                // (past the list's end the row asked for never comes: the nearest one, the list's last, at once)
-                const q = rows.find((t) => t.row === pf.row) || rows.reduce((b, t) => (!b || Math.abs(t.row - pf.row) < Math.abs(b.row - pf.row) ? t : b), null);
-                if (q || Date.now() - pf.at > 1500) {
-                    this.pendingFocus = null;
-                    if (q) { this.focusKey = 'tgt:' + q.key; if (q.own) this.tickHandlers.forEach((fn) => fn()); }
-                }
-            }
-        }
+        if (!this.sheet) { this.pageTargets = r.targets || []; this.pageScroll = r.scroll && typeof r.scroll === 'object' ? r.scroll : !!r.scroll; }
         // a sheet is over the page: the app's frames wait (the last one comes back when it closes)
         if (this.sheet && this.active() && this.place.full) {
             if (r.chrome) this.saved = Object.assign({}, this.saved || {}, {
@@ -961,29 +908,23 @@ class Display {
         // as wide as the app's widest, so none of that title shows beside it
         if (!this.sheet) this.headMax = Math.max(this.headMax || 0, end);
         const sx = this.headEnd = Math.min(geo.statusX - pl.x, Math.ceil(Math.max(end, this.headMax || 0)));
-        if (sx > end) c.fillRect(end, 0, sx - end, geo.headH, HMI.headBg);
+        if (sx > end) { c.fillRect(end, 0, sx - end, geo.headH - 2, HMI.headBg); c.fillRect(end, geo.headH - 2, sx - end, 2, G.withAlpha('#ffffff', 0.22)); }
         // the tab the controller is on (the kit holds it: Display._ccu)
         const ft = this.focusTab != null && (!this.sheet || this.sheetHead) && (c.tabRects || []).find((q) => q.i === this.focusTab);
-        if (ft) {
-            G.focusBar(c, t, ft.x + 4, ft.y + 12, ft.w - 8, ft.h - 24, 3, true);
-            // its name white over the bar (the open tab's own colour, red in iDrive Red, would not show on it)
-            if (ft.label) c.text(ft.label.text, ft.label.x, ft.label.y, ft.label.size, '#ffffff', ft.label.opt);
-        }
+        if (ft) c.strokeRoundRect(ft.x + 4, ft.y + 10, ft.w - 8, ft.h - 20, 10, 2, t.sel || t.accent);
         // the page button (or row) the controller is on, and one just pressed
         const k = pl.scale, onPage = (key) => !this.sheet && key && (this.pageTargets || []).find((q) => 'tgt:' + q.key === key);
-        // the HMI's focus is a bar with square-ish corners; a round button (r of half its height or more) keeps its circle
-        const fr = (q) => (q.r != null && q.r >= q.h / 2 - 0.5 ? q.h / 2 : 3);
         const pt = onPage(this.focusKey), pp = Date.now() - this.pressedT < 300 && onPage(this.pressed);
-        if (pp) c.roundRect(pp.x * k + pl.ox, pp.y * k + pl.oy, pp.w * k, pp.h * k, fr(pp) * k, G.withAlpha(t.focus || t.sel || t.accent, 0.45));
+        if (pp) c.roundRect(pp.x * k + pl.ox, pp.y * k + pl.oy, pp.w * k, pp.h * k, (pp.r != null ? pp.r : pp.h / 2) * k, G.withAlpha(t.sel || t.accent, 0.35));
         // the controller on a page that scrolls: a frame round the page; on a list (cv.scroll = { y, bar }) its
         // scroll bar in the colour of the selection (bar: where the page drew it, so it moves with the list)
         const sb = this.focusKey === 'scroll' && !this.sheet && this.pageScroll;
-        const edge = t.focusEdge || t.sel || t.accent;
-        if (sb === true) c.strokeRoundRect(hx + 6, geo.headH + 6, W - hx - 12, H - this.barH() - geo.headH - 12, 4, 2, G.withAlpha(edge, 0.85));
-        else if (sb && sb.bar) c.roundRect((sb.bar.x - 2) * k + pl.ox, sb.bar.y * k + pl.oy, (sb.bar.w + 4) * k, sb.bar.h * k, (sb.bar.w / 2 + 2) * k, edge);
-        if (pt && !pt.own) G.focusBar(c, t, pt.x * k + pl.ox - 3, pt.y * k + pl.oy - 3, pt.w * k + 6, pt.h * k + 6, fr(pt) * k + 3, true);
-        // the strip goes on, black, under the see-through part (no edge: the HMI's own strip has none)
+        if (sb === true) c.strokeRoundRect(hx + 6, geo.headH + 6, W - hx - 12, H - this.barH() - geo.headH - 12, 14, 3, G.withAlpha(t.sel || t.accent, 0.8));
+        else if (sb && sb.bar) c.roundRect((sb.bar.x - 2) * k + pl.ox, sb.bar.y * k + pl.oy, (sb.bar.w + 4) * k, sb.bar.h * k, (sb.bar.w / 2 + 2) * k, t.sel || t.accent);
+        if (pt) c.strokeRoundRect(pt.x * k + pl.ox - 5, pt.y * k + pl.oy - 5, pt.w * k + 10, pt.h * k + 10, (pt.r != null ? pt.r : pt.h / 2) * k + 5, 3, t.sel || t.accent);
+        // the strip's bottom edge continues under the see-through part
         c.fillRect(sx, 0, W - sx, geo.headH, HMI.headBg);
+        c.fillRect(sx, geo.headH - 2, W - sx, 2, G.withAlpha('#ffffff', 0.22));
         // slim bar: each label over its HMI button
         const by = H - this.barH();
         const btns = this.buttons().map((b) => ({ id: b.id, label: b.label, x: b.x - this.barOff - pl.x, w: b.w }));

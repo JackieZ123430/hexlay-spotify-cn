@@ -116,8 +116,8 @@ class AlbumArtManager {
                     const buf = Buffer.concat(chunks);
                     const decoded = decodeJpeg(buf, { formatAsRGBA: true });
                     if (decoded && decoded.width > 0 && decoded.height > 0) {
-                        // the HMI's covers have barely rounded corners (about 1 %)
-                        this._applyRoundedCorners(decoded, Math.max(2, Math.round(decoded.width * 0.012)));
+                        // Apply rounded corner mask to blend into #0c1015
+                        this._applyRoundedCorners(decoded, Math.round(decoded.width * 0.07));
 
                         // Keep up to 25 recent album covers in cache
                         if (this.cache.size >= 25) {

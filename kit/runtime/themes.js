@@ -1,53 +1,15 @@
 'use strict';
 /**
  * themes.js - colour schemes for kit-drawn screens. Picked per app in its
- * settings ("theme"); unknown ids fall back to iDrive Red, the default.
+ * settings ("theme"); unknown ids fall back to M Tricolour, the default.
  * oil = colour of oil temperature (red in M Tricolour, so it stands apart from the blue coolant).
  * bar = fill of the OEM-style bars, hang = their peak hold (default: the fill colour), sel = selected tab (selText = its name, default sel), marker = the '|' at the end of a bar / on a chart.
- * mStripes = the M stripes on panel titles (G.panel).
  * ramp = colours a bar runs through from low to high; hotRamp = a dial's arc, running
  * from the theme colour to red at the dial's limit (redline, max boost, ...).
- * rowTop / rowBottom: list rows on the HMI's grey list panel (G.listRow), parted by a dark line (rowLine)
- * over a light one (rowShine); focusLines: the HMI's square focus bar, its bright edge (focusEdge) as a
- * line along the top and the bottom, its fill running from focus down to focusLow.
  */
 const THEMES = {
-    /*
-     * iDrive Red (the default): the iDrive 7 HMI's native lists as the car draws them (colours taken from
-     * photos of its native list screens): black around a grey list panel, white text, a red title and a
-     * red focus bar with bright red lines along its top and bottom.
-     */
-    idrive_red: {
-        name: 'iDrive Red',
-        bg: '#000000', bgTop: '#0f1018', bgBottom: '#010102',
-        panelTop: '#1b1d25', panelBottom: '#101117', panelEdge: '#2c2f3a',
-        rowTop: '#4f5260', rowBottom: '#434654', rowLine: '#1c1d25', rowShine: '#ffffff2e',
-        tab: '#ffffff', track: '#2a2c36', tick: '#4a4d5a', text: '#ffffff', dim: '#b6b9c4', faint: '#80838f',
-        line: '#ffffff24', focus: '#a72436', focusLow: '#801a29', focusEdge: '#ff4d57', focusLines: true,
-        accent: '#e8202e', accent2: '#ff5a63', ok: '#5fbf6b', warn: '#f2a531', crit: '#ff3b30', cold: '#73b9ff',
-        glow: '#e8202e40', stripes: ['#81c4ff', '#16588e', '#e7222e'], oil: '#e5352d', bar: '#e8202e', sel: '#e8202e', selText: '#ff4048', marker: '#ffffff',
-        ramp: ['#7a1020', '#e8202e', '#ff8a90'],
-        hotRamp: ['#7a1020', '#b81828', '#e8202e', '#ff4048', '#ff8a90'],
-    },
-    /*
-     * iDrive Blue: the iDrive 7 HMI's look in blue. Black with a faint blue light from the
-     * top, white text, grey secondary text, hairline separators, and blue only where the HMI uses it -
-     * the controller's focus bar (focus / focusEdge), a selection, a progress bar. bgTop / bgBottom:
-     * the page's light; line: the separators; faint: the quietest text (hints, units).
-     */
-    idrive: {
-        name: 'iDrive Blue',
-        bg: '#000000', bgTop: '#0b1724', bgBottom: '#010204',
-        panelTop: '#0d141c', panelBottom: '#070b10', panelEdge: '#1f2a36',
-        tab: '#ffffff', track: '#1a232d', tick: '#3b4652', text: '#ffffff', dim: '#8e9aa7', faint: '#5d6875',
-        line: '#ffffff24', focus: '#1d64c4', focusEdge: '#5fa8ff',
-        accent: '#3f8ef0', accent2: '#7cb8ff', ok: '#5fbf6b', warn: '#f2a531', crit: '#e5352d', cold: '#73b9ff',
-        glow: '#3f8ef040', stripes: ['#81c4ff', '#16588e', '#e7222e'], oil: '#e5352d', bar: '#3f8ef0', sel: '#3f8ef0', selText: '#ffffff', marker: '#ffffff',
-        ramp: ['#1d4f8f', '#3f8ef0', '#9ccaff'],
-        hotRamp: ['#1d4f8f', '#3f8ef0', '#3f8ef0', '#c04cdc', '#e5352d'],
-    },
     m_red: {
-        name: 'M Red', mStripes: true,
+        name: 'M Red',
         bg: '#050506', panelTop: '#17181c', panelBottom: '#0d0d10', panelEdge: '#2a2b31',
         tab: '#e6e6e6', track: '#222329', tick: '#5a5c64', text: '#ffffff', dim: '#8e9199',
         accent: '#e1001a', accent2: '#ff5a5f', ok: '#e1001a', warn: '#ffb31a', crit: '#ff1f1f', cold: '#3d8bff',
@@ -55,7 +17,7 @@ const THEMES = {
         hotRamp: ['#7a0010', '#b00016', '#e1001a', '#ff2030', '#ff5a64'],
     },
     m_tricolour: {
-        name: 'M Tricolour', mStripes: true,
+        name: 'M Tricolour',
         bg: '#04060a', panelTop: '#141a24', panelBottom: '#0a0d13', panelEdge: '#242c39',
         tab: '#e6e6e6', track: '#1b212b', tick: '#4c5666', text: '#f4f7fb', dim: '#8a95a6',
         accent: '#f4f7fb', accent2: '#81c4ff', ok: '#f4f7fb', warn: '#ffb020', crit: '#ef2b2d', cold: '#7fd1ff',
@@ -79,18 +41,9 @@ const THEMES = {
         glow: '#ff9d0050', stripes: ['#ff9d00'], oil: '#ff9d00', bar: '#ff9d00', sel: '#ff9d00', marker: '#ffe2b0', ramp: ['#8a4b00', '#ff9d00', '#ffd27a'],
         hotRamp: ['#8a4b00', '#ff9d00', '#ff9d00', '#ff6a1f', '#ff3b1f'],
     },
-    spotify: {
-        name: 'Spotify Green',
-        bg: '#050708', panelTop: '#0e1614', panelBottom: '#070c0a', panelEdge: '#1a2e24',
-        tab: '#ffffff', track: '#14201a', tick: '#385547', text: '#ffffff', dim: '#8da89b',
-        accent: '#1db954', accent2: '#1ed760', ok: '#1db954', warn: '#ffb31a', crit: '#ff3b30', cold: '#3d8bff',
-        glow: '#1db95444', stripes: ['#1db954', '#1ed760'], oil: '#1db954', bar: '#1db954', sel: '#1db954', marker: '#ffffff',
-        ramp: ['#0d4220', '#1db954', '#2af575'],
-        hotRamp: ['#0d4220', '#16803b', '#1db954', '#1ed760', '#55ff88'],
-    },
 };
 
-function theme(id) { return THEMES[id] || THEMES.idrive_red; }
+function theme(id) { return THEMES[id] || THEMES.m_tricolour; }
 const ids = () => Object.keys(THEMES);
 
 module.exports = { THEMES, theme, ids };

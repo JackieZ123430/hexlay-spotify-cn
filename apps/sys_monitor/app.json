@@ -2,7 +2,7 @@
   "id": "sys_monitor",
   "title": "System Monitor",
   "description": "What uses the head unit's memory and processor: free RAM, a live history, and every app and program with the memory it takes. Read only.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "vendor": "custom",
   "loggingId": "OASM",
   "iconGlyph": "memory",
@@ -19,8 +19,8 @@
     }
   ],
   "settings": [
-    {"key": "theme", "label": "Colour theme", "type": "choice", "default": "idrive_red",
-     "options": [["idrive_red", "iDrive Red"], ["idrive", "iDrive Blue"], ["m_tricolour", "M Tricolour"], ["m_red", "M Red"], ["ice", "Ice White"], ["amber", "Night Amber"]]},
+    {"key": "theme", "label": "Colour theme", "type": "choice", "default": "m_tricolour", "aliases": {"idrive": "m_tricolour", "idrive_red": "m_tricolour"},
+     "options": [["m_red", "M Red"], ["m_tricolour", "M Tricolour"], ["ice", "Ice White"], ["amber", "Night Amber"]]},
     {"key": "group", "label": "Group processes by app", "type": "bool", "default": true},
     {"key": "interval", "label": "Update every", "type": "number", "unit": "s", "default": 2, "markDefault": true,
      "steps": [1, 2, 5, 10]}

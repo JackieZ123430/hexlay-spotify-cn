@@ -134,133 +134,8 @@ function zoneColor(t, g, v, base) {
 }
 const col = (t, c, dflt) => (c ? t[c] || c : dflt);
 
-/* ---------------- iDrive 7 elements ---------------- */
-/*
- * The pieces the iDrive 7 HMI builds its own screens from, for pages the kit draws: the black page with
- * a faint blue light from the top, full-width list rows parted by hairlines (no boxes), sentence-case
- * text in the light and regular weights, and blue only where the HMI uses it: the controller's focus
- * bar, a selection, progress. Colours come from the theme (themes.js: line, focus, focusEdge, faint;
- * themes without them get them from their own colours).
- */
-const lineCol = (t) => t.line || withAlpha('#ffffff', 0.14);
-const faintCol = (t) => t.faint || withAlpha(t.dim || '#8e9aa7', 0.7);
-// the focus bar: the theme's own (iDrive Red, iDrive Blue), else its selection colour with a lighter edge of the same hue
-const focusCols = (t) => {
-    const fill = t.focus || t.sel || t.accent;
-    return { fill, edge: t.focusEdge || mix(fill, '#ffffff', 0.4) };
-};
-
-/** The page's background: the theme's black with its light from the top (bgTop), over x, y, w, h. */
-function background(cv, t, x, y, w, h) {
-    cv.fillRect(x, y, w, h, t.bg);
-    if (t.bgTop) cv.gradientRect(x, y, w, h, [[0, t.bgTop], [0.45, t.bg], [1, t.bgBottom || t.bg]]);
-}
-
-/**
- * The iDrive focus bar: the HMI's highlight of the entry the controller is on (a blue bar with a light
- * edge). over: drawn over content (the kit's focus mark on a page): lighter, so the text stays white.
- */
-function focusBar(cv, t, x, y, w, h, r, over) {
-    const f = focusCols(t);
-    // (focusLines: the HMI's own, square, with its edge as a line along the top and the bottom)
-    if (t.focusLines) {
-        const a = over ? 0.5 : 1, e = Math.min(2, h / 4);
-        cv.card(x, y, w, h, 0, [[0, withAlpha(f.fill, a)], [1, withAlpha(t.focusLow || f.fill, a)]]);
-        cv.fillRect(x, y, w, e, f.edge);
-        cv.fillRect(x, y + h - e, w, e, f.edge);
-        return;
-    }
-    r = r == null ? 3 : Math.min(r, h / 2);
-    cv.card(x, y, w, h, r, [[0, withAlpha(f.fill, over ? 0.34 : 0.62)], [1, withAlpha(f.fill, over ? 0.2 : 0.38)]]);
-    cv.strokeRoundRect(x, y, w, h, r, 2, withAlpha(f.edge, 0.95));
-}
-
-/** A hairline: the HMI's separator between list rows and under section titles. */
-function hairline(cv, t, x, y, w) { cv.fillRect(x, y, w, 1, lineCol(t)); }
-
-/** The controller is on target key (where the kit runs the screen): its focus bar is drawn under it. */
-const isFocus = (cv, key) => !!cv.focusKey && cv.focusKey === String(key);
-
-/**
- * A list row's backdrop, x, y, w, h: its hairline at the bottom; o.active (the entry in use: what
- * plays, the chosen playlist) a faint white wash and a blue mark at its left end; o.focus (the controller
- * is on it: isFocus) the HMI's focus bar over the whole row, under its text; o.line false: no hairline.
- */
-function listRow(cv, t, x, y, w, h, o) {
-    o = o || {};
-    // (rowTop: the HMI's grey list panel under the rows; the rows next to each other make it one panel)
-    if (t.rowTop) cv.card(x, y, w, h, 0, [[0, t.rowTop], [1, t.rowBottom || t.rowTop]]);
-    if (o.focus) { focusBar(cv, t, x, y + 1, w, h - 1, 3); return; }
-    if (o.active) {
-        cv.fillRect(x, y, w, h, withAlpha('#ffffff', 0.07));
-        cv.fillRect(x, y + 6, 3, h - 12, t.sel || t.accent);
-    }
-    if (o.line === false) return;
-    if (t.rowTop) {
-        cv.fillRect(x, y + h - 2, w, 1, t.rowLine || '#00000080');
-        cv.fillRect(x, y + h - 1, w, 1, t.rowShine || withAlpha('#ffffff', 0.18));
-    } else hairline(cv, t, x, y + h, w);
-}
-
-/** A section's title, as the HMI titles its lists: light weight at x, baseline y, a hairline under it to w. */
-function sectionTitle(cv, t, x, y, w, title, size) {
-    size = size || 24;
-    cv.text(String(title), x, y, size, t.text, { font: 'light' });
-    if (w) hairline(cv, t, x, y + Math.round(size * 0.55), w);
-}
-
-/** The HMI's thin chevron (a submenu, "go on"): pointing right at x (its tip), centred on y. */
-function chevron(cv, x, y, s, c, dir) {
-    s = s || 9;
-    const d = dir === 'left' ? -1 : 1;
-    cv.line(x - d * s * 0.55, y - s, x, y, 2, c);
-    cv.line(x, y, x - d * s * 0.55, y + s, 2, c);
-}
-
-/**
- * The HMI's scroll bar: a hairline track with a light thumb, at x (its centre), y, h, for total rows
- * of which visible show from offset. Nothing when everything shows. Returns the thumb's rect or null.
- */
-function scrollbar(cv, t, x, y, h, total, visible, offset) {
-    if (!(total > visible)) return null;
-    const max = Math.max(1, total - visible);
-    const th = Math.max(28, Math.round((visible / total) * h));
-    const ty = y + Math.round((Math.min(Math.max(0, offset), max) / max) * (h - th));
-    cv.fillRect(x - 0.5, y, 1, h, lineCol(t));
-    cv.roundRect(x - 2, ty, 4, th, 2, withAlpha('#ffffff', 0.78));
-    return { x: x - 2, y: ty, w: 4, h: th };
-}
-
-/** A thin progress line (playback, a read that runs): track and fill, frac 0..1, at x, y, w, height h. */
-function progress(cv, t, x, y, w, frac, h, c) {
-    h = h || 4;
-    const f = clamp(isNum(frac) ? frac : 0, 0, 1);
-    cv.roundRect(x, y, w, h, h / 2, withAlpha('#ffffff', 0.18));
-    if (f > 0) cv.roundRect(x, y, Math.max(h, w * f), h, h / 2, c || t.sel || t.accent);
-}
-
-/** A status dot and its text (the HMI's quiet status line): colour c, text in t.dim; returns the width. */
-function status(cv, t, x, y, text, c, size) {
-    size = size || 18;
-    const r = Math.max(3, Math.round(size * 0.2));
-    cv.circle(x + r, y - size * 0.34, r, c || t.dim);
-    cv.text(String(text), x + r * 2 + 10, y, size, t.dim);
-    return r * 2 + 10 + cv.textWidth(String(text), size);
-}
-
-/**
- * The HMI's info sign for a message (no internet, nothing to show): a thin ring with "i", or with "!"
- * for a warning (o.warn: in t.warn). Centred at cx, cy, radius r.
- */
-function infoSign(cv, t, cx, cy, r, warn) {
-    const c = warn ? t.warn : t.text;
-    cv.arc(cx, cy, r - 1.5, r + 1, 0, 360, withAlpha(c, 0.9));
-    const s = Math.round(r * 1.1);
-    cv.text(warn ? '!' : 'i', cx, cy + s * 0.36, s, c, { align: 'center', font: warn ? 'bold' : 'label' });
-}
-
 /* ---------------- panel ---------------- */
-/** A content area with its title in the iDrive 7 style; cached as a layer. Returns the rect drawn: { x, y, w, h }. */
+/** Widget chrome in the OEM (G20 / MGU7) style; cached as a layer. Returns the rect drawn: { x, y, w, h }. */
 function panel(cv, t, x, y, w, h, title) { return box(cv, t, x, y, w, stretch(cv, y, h), title); }
 /**
  * Height of a panel at y: one down to the page's bottom goes on down to the screen's where there is room
@@ -286,19 +161,18 @@ const MARGIN = 22;
  */
 function toMargin(room, m) { return room + m - MARGIN; }
 function drawPanel(cv, t, x, y, w, h, title) {
-    // as the iDrive 7 HMI parts its screens: no box, only the faintest wash to set the area off,
-    // the title in the light weight, a hairline under it. (M themes, "mStripes": the M stripes
-    // in front of the title's hairline.)
-    cv.fillRect(x, y, w, h, withAlpha('#c8d4e4', 0.035));
-    // (the title takes 48 px: a list under it starts at y + 48, as the HMI's lists start under their title)
-    if (title) {
-        cv.text(String(title), x + 18, y + 33, 24, t.text, { font: 'light', spacing: 0.4 });
-        hairline(cv, t, x + 18, y + 46, w - 36);
-    }
-    if (t.mStripes) {
-        const st = t.stripes || [t.accent], BW = 48, gap = 2, sw = (BW - gap * (st.length - 1)) / st.length;
-        st.forEach((c, i) => cv.fillRect(x + 18 + i * (sw + gap), title ? y + 45 : y, sw, 3, c));
-    }
+    // flat light grey overlay; top: a short bold bar in the theme's stripe colours (M tricolour:
+    // light blue, dark blue, red; the last part with an angled end), then a thin white line;
+    // large white title in normal case
+    cv.fillRect(x, y, w, h, withAlpha('#b4bccc', 0.07));
+    const st = t.stripes || [t.accent], BW = 78, gap = 3, sw = (BW - gap * (st.length - 1)) / st.length;
+    st.forEach((c, i) => {
+        const sx = x + i * (sw + gap), last = i === st.length - 1;
+        if (last) cv.quad([[sx, y], [sx + sw, y], [sx + sw - 8, y + 5], [sx, y + 5]], c);
+        else cv.fillRect(sx, y, sw, 5, c);
+    });
+    cv.fillRect(x + BW + 2, y + 2, w - BW - 2, 1.5, withAlpha('#ffffff', 0.9));
+    if (title) cv.text(String(title), x + 18, y + 42, 26, t.text, { font: 'bold' });
 }
 
 /* ---------------- radial dial ---------------- */
@@ -442,7 +316,8 @@ function rampSlab(cv, x0, x1, y, h, sl, stops, spanX, spanW) {
  * on it; below it in g.negColor. g.head: false leaves out the label / value row (the bar at y).
  * g.track: the empty track's colour. g.ticks: the values marked on the scale line; g.labels:
  * [{ value, text, color, align }] in place of its numbers. g.text / g.valueColor: the value row's text and colour
- * in place of the formatted value.
+ * in place of the formatted value. g.peakText: the peak as a number too ("PEAK 312"), small, after the label
+ * (left out where the label and the value leave no room for it).
  */
 function bar(cv, t, x, y, w, h, g) {
     const min = g.min || 0, v = g.value;
@@ -451,10 +326,16 @@ function bar(cv, t, x, y, w, h, g) {
     if (g.niceMax) max = min + Math.ceil((max - min) / step - 1e-9) * step;
     const sv = sm(g, 'bar|' + x + '|' + y, v), head = g.head !== false;
     if (head) {
-        cv.text(upperText(g.label || ''), x, y + 26, 22, t.dim, { font: 'bold', spacing: 2 });
-        const uw = g.unit ? cv.textWidth(' ' + g.unit, 26) : 0;
-        cv.text(g.text != null ? g.text : fmt(v, g.decimals), x + w - uw, y + 30, 44, g.valueColor ? t[g.valueColor] || g.valueColor : isNum(v) ? t.text : t.dim, { align: 'right', font: 'num' });
+        const label = upperText(g.label || '');
+        cv.text(label, x, y + 26, 22, t.dim, { font: 'bold', spacing: 2 });
+        const uw = g.unit ? cv.textWidth(' ' + g.unit, 26) : 0, vs = g.text != null ? g.text : fmt(v, g.decimals);
+        cv.text(vs, x + w - uw, y + 30, 44, g.valueColor ? t[g.valueColor] || g.valueColor : isNum(v) ? t.text : t.dim, { align: 'right', font: 'num' });
         if (g.unit) cv.text(' ' + g.unit, x + w, y + 30, 26, t.dim, { align: 'right' });
+        if (g.peakText && isNum(g.peak)) {
+            const ps = localizeLabel('PEAK') + ' ' + fmt(g.peak, g.decimals), po = { font: 'label', spacing: 1, literal: true };
+            const px = x + cv.textWidth(label, 22, { font: 'bold', spacing: 2 }) + 22;
+            if (px + cv.textWidth(ps, 20, po) <= x + w - uw - cv.textWidth(vs, 44, { font: 'num' }) - 18) cv.text(ps, px, y + 26, 20, t.hang || t.accent2 || t.dim, po);
+        }
     }
     const bh = 22, by = y + (head ? 44 : 0), SL = 18, bw = w - SL;
     const X = (val) => x + clamp((val - min) / (max - min), 0, 1) * bw;
@@ -716,8 +597,8 @@ function table(cv, t, x, y, w, cols, rows, g) {
 function pill(cv, t, x, y, w, h, text, g) {
     g = g || {};
     const c = col(t, g.color, t.accent);
-    cv.roundRect(x, y, w, h, Math.min(4, h / 2), withAlpha(c, g.filled == null ? 0.22 : g.filled));
-    cv.text(String(text), x + w / 2, y + h / 2 + (g.size || 20) * 0.36, g.size || 20, g.textColor ? col(t, g.textColor, t.text) : c, { align: 'center', font: 'label', spacing: g.spacing == null ? 0 : g.spacing });
+    cv.roundRect(x, y, w, h, Math.min(10, h / 2), withAlpha(c, g.filled == null ? 0.22 : g.filled));
+    cv.text(String(text), x + w / 2, y + h / 2 + (g.size || 20) * 0.36, g.size || 20, g.textColor ? col(t, g.textColor, t.text) : c, { align: 'center', font: 'bold', spacing: g.spacing == null ? 2 : g.spacing });
     return w;
 }
 
@@ -819,52 +700,48 @@ function tabWidths(cv, names, size, opt, min, pad, room, pad0) {
 }
 function frame(cv, t, tabs, sel, badges) {
     if (cv.chrome) { cv.chrome.tabs = { tabs: tabs || [], sel, badges: (badges || []).filter(Boolean) }; return; }
-    // the HMI's look: the tabs as plain text on black, the open one white over a thin blue line
     const W = cv.w, S = t.sel || t.accent;
     cv.fillRect(0, 0, W, BAR_H, t.bg);
-    hairline(cv, t, 0, BAR_H - 1, W);
-    const opt = { align: 'center', font: 'label' };
+    cv.fillRect(0, 0, W, BAR_H, withAlpha('#ffffff', 0.07));
+    cv.fillRect(0, BAR_H - 1, W, 1, withAlpha('#ffffff', 0.18));
+    const opt = { align: 'center', font: 'bold', spacing: 1.5 };
     const live = (badges || []).filter(Boolean);
-    const labels = (tabs || []).map((n) => tabText(n));
-    const badgesW = live.reduce((a, b) => a + badgeW(cv, b, 17) + 24, 0);
-    const widths = tabWidths(cv, labels, 20, opt, 120, 44, W - 32 - badgesW, 20);
+    const labels = (tabs || []).map((n) => upperText(n));
+    const badgesW = live.reduce((a, b) => a + Math.max(24 * 3.5, cv.textWidth(b.text, 18, opt) + 24) + 24 * 0.4, 0);
+    const widths = tabWidths(cv, labels, 20, opt, 150, 48, W - 32 - badgesW, 20);
     let x = 16;
     cv.tabRects = [];
     labels.forEach((label, i) => {
         const tw = widths[i], on = i === sel;
         cv.tabRects.push({ i, x, y: 0, w: tw, h: BAR_H });
-        const lw = cv.textWidth(label, 20, opt);
-        if (on) cv.fillRect(x + (tw - lw) / 2, BAR_H - 3, lw, 3, S);
-        cv.text(label, x + tw / 2, 24, 20, on ? t.selText || t.text : t.dim, opt);
+        if (on) {
+            cv.gradientRect(x, 0, tw, BAR_H, [[0, withAlpha(S, 0)], [1, withAlpha(S, 0.22)]]);
+            cv.fillRect(x, BAR_H - 4, tw, 4, S);
+        }
+        cv.text(label, x + tw / 2, 25, 20, on ? t.selText || S : t.dim, opt);
+        if (i < tabs.length - 1) cv.fillRect(x + tw, 9, 1, BAR_H - 18, withAlpha('#ffffff', 0.12));
         x += tw;
     });
-    badgeRow(cv, t, W - 16, 6, 24, 17, live);
+    badgeRow(cv, t, W - 16, 6, 24, 18, (badges || []).filter(Boolean));
 }
 
-/** A tab's name as the HMI writes it: as given (sentence case), translated. */
-const tabText = (n) => localizeLabel(String(n));
-/** A badge's width at this size: its dot and text. */
-function badgeW(cv, b, size) { return Math.max(3, Math.round(size * 0.2)) * 2 + 10 + cv.textWidth(tabText(b.text), size); }
-
-/**
- * Badges right-aligned at xr (right edge), top y, height h, text size: each a status dot in its colour
- * and its text in the theme's grey, as the HMI's own status line. Returns the left edge.
- */
+/** Badges right-aligned at xr (right edge), top y, height h, text size. Returns the left edge. */
 function badgeRow(cv, t, xr, y, h, size, badges) {
+    const opt = { align: 'center', font: 'bold', spacing: 1.5 };
     let bx = xr;
     badges.forEach((b) => {
-        const bw = badgeW(cv, b, size), c = t[b.color] || b.color || t.dim;
-        status(cv, t, bx - bw, y + h / 2 + size * 0.36, tabText(b.text), c, size);
-        bx -= bw + Math.round(h * 0.9);
+        const bw = Math.max(h * 3.5, cv.textWidth(b.text, size, opt) + h), c = t[b.color] || b.color || t.warn;
+        cv.roundRect(bx - bw, y, bw, h, h * 0.2, withAlpha(c, 0.2));
+        cv.text(b.text, bx - bw / 2, y + h / 2 + size * 0.36, size, c, opt);
+        bx -= bw + h * 0.4;
     });
     return bx;
 }
 
 /**
- * Full-screen header in screen pixels (x, y, w, h), in the HMI's own title strip and its style: the
- * app's name in the light weight as the HMI titles a screen, its page tabs as plain text (the open one
- * white over a thin blue line) and status badges on the right. Tabs that don't fit drop the name.
- * flat: (no longer used: the header is always the plain t.bg of the HMI's strip)
+ * Full-screen header in screen pixels (x, y, w, h): the app's name, its page tabs (selected
+ * one lit, with an underline) and badges on the right. Tabs that don't fit drop the name.
+ * flat: no sheen (plain t.bg).
  * compact: smaller text, badges right after the tabs and only as wide as that content, so the
  * HMI's own status strip (radio station, phone signal, icons) can show to the right of it.
  * k (compact): size factor for the tabs and badges on this display (display.js chromeK: bigger on a
@@ -873,16 +750,19 @@ function badgeRow(cv, t, xr, y, h, size, badges) {
  */
 function header(cv, t, x, y, w, h, title, tabs, sel, badges, flat, compact, k) {
     if (compact) return headerCompact(cv, t, x, y, w, h, title, tabs, sel, badges, k);
-    const S = t.sel || t.accent, opt = { align: 'center', font: 'label' };
+    const S = t.sel || t.accent, opt = { align: 'center', font: 'bold', spacing: 2 };
     cv.fillRect(x, y, w, h, t.bg);
+    // flat: plain, to match the HMI's own black strip next to it
+    if (!flat) cv.gradientRect(x, y, w, h, [[0, withAlpha('#ffffff', 0.02)], [1, withAlpha('#ffffff', 0.08)]]);
+    cv.fillRect(x, y + h - 2, w, 2, withAlpha('#ffffff', 0.22));
     const right = badgeRow(cv, t, x + w - 16, y + (h - 30) / 2, 30, 18, badges || []);
-    const names = (tabs || []).map((n) => tabText(n));
-    const tw = tabWidths(cv, names, 22, opt, 140, 56, right - x - 20, 24);
+    const names = (tabs || []).map((n) => upperText(n));
+    const tw = tabWidths(cv, names, 20, opt, 170, 64, right - x - 20, 24);
     const tabsW = tw.reduce((a, b) => a + b, 0);
-    let tx = x + 24;
-    const tsize = 36, titleW = title ? cv.textWidth(title, tsize, { font: 'light' }) : 0;
+    let tx = x + 20;
+    const tsize = 38, titleW = title ? cv.textWidth(title, tsize) : 0;
     if (title && tx + titleW + 40 + tabsW <= right) {
-        cv.text(title, tx, y + h / 2 + tsize * 0.36, tsize, t.text, { font: 'light' });
+        cv.text(title, tx, y + h / 2 + tsize * 0.36, tsize, t.text);
         tx += titleW + 40;
     }
     cv.tabRects = [];
@@ -890,53 +770,57 @@ function header(cv, t, x, y, w, h, title, tabs, sel, badges, flat, compact, k) {
         const on = i === sel, bw = tw[i];
         if (tx + bw > right) return;
         cv.tabRects.push({ i, x: tx, y, w: bw, h });
-        const lw = cv.textWidth(n, 22, opt);
-        if (on) cv.fillRect(tx + (bw - lw) / 2, y + h - 12, lw, 3, S);
-        cv.text(n, tx + bw / 2, y + h / 2 + 8, 22, on ? t.selText || t.text : t.dim, opt);
+        if (on) {
+            cv.gradientRect(tx, y, bw, h, [[0, withAlpha(S, 0)], [1, withAlpha(S, 0.25)]]);
+            cv.fillRect(tx, y + h - 5, bw, 5, S);
+        }
+        cv.text(n, tx + bw / 2, y + h / 2 + 7, 20, on ? t.selText || '#ffffff' : t.dim, opt);
+        if (i < names.length - 1) cv.fillRect(tx + bw, y + h * 0.28, 1, h * 0.44, withAlpha('#ffffff', 0.14));
         tx += bw;
     });
-    return tx;
 }
 
 function headerCompact(cv, t, x, y, w, h, title, tabs, sel, badges, k) {
-    const z = Math.max(1, k || 1), S = t.sel || t.accent, opt = { align: 'center', font: 'label' };
-    const names = (tabs || []).map((n) => tabText(n));
-    const bsize = Math.round(17 * Math.min(z, 1.15)), bgap = Math.round(bsize * 1.4);
-    const bws = (badges || []).map((b) => badgeW(cv, b, bsize));
-    const badgesW = bws.reduce((a, b) => a + b + bgap, 0);
-    // the app's name as the HMI titles its own screens (light, white)
-    const tsize = 32, topt = { font: 'light' }, titleW = title ? cv.textWidth(title, tsize, topt) : 0;
+    const z = Math.max(1, k || 1), S = t.sel || t.accent, opt = { align: 'center', font: 'bold', spacing: 1.6 };
+    const bopt = { align: 'center', font: 'bold', spacing: 1.5 };
+    const names = (tabs || []).map((n) => upperText(n));
+    const bz = Math.min(z, 1.15), bh = Math.round(30 * bz), bsize = Math.round(17 * bz);
+    const bws = (badges || []).map((b) => Math.max(bh * 3.5, cv.textWidth(b.text, bsize, bopt) + bh));
+    const badgesW = bws.reduce((a, b) => a + b + bh * 0.4, 0);
+    const tsize = 32, titleW = title ? cv.textWidth(title, tsize) : 0;
     const room = w - 20 - (badgesW ? badgesW + 12 : 0);
     // the tabs' text as big as this display asks for, smaller only as far as every tab still fits
-    let tf = Math.round(20 * z);
+    let tf = Math.round(18 * z);
     while (tf > 18 && names.reduce((a, n) => a + cv.textWidth(n, tf, opt) + 20, 0) > room - 20) tf--;
-    const tw = tabWidths(cv, names, tf, opt, Math.round(112 * z), Math.round(44 * z), room - 20, 20);
+    const tw = tabWidths(cv, names, tf, opt, Math.round(132 * z), Math.round(44 * z), room - 20, 20);
     const tabsW = tw.reduce((a, b) => a + b, 0);
-    // the tabs start after the name: the name shows only where every tab still fits after it (else the last tab, Settings, drops)
-    const showTitle = title && 24 + titleW + 40 + tabsW <= room;
+    // the tabs start 20 px in: the name shows only where every tab still fits after it (else the last tab, Settings, drops)
+    const showTitle = title && 20 + titleW + 32 + tabsW <= room;
     // only as wide as the content: the rest of the strip stays the HMI's
-    let end = x + 24 + (showTitle ? titleW + 40 : 0);
+    let end = x + 20 + (showTitle ? titleW + 32 : 0);
     names.forEach((n, i) => { if (end + tw[i] <= x + room) end += tw[i]; });
     end = Math.min(x + w, end + (badgesW ? 12 + badgesW : 0) + 16);
     cv.fillRect(x, y, end - x, h, t.bg);
-    let tx = x + 24;
+    cv.fillRect(x, y + h - 2, end - x, 2, withAlpha('#ffffff', 0.22));
+    let tx = x + 20;
     if (showTitle) {
-        cv.text(title, tx, y + h / 2 + tsize * 0.36, tsize, t.text, topt);
-        tx += titleW + 40;
+        cv.text(title, tx, y + h / 2 + tsize * 0.36, tsize, t.text);
+        tx += titleW + 32;
     }
     cv.tabRects = [];
     names.forEach((n, i) => {
         const on = i === sel, bw = tw[i];
         if (tx + bw > x + room) return;
-        // (label: the name to draw again in white over the controller's focus bar, Display._drawChrome)
-        cv.tabRects.push({ i, x: tx, y, w: bw, h, label: { text: n, x: tx + bw / 2, y: y + h / 2 + tf * 0.34, size: tf, opt } });
-        const lw = cv.textWidth(n, tf, opt);
-        // the open tab: white, a thin blue line under its name (as the HMI marks the open one of its tabs)
-        if (on) cv.fillRect(tx + (bw - lw) / 2, y + h / 2 + tf * 0.36 + Math.round(10 * z), lw, Math.max(3, Math.round(3 * z)), S);
-        cv.text(n, tx + bw / 2, y + h / 2 + tf * 0.34, tf, on ? t.selText || t.text : t.dim, opt);
+        cv.tabRects.push({ i, x: tx, y, w: bw, h });
+        if (on) {
+            cv.gradientRect(tx, y, bw, h, [[0, withAlpha(S, 0)], [1, withAlpha(S, 0.25)]]);
+            cv.fillRect(tx, y + h - 4, bw, 4, S);
+        }
+        cv.text(n, tx + bw / 2, y + h / 2 + tf * 0.34, tf, on ? t.selText || '#ffffff' : t.dim, opt);
+        if (i < names.length - 1) cv.fillRect(tx + bw, y + h * 0.3, 1, h * 0.4, withAlpha('#ffffff', 0.14));
         tx += bw;
     });
-    if (badgesW) badgeRow(cv, t, tx + 12 + badgesW, y + (h - bsize * 1.6) / 2, bsize * 1.6, bsize, badges);
+    if (badgesW) badgeRow(cv, t, tx + 12 + badgesW, y + (h - bh) / 2, bh, bsize, badges);
     return end;
 }
 
@@ -944,27 +828,30 @@ function headerCompact(cv, t, x, y, w, h, title, tabs, sel, badges, k) {
  * Button bar: buttons = [{ label, x, w }] (x, w of each button), focus = index of the button
  * the iDrive controller is on (-1: none), flash = index of a just-pressed one.
  * variant: 'slim' (the full-screen layout's bar, any height, e.g. 48) or 'standard' (120).
- * In the HMI's style: black, a hairline on top, labels in sentence case, the focus bar on the focused one.
  */
 function menuBar(cv, t, x, y, w, h, buttons, focus, variant, flash) {
     const std = variant === 'standard', u = h / (std ? 120 : 48);
+    const sel = t.sel || t.accent;
     cv.fillRect(x, y, w, h, t.bg);
-    hairline(cv, t, x, y, w);
-    const size = (std ? 30 : 20) * u;
+    cv.gradientRect(x, y, w, h, [[0, withAlpha('#ffffff', 0.09)], [1, withAlpha('#ffffff', 0.03)]]);
+    cv.fillRect(x, y, w, Math.max(1, 2 * u), withAlpha('#ffffff', 0.2));
+    const size = (std ? 30 : 19) * u;
     buttons.forEach((b, i) => {
         const on = i === focus, hit = i === flash;
-        if (on || hit) focusBar(cv, t, b.x + 4 * u, y + 5 * u, b.w - 8 * u, h - 10 * u, 3 * u, !hit);
-        cv.text(tabText(b.label), b.x + b.w / 2, y + h / 2 + size * 0.36, size, on || hit ? '#ffffff' : t.text,
-            { align: 'center', font: 'label' });
-        if (i < buttons.length - 1) cv.fillRect(b.x + b.w, y + h * 0.3, 1, h * 0.4, lineCol(t));
+        if (on || hit) {
+            cv.gradientRect(b.x, y, b.w, h, [[0, withAlpha(sel, hit ? 0.5 : 0.08)], [1, withAlpha(sel, hit ? 0.7 : 0.4)]]);
+            cv.fillRect(b.x, y + h - 4 * u, b.w, 4 * u, sel);
+        }
+        const label = std ? String(b.label) : upperText(b.label);
+        cv.text(label, b.x + b.w / 2, y + h / 2 + size * 0.36, size, on || hit ? t.selText || '#ffffff' : std ? t.text : t.dim,
+            { align: 'center', font: std ? 'label' : 'bold', spacing: std ? 0 : 2 * u });
+        if (i < buttons.length - 1) cv.fillRect(b.x + b.w, y + h * 0.25, Math.max(1, u), h * 0.5, withAlpha('#ffffff', 0.13));
     });
 }
 
 /**
- * A button on the page, in the HMI's style: a dark rectangle with a hairline edge and its label in
- * sentence case (primary: the blue of the focus bar), pressed by a tap or the controller (cv.target).
- * Drawn only where the kit runs the screen (display.js: the app's bar button then leaves the bar,
- * hideButton).
+ * A button on the page: a pill with its label, pressed by a tap or the controller (cv.target). Drawn
+ * only where the kit runs the screen (display.js: the app's bar button then leaves the bar, hideButton).
  * opts: { key (default: the label), color (a warning colour, for resets), primary (filled), busy (drawn
  * dimmed, nothing to press), confirm (a reset: the first press asks, Confirm pressed within 5 s runs it) }.
  * Returns the button's width.
@@ -986,47 +873,24 @@ function button(cv, t, x, y, w, h, label, run, opts) {
             return null;
         };
     }
-    const size = Math.round(h * 0.4), text = tabText(label), topt = { align: 'center', font: 'label', spacing: 0.5 };
-    if (!w) w = Math.max(h * 3, cv.textWidth(text, size, topt) + h * 1.2);
-    const key = o.key || label, focus = !o.busy && !!run && isFocus(cv, key);
-    pushButton(cv, t, x, y, w, h, { primary: o.primary, busy: o.busy, color: o.color, focus });
-    cv.text(text, x + w / 2, y + h / 2 + size * 0.36, size, focus ? '#ffffff' : o.busy ? t.dim : o.color && !o.primary ? o.color : t.text, topt);
-    if (!o.busy && run) cv.target(x, y, w, h, run, key, 3, { own: true });
+    const S = t.sel || t.accent, c = o.color || S;
+    if (!w) w = Math.max(h * 3, cv.textWidth(String(label).toUpperCase(), h * 0.4, { font: 'bold', spacing: 1.5 }) + h * 1.2);
+    cv.roundRect(x, y, w, h, h / 2, o.primary ? withAlpha(c, o.busy ? 0.35 : 0.85) : withAlpha('#ffffff', 0.07));
+    if (!o.primary) cv.strokeRoundRect(x, y, w, h, h / 2, 1.5, withAlpha(o.color || '#ffffff', o.busy ? 0.25 : o.color ? 0.75 : 0.3));
+    cv.text(String(label).toUpperCase(), x + w / 2, y + h / 2 + h * 0.15, h * 0.4, o.primary ? '#ffffff' : o.busy ? t.dim : o.color || t.text,
+        { align: 'center', font: 'bold', spacing: 1.5 });
+    if (!o.busy && run) cv.target(x, y, w, h, run, o.key || label);
     return w;
-}
-/**
- * A button's face without its label (apps that draw an icon or a spinner on it): o.primary the blue
- * fill, o.on a pressed toggle (a lighter wash and the blue edge), o.color a warning's edge, o.busy dimmed.
- */
-function pushButton(cv, t, x, y, w, h, o) {
-    o = o || {};
-    const r = Math.min(4, h / 2), f = focusCols(t);
-    // the controller on it (o.focus): the HMI's focus bar is the button's face (a blue one: ringed white too,
-    // so it shows on the button that is blue already)
-    if (o.focus) {
-        focusBar(cv, t, x, y, w, h, r);
-        if (o.primary) cv.strokeRoundRect(x - 3, y - 3, w + 6, h + 6, r + 2, 2, withAlpha('#ffffff', 0.9));
-        return;
-    }
-    if (o.primary) {
-        const c = o.color || f.fill;
-        cv.card(x, y, w, h, r, [[0, withAlpha(c, o.busy ? 0.45 : 0.95)], [1, withAlpha(c, o.busy ? 0.3 : 0.7)]]);
-        cv.strokeRoundRect(x, y, w, h, r, 1, withAlpha(o.color || f.edge, o.busy ? 0.4 : 0.8));
-        return;
-    }
-    cv.card(x, y, w, h, r, [[0, withAlpha('#ffffff', o.on ? 0.16 : 0.09)], [1, withAlpha('#ffffff', o.on ? 0.1 : 0.04)]]);
-    cv.strokeRoundRect(x, y, w, h, r, 1, o.on ? withAlpha(f.edge, 0.8) : withAlpha(o.color || '#ffffff', o.busy ? 0.1 : o.color ? 0.7 : 0.2));
 }
 
 /** Accent stripes (M-style) under a header. */
 function stripes(cv, t, x, y, w) {
     const s = t.stripes || [t.accent];
     const sw = w / s.length;
-    s.forEach((c, i) => cv.fillRect(x + i * sw, y, sw - (i < s.length - 1 ? 3 : 0), 3, c));
+    s.forEach((c, i) => cv.roundRect(x + i * sw, y, sw - (i < s.length - 1 ? 4 : 0), 4, 2, c));
 }
 
 module.exports = { qrCode,
-    background, focusBar, hairline, listRow, isFocus, sectionTitle, chevron, scrollbar, progress, status, infoSign, pushButton,
     BAR_H, TOP, BOTTOM, pageBottom, MARGIN, toMargin, frame, header, layer, onLayerDrop, panel, panelExact: box, segBar, radial, needle, ring, bar, stat, readout,
     shiftLights, gear, chart, table, pill, tyres, gmeter, menuBar, stripes, button, onConfirm, smooth, hold, niceStep,
     fmt, isNum, clamp, mix, zoneColor, withAlpha, ramp,

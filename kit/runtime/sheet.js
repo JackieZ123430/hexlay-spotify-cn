@@ -18,44 +18,39 @@ const { withAlpha } = require('./canvas');
 const G = require('./gauges');
 
 const W = 1600, TOP = 46, BOTTOM = 512;
-// the HMI's own list rows: 74 page px (its 86 screen px), touching, a hairline between them
-const ROW_H = 74, GAP = 0;
-const ROW = { font: 'label', spacing: 0.6 };
+const ROW_H = 66, GAP = 8;
 
-/* ---------------- drawing helpers (the HMI's settings list) ---------------- */
-/** A button (Done, Back, a card's actions): the kit's face, the focus bar while the controller is on it (on). */
+/* ---------------- drawing helpers ---------------- */
 function pill(r, t, x, y, w, h, label, on, opts) {
-    const o = opts || {};
-    G.pushButton(r, t, x, y, w, h, { focus: on, primary: !!o.primary, color: o.color });
-    r.text(label, x + w / 2, y + h / 2 + 9, 25, on ? '#ffffff' : o.color || t.text, { align: 'center', font: 'label', spacing: 0.5 });
+    const o = opts || {}, S = t.sel || t.accent;
+    const c = o.color || S;
+    r.roundRect(x, y, w, h, h / 2, on ? withAlpha(c, 0.9) : withAlpha('#ffffff', 0.08));
+    if (!on) r.strokeRoundRect(x, y, w, h, h / 2, 1.5, withAlpha(o.color || '#ffffff', o.color ? 0.7 : 0.22));
+    r.text(label, x + w / 2, y + h / 2 + 9, 24, on ? '#ffffff' : o.color || t.text, { align: 'center', font: 'bold', spacing: 1 });
 }
-/** The HMI's checkbox: a square outline, filled blue with a white tick when on. */
 function toggle(r, t, x, y, on) {
-    const s = 34, S = t.sel || t.accent, E = t.focusEdge || S;
-    if (on) {
-        r.roundRect(x, y, s, s, 3, S);
-        r.strokeRoundRect(x, y, s, s, 3, 2, E);
-        r.polyline([[x + 8, y + 18], [x + 14, y + 24], [x + 26, y + 10]], 3.5, '#ffffff');
-    } else r.strokeRoundRect(x, y, s, s, 3, 2, withAlpha('#ffffff', 0.75));
+    const S = t.sel || t.accent, w = 76, h = 38;
+    r.roundRect(x, y, w, h, h / 2, on ? S : withAlpha('#ffffff', 0.16));
+    r.circle(on ? x + w - h / 2 : x + h / 2, y + h / 2, h / 2 - 5, '#ffffff');
 }
-function chevron(r, t, x, y, c) { G.chevron(r, x + 6, y, 9, c); }
+function chevron(r, t, x, y, c) {
+    r.line(x, y - 9, x + 9, y, 3, c);
+    r.line(x + 9, y, x, y + 9, 3, c);
+}
 function fit(r, s, size, w, font) {
     s = String(s);
-    const o = font && typeof font === 'object' ? font : { font };
-    if (r.textWidth(s, size, o) <= w) return s;
-    while (s.length > 1 && r.textWidth(s + '...', size, o) > w) s = s.slice(0, -1);
+    if (r.textWidth(s, size, { font }) <= w) return s;
+    while (s.length > 1 && r.textWidth(s + '...', size, { font }) > w) s = s.slice(0, -1);
     return s + '...';
 }
 
 /**
- * A scrolling list of rows: rows = [{ label, value, kind: 'toggle'|'more'|'radio', on }], as the HMI's settings
- * list: full-width rows, a hairline between them, the value grey at the right with a chevron (it opens its
- * values), a checkbox, a radio mark for a value list; the row the controller is on has the focus bar under its
- * text. Draws them from y0, keeps row `focus` in view (smooth), returns the rows' rects.
+ * A scrolling list of rows: rows = [{ label, value, kind: 'toggle'|'more'|'radio', on }].
+ * Draws them from y0, keeps row `focus` in view (smooth), returns the rows' rects.
  */
 function list(r, t, key, rows, focus, y0, controller) {
     // (r.extra: the page reaches lower on screen, display.js)
-    const bottom = BOTTOM + (r.extra || 0), H = bottom - y0;
+    const S = t.sel || t.accent, bottom = BOTTOM + (r.extra || 0), H = bottom - y0;
     const total = rows.length * (ROW_H + GAP) - GAP;
     const fy = focus * (ROW_H + GAP);
     // st.y: where the list should be; st.show: where it is drawn (glides there, follows a finger at once).
@@ -75,27 +70,25 @@ function list(r, t, key, rows, focus, y0, controller) {
         const y = y0 + i * (ROW_H + GAP) - sy;
         if (y + ROW_H < y0 || y > bottom) return;
         const x = 40, w = W - 80, on = i === focus && controller;
-        G.listRow(r, t, x, y, w, ROW_H, { focus: on });
+        r.roundRect(x, y, w, ROW_H, 14, on ? withAlpha(S, 0.22) : withAlpha('#ffffff', 0.05));
+        if (on) r.strokeRoundRect(x, y, w, ROW_H, 14, 2, S);
         const cy = y + ROW_H / 2;
-        let right = x + w - 26;
-        if (row.kind === 'toggle') { toggle(r, t, right - 34, cy - 17, row.on); right -= 58; } else if (row.kind === 'more') { chevron(r, t, right - 12, cy, on ? '#ffffff' : t.dim); right -= 40; }
-        let left = x + 26;
-        if (row.kind === 'radio') {
-            // the value lists' mark, at the row's start as the HMI draws it
-            const E = t.focusEdge || t.sel || t.accent;
-            r.arc(left + 16, cy, 14, 16.5, 0, 360, row.on ? E : withAlpha('#ffffff', 0.75));
-            if (row.on) r.circle(left + 16, cy, 8, t.sel || t.accent);
-            left += 52;
+        let right = x + w - 28;
+        if (row.kind === 'toggle') { toggle(r, t, right - 76, cy - 19, row.on); right -= 100; } else if (row.kind === 'more') { chevron(r, t, right - 9, cy, t.dim); right -= 34; } else if (row.kind === 'radio') {
+            r.circle(right - 15, cy, 15, row.on ? S : withAlpha('#ffffff', 0.25));
+            r.circle(right - 15, cy, row.on ? 6 : 12, row.on ? '#ffffff' : t.bg);
+            right -= 44;
         }
-        const vw = row.value != null ? Math.min(560, r.textWidth(String(row.value), 25, ROW)) : 0;
-        if (row.value != null) r.text(fit(r, row.value, 25, 560, ROW), right, cy + 9, 25, on ? withAlpha('#ffffff', 0.85) : t.dim, Object.assign({ align: 'right' }, ROW));
-        r.text(fit(r, row.label, 28, right - vw - 40 - left, ROW), left, cy + 10, 28, t.text, ROW);
+        const vw = row.value != null ? Math.min(560, r.textWidth(String(row.value), 26)) : 0;
+        if (row.value != null) r.text(fit(r, row.value, 26, 560), right, cy + 9, 26, row.on && row.kind === 'radio' ? t.text : t.dim, { align: 'right' });
+        r.text(fit(r, row.label, 28, right - vw - 40 - (x + 28)), x + 28, cy + 10, 28, t.text);
         rects.push({ i, x, y: Math.max(y, y0), w, h: Math.min(y + ROW_H, bottom) - Math.max(y, y0) });
     });
     r.noclip();
     if (total > H) {
-        // scroll position: the kit's thin bar (a hairline track, a light thumb)
-        G.scrollbar(r, t, W - 20, y0, H, total, H, sy);
+        // scroll position
+        const bh = Math.max(40, H * H / total), by = y0 + (H - bh) * (sy / (total - H));
+        r.roundRect(W - 22, by, 6, bh, 3, withAlpha('#ffffff', 0.3));
     }
     return rects;
 }
@@ -129,8 +122,8 @@ function listSheet(settings, title, opts) {
             r.clear(t.bg);
             const rows = this.rows();
             // the header's tab names the sheet; a value list names its setting here
-            if (this.open) r.text(this.open.label, 44, TOP + 40, 30, t.text, { font: 'light', spacing: 0.4 });
-            else if (version) r.text('Version ' + version, 44, TOP + 38, 24, t.dim, { spacing: 0.4 });
+            if (this.open) r.text(this.open.label, 44, TOP + 40, 32, t.text, { font: 'bold' });
+            else if (version) r.text('Version ' + version, 44, TOP + 38, 24, t.dim);
             const targets = [];
             // Back (a value list) / Done (the settings): top right
             const bw = 150, bx = W - 40 - bw, by = TOP + 8;
@@ -231,7 +224,7 @@ function cardSheet(spec) {
             for (let i = actions.length - 1; i >= 0; i--) {
                 const a = actions[i], aw = Math.max(200, r.textWidth(a.label, 24, { font: 'bold' }) + 80);
                 ax -= aw;
-                pill(r, t, ax, ay, aw, 58, a.label, this.controller && i === this.focus, { color: a.color, primary: !!a.primary });   // (-1: Close)
+                pill(r, t, ax, ay, aw, 58, a.label, this.controller ? i === this.focus : !!a.primary, { color: a.color });   // (-1: Close)
                 targets.push({ x: ax, y: ay, w: aw, h: 58, act: () => a.run && a.run() });
                 ax -= 20;
             }

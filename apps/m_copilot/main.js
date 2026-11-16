@@ -29,7 +29,7 @@ const tlsDates = require('./kit/tls_dates');
 const qrcodegen = require('./kit/qrcodegen');
 
 const W = 1600, H = 520;
-const PAGES = ['Ask', 'Data check', 'Connect'];
+const PAGES = ['M-Copilot', 'Data check', 'Connect'];
 
 /*
  * Sizes on this display (kit/runtime/panel.js): k = 1.2 on a 12.3" display, 1.44 on a 10.25" one, so keys,
@@ -168,7 +168,7 @@ mgu.run({
         const tail = (s, n) => (s.length > n ? '…' + s.slice(-(n - 1)) : s);
 
         let currentPrompt = TOPIC_CATEGORIES[0].topics[0].title;
-        let currentResponse = 'M-Copilot ready. Choose a topic or ask your own question.';
+        let currentResponse = 'M-Copilot ready. Select a category & topic chip or ask a custom question.';
         let statusMsg = null;
         let statusTime = 0;
 
@@ -398,7 +398,7 @@ mgu.run({
             // no car (emulator, bench): kit/car's simulator, marked DEMO - shown here only, never sent to the AI
             const d = car ? car.data() : null, demo = !!(d && d.demo);
             const oil = demo ? d.oil : telemetry.oilTemp, coolant = demo ? d.coolant : telemetry.coolantTemp;
-            return 'Oil ' + fmtNum(oil, '°C') + '  ·  Coolant ' + fmtNum(coolant, '°C') + '  ·  Battery ' + fmtNum(demo ? null : telemetry.batteryPct, '%') + (demo ? '  ·  Demo' : '');
+            return 'OIL ' + fmtNum(oil, '°C') + '  ·  COOLANT ' + fmtNum(coolant, '°C') + '  ·  BATTERY ' + fmtNum(demo ? null : telemetry.batteryPct, '%') + (demo ? '  ·  DEMO' : '');
         }
 
         /** The paired AI provider's name, for the status pill and messages. */
@@ -795,56 +795,30 @@ mgu.run({
             return lines;
         }
 
-        /* ---------- iDrive pieces: buttons, messages (the kit's G.pushButton face, the HMI's info sign) ---------- */
-        const faint = (t) => t.faint || withAlpha(t.dim, 0.7);
-        const hiCol = (t) => t.accent2 || t.accent;
-        /**
-         * A button with its label in sentence case, its face the HMI's focus bar while the controller is on it.
-         * o: { primary, on, busy (dimmed, nothing to press), chevron, size }
-         */
-        function drawButton(cv, t, x, y, w, h, label, key, run, o) {
-            o = o || {};
-            const focus = !!run && !o.busy && G.isFocus(cv, key);
-            G.pushButton(cv, t, x, y, w, h, Object.assign({}, o, { focus }));
-            const size = o.size || Math.round(Math.min(sz(cv, 13.5), h * 0.44)), opts = { align: 'center', font: 'label', spacing: 0.5 };
-            const lw = cv.textWidth(label, size, opts), cx = x + w / 2 - (o.chevron ? size * 0.45 : 0);
-            cv.text(label, cx, y + h / 2 + size * 0.36, size, focus ? '#ffffff' : o.busy ? t.dim : t.text, opts);
-            if (o.chevron) G.chevron(cv, cx + lw / 2 + size * 0.85, y + h / 2, size * 0.42, focus ? '#ffffff' : t.dim);
-            if (run && !o.busy) cv.target(x, y, w, h, run, key, 3, { own: true });
-        }
-        /** A message in place of a page: the HMI's info sign, a title, lines, buttons ({ label, key, run, primary }). */
-        function drawMessage(cv, t, o) {
-            const ex = cv.extra || 0, x = 240, cy = 214 + Math.floor(ex / 2);
-            G.infoSign(cv, t, 160, cy - 10, sz(cv, 26), o.warn);
-            cv.text(o.title, x, cy, sz(cv, 22), t.text, { font: 'light' });
-            let y = cy + sz(cv, 22);
-            (o.lines || []).forEach((l, i) => {
-                const size = sz(cv, i ? 12.5 : 14);
-                cv.text(fitText(cv, l, 1280, size), x, y + size, size, i ? t.dim : withAlpha(t.text, 0.85));
-                y += Math.round(size * 1.75);
-            });
-            const bh = sz(cv, 38);
-            let bx = x;
-            y += sz(cv, 14);
-            (o.buttons || []).forEach((b) => {
-                const bw = Math.max(sz(cv, 150), cv.textWidth(b.label, sz(cv, 12.5)) + sz(cv, 60));
-                drawButton(cv, t, bx, y, bw, bh, b.label, b.key, b.run, b);
-                bx += bw + sz(cv, 14);
-            });
-        }
-
         /* ---------- Offline Screen: No Internet Connection ---------- */
         function drawNoInternet(cv, t) {
-            drawMessage(cv, t, {
-                warn: true,
-                title: 'No internet connection',
-                lines: ['M-Copilot needs an internet connection in the car to reach its AI.',
-                    'Connect the car to a phone hotspot or Wi-Fi, or use a mobile data stick (MGU Store uplink).'],
-                buttons: [{ label: 'Retry', key: 'btn_retry_net', primary: true, run: () => {
-                    notify('Re-checking uplink connectivity...');
-                    ai.checkInternetConnection().then(() => render(true));
-                } }],
-            });
+            G.panelExact(cv, t, 40, 52, 1520, 458 + (cv.extra || 0), 'Network Status: Offline');
+
+            cv.roundRect(80, 110, 1440, 358 + (cv.extra || 0), 16, '#0f141f');
+            cv.strokeRoundRect(80, 110, 1440, 358 + (cv.extra || 0), 16, 2, '#e1001a');
+
+            cv.circle(180, 240, 44, withAlpha('#e1001a', 0.2));
+            cv.text('!', 180, 255, 46, '#e1001a', { align: 'center', font: 'bold' });
+
+            cv.text('NO INTERNET CONNECTION', 260, 180, 26, '#e1001a', { font: 'bold', spacing: 1 });
+            cv.text('M-Copilot Cloud AI requires an active internet connection on your vehicle.', 260, 218, 18, '#ffffff');
+            cv.text('Please verify that your BMW has cellular data or is connected to a mobile Wi-Fi hotspot.', 260, 248, 16, '#94a3b8');
+
+            // Retry Button
+            const btnW = 280, btnH = 48, btnY = 320;
+            const b1X = 260;
+            cv.roundRect(b1X, btnY, btnW, btnH, 10, '#004e8c');
+            cv.strokeRoundRect(b1X, btnY, btnW, btnH, 10, 1.5, '#00a3e0');
+            cv.text('RETRY CONNECTION', b1X + btnW / 2, btnY + 30, 16, '#ffffff', { align: 'center', font: 'bold' });
+            cv.target(b1X, btnY, btnW, btnH, () => {
+                notify('Re-checking uplink connectivity...');
+                ai.checkInternetConnection().then(() => render(true));
+            }, 'btn_retry_net', 10);
         }
 
         /* ---------- Connect: pairing the phone, and what is set from it (as Spotify's Connect tab) ---------- */
@@ -852,117 +826,127 @@ mgu.run({
             const qr = getPairingQr(url);
             if (!qr) return;
             const n = qr.size, px = Math.floor(size / n), real = px * n, ox = x + Math.floor((size - real) / 2), oy = y + Math.floor((size - real) / 2);
-            cv.roundRect(ox - 10, oy - 10, real + 20, real + 20, 3, '#ffffff');
+            cv.roundRect(ox - 10, oy - 10, real + 20, real + 20, 10, '#ffffff');
             G.qrCode(cv, qr, url, ox, oy, px);       // drawn once as a layer, not a rectangle per module every frame
-        }
-        /** What the phone set, as [label, value] rows (Connect): the car profile, country, language and AI model. */
-        function profileRows() {
-            const p = vehicle.profile || {};
-            const lines = Vehicle.profileLines(p).filter((l) => !/^Country|^Model \(owner\)/.test(l));
-            const rows = [['Model', p.model || 'not set']].concat(lines.map((l) => { const i = l.indexOf(': '); return [l.slice(0, i), l.slice(i + 2)]; }));
-            rows.push(['Country', p.country || 'not set'], ['Answer language', LANG_NAMES[p.lang] || 'English'], ['AI model', ai.config.model || 'default']);
-            return rows.slice(0, 10);
         }
         const LANG_NAMES = { ka: 'Georgian', de: 'German', fr: 'French', es: 'Spanish', it: 'Italian', nl: 'Dutch', pt: 'Portuguese', tr: 'Turkish', pl: 'Polish' };
         function drawConnect(cv, t) {
-            const ex = cv.extra || 0, paired = ai.isConfigured();
+            const ex = cv.extra || 0, paired = ai.isConfigured(), now = Date.now();
             // left: connected, or the pairing QR
-            G.panelExact(cv, t, 40, 52, 640, 458 + ex, paired ? 'AI connection' : 'Connect your phone');
+            G.panelExact(cv, t, 40, 52, 640, 458 + ex, paired ? 'AI Connection' : 'Scan to Connect Your Phone');
             const cx = 360;
             if (paired) {
-                const sh = Math.floor(ex * 0.45);        // taller page (no bar): the contents move to its middle
-                const by = 156 + sh;
-                // connected: a check in a thin blue ring, as the HMI confirms a connection
-                cv.arc(cx, by, 30, 32.5, 0, 360, t.accent);
-                cv.polyline([[cx - 12, by + 1], [cx - 4, by + 9], [cx + 13, by - 9]], 3.5, hiCol(t));
-                cv.text('Connected to ' + providerName(), cx, 224 + sh, 24, t.text, { align: 'center', font: 'light' });
+                const C = '#00a3e0';
+                cv.roundRect(64, 100, 592, 330 + ex, 14, '#0a1218');
+                cv.strokeRoundRect(64, 100, 592, 330 + ex, 14, 1.5, withAlpha(C, 0.55));
+                const sh = Math.floor(ex * 0.45);        // taller page (no bar): the card's contents move to its middle
+                const by = 150 + sh;
+                cv.circle(cx, by, 36, withAlpha(C, 0.12));
+                cv.arc(cx, by, 30, 32, 0, 360, withAlpha(C, 0.45));
+                cv.circle(cx, by, 25, C);
+                cv.polyline([[cx - 11, by + 1], [cx - 4, by + 8], [cx + 11, by - 8]], 4.5, '#04101a');
+                cv.text('CONNECTED TO ' + providerName().toUpperCase(), cx, 212 + sh, 20, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
                 const ml = ai.modelLabel();
-                cv.text(fitText(cv, 'Model: ' + (ml || ai.config.model || 'default') + (ml ? ' (answered last)' : ''), 560, 16), cx, 252 + sh, 16, t.dim, { align: 'center' });
-                const net = ai.hasInternet ? 'Internet: online' : 'Internet: offline (phone hotspot?)';
-                const nw = cv.textWidth(net, 15) + 22;
-                G.status(cv, t, cx - nw / 2, 292 + sh, net, ai.hasInternet ? t.ok : t.warn, 15);
+                cv.text('Model: ' + (ml || ai.config.model || 'default') + (ml ? ' (answered last)' : ''), cx, 238 + sh, 16, '#cbd5e1', { align: 'center' });
+                const pill = (y, on, text) => {
+                    const w = 440, x = cx - w / 2;
+                    cv.roundRect(x, y, w, 32, 16, withAlpha(on ? '#2af575' : '#ffffff', on ? 0.12 : 0.06));
+                    cv.circle(x + 22, y + 16, 5, on ? '#2af575' : '#94a3b8');
+                    cv.text(text, x + 38, y + 21, 14, on ? '#2af575' : '#94a3b8', { font: 'bold' });
+                };
+                pill(278 + sh, ai.hasInternet, ai.hasInternet ? 'Internet: online' : 'Internet: offline (phone hotspot?)');
                 // disconnecting (or a new AI key) is the phone's: the car follows it live
-                cv.text('Disconnect or change the AI key on your phone.', cx, 380 + ex, 14, faint(t), { align: 'center' });
+                cv.text('Disconnect or change the AI key on your phone.', cx, 380 + ex, 14, '#64748b', { align: 'center' });
             } else {
                 // the QR code grows into the room a taller page has (no bar), the block centred in the panel
-                const qs = Math.min(320, 210 + Math.round(ex * 0.9)), top = 108, bottom = 52 + 458 + ex - 12;
+                const qs = Math.min(320, 210 + Math.round(ex * 0.9)), top = 92, bottom = 52 + 458 + ex - 12;
                 const block = qs + 20 + 108, y0 = top + Math.max(0, Math.floor((bottom - top - block) / 2));
                 drawQr(cv, cloudPair.getPairingUrl(), cx - qs / 2, y0 + 10, qs);
                 const ty = y0 + qs + 56;
-                cv.text('Scan with your phone to connect an AI', cx, ty, 18, t.text, { align: 'center' });
-                cv.text('Pairing code  ' + cloudPair.getShortCode(), cx, ty + 26, 15, hiCol(t), { align: 'center', font: 'num' });
-                cv.text('Google Gemini (free), Claude, OpenAI, Groq or OpenRouter', cx, ty + 50, 14, t.dim, { align: 'center' });
-                cv.text('hexlay.github.io/idrive7-custom-apps/copilot.html', cx, ty + 72, 12, faint(t), { align: 'center' });
+                cv.text('Scan with your phone to connect an AI', cx, ty, 18, t.text, { align: 'center', font: 'bold' });
+                cv.text('PAIRING CODE: ' + cloudPair.getShortCode(), cx, ty + 26, 15, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
+                cv.text('Google Gemini (free), Claude, OpenAI, Groq or OpenRouter', cx, ty + 50, 14, '#94a3b8', { align: 'center' });
+                cv.text('hexlay.github.io/idrive7-custom-apps/copilot.html', cx, ty + 72, 12, '#64748b', { align: 'center' });
             }
 
             // right: what is set from the phone (the only place it can be changed)
-            G.panelExact(cv, t, 700, 52, 860, 458 + ex, 'Set from your phone');
+            G.panelExact(cv, t, 700, 52, 860, 458 + ex, 'Set From Your Phone');
             if (showPhoneQr && paired) {
-                const qs2 = Math.min(280, 180 + Math.round(ex * 0.8)), y2 = 110 + Math.max(0, Math.floor((410 + ex - 110 - qs2 - 92) / 2));
+                const qs2 = Math.min(280, 180 + Math.round(ex * 0.8)), y2 = 96 + Math.max(0, Math.floor((410 + ex - 96 - qs2 - 92) / 2));
                 drawQr(cv, cloudPair.getPairingUrl(), 1130 - qs2 / 2, y2 + 10, qs2);
-                cv.text('Open the phone page for this car', 1130, y2 + qs2 + 48, 17, t.text, { align: 'center' });
-                cv.text('Car profile, AI model, Disconnect', 1130, y2 + qs2 + 72, 14, t.dim, { align: 'center' });
+                cv.text('Open the phone page for this car', 1130, y2 + qs2 + 48, 17, t.text, { align: 'center', font: 'bold' });
+                cv.text('Car profile, AI model, Disconnect', 1130, y2 + qs2 + 72, 14, '#94a3b8', { align: 'center' });
                 // the camera opens the browser; on iPhone the Home Screen app keeps its own cars
-                cv.text('Installed the phone app? Scan with its Scan car QR, not the camera.', 1130, y2 + qs2 + 94, 13, faint(t), { align: 'center' });
+                cv.text('Installed the phone app? Scan with its Scan car QR, not the camera.', 1130, y2 + qs2 + 94, 13, '#64748b', { align: 'center' });
             } else {
-                const rows = profileRows();
+                const p = vehicle.profile || {};
+                const lines = Vehicle.profileLines(p).filter((l) => !/^Country|^Model \(owner\)/.test(l));
+                const rows = [['Model', p.model || 'not set']].concat(lines.map((l) => { const i = l.indexOf(': '); return [l.slice(0, i), l.slice(i + 2)]; }));
+                rows.push(['Country', p.country || 'not set'], ['Answer language', LANG_NAMES[p.lang] || 'English'], ['AI model', ai.config.model || 'default']);
                 const rstep = 26 + Math.min(12, Math.floor(ex / 8));
-                // a list in the HMI's style: the name left, the value right, a hairline between rows
                 rows.slice(0, 10).forEach(([k, v], i) => {
                     const y = 134 + i * rstep;
                     cv.text(k, 730, y, 14, t.dim);
-                    cv.text(v.length > 52 ? v.slice(0, 51) + '…' : v, 1530, y, 14, /not set|default/.test(v) ? faint(t) : t.text, { align: 'right' });
-                    G.hairline(cv, t, 730, y + Math.round(rstep * 0.38), 800);
+                    cv.text(v.length > 52 ? v.slice(0, 51) + '…' : v, 1530, y, 14, /not set|default/.test(v) ? t.dim : '#e2e8f0', { align: 'right' });
                 });
-                cv.text('Change these on the phone page: Your car and AI model.', 730, 408 + ex, 13, faint(t));
+                cv.text('Change these on the phone page: Your car and AI model.', 730, 408 + ex, 13, '#64748b');
             }
             if (paired) {
                 const bw = 380, bx = 1130 - bw / 2, by = 424 + ex, bh = Math.min(56, sz(cv, 32));
-                drawButton(cv, t, bx, by, bw, bh, showPhoneQr ? 'Back to the settings' : 'Show QR for the phone page', 'btn_phone_qr',
-                    () => { showPhoneQr = !showPhoneQr; render(true); }, { chevron: !showPhoneQr });
+                cv.roundRect(bx, by, bw, bh, 10, '#004e8c');
+                cv.strokeRoundRect(bx, by, bw, bh, 10, 1.5, '#00a3e0');
+                cv.text(showPhoneQr ? 'BACK TO THE SETTINGS' : 'SHOW QR FOR THE PHONE PAGE', 1130, by + bh / 2 + sz(cv, 4), sz(cv, 11), '#ffffff', { align: 'center', font: 'bold' });
+                cv.target(bx, by, bw, bh, () => { showPhoneQr = !showPhoneQr; render(true); }, 'btn_phone_qr', 10);
             }
         }
         /** The co-driver before an AI is paired: where to pair. */
         function drawNeedsConnect(cv, t) {
-            drawMessage(cv, t, {
-                title: 'M-Copilot needs an AI key from your phone',
-                lines: ['Pair once on the Connect tab: scan its QR code with your phone and choose a provider.',
-                    'Google Gemini is free; Claude, OpenAI, Groq and OpenRouter work too.'],
-                buttons: [{ label: 'Open Connect', key: 'btn_open_connect', primary: true, chevron: true, run: () => { page = 2; render(true); } }],
-            });
+            G.panelExact(cv, t, 40, 52, 1520, 458 + (cv.extra || 0), '');
+            const sh = Math.floor((cv.extra || 0) / 2);
+            cv.text('M-COPILOT NEEDS AN AI KEY FROM YOUR PHONE', 800, 210 + sh, 24, '#00a3e0', { align: 'center', font: 'bold', spacing: 1 });
+            cv.text('Pair once on the Connect tab: scan its QR code with your phone and choose a provider (Google Gemini is free).', 800, 248 + sh, 16, '#cbd5e1', { align: 'center' });
+            const bw = 320, bx = 800 - bw / 2, by = 290 + sh, bh = 50;
+            cv.roundRect(bx, by, bw, bh, 10, '#004e8c');
+            cv.strokeRoundRect(bx, by, bw, bh, 10, 1.5, '#00a3e0');
+            cv.text('OPEN CONNECT', 800, by + 32, 17, '#ffffff', { align: 'center', font: 'bold' });
+            cv.target(bx, by, bw, bh, () => { page = 2; render(true); }, 'btn_open_connect', 10);
         }
 
-        /* ---------- On-Screen Touch Keyboard (Panel 2): the iDrive speller's look ---------- */
+        /* ---------- On-Screen Touch Keyboard (Panel 2) ---------- */
         function drawKeyboard(cv, t, now) {
-            G.panelExact(cv, t, 510, 52, 1050, 458 + (cv.extra || 0), 'Your question');
+            G.panelExact(cv, t, 510, 52, 1050, 458 + (cv.extra || 0), 'Ask Custom Question');
 
             // Live Engine Vitals in header
-            cv.text(vitalsLine(), 1530, 90, 13, t.dim, { align: 'right', font: 'num' });
+            cv.text(vitalsLine(), 1530, 80, 13, t.dim, { align: 'right', font: 'num' });
 
             const kx = 540, kw = 990;
 
-            // 1. Query Input: the speller's entry line (a faint field, a blue line under it)
+            // 1. Query Input Display Box
             // (sized for this display: sz; the keys fill the panel down to its bottom)
             const ex = cv.extra || 0;
-            const qBoxY = 116, qBoxH = sz(cv, 36), qSize = sz(cv, 14);
-            cv.fillRect(kx, qBoxY, kw, qBoxH, withAlpha('#ffffff', 0.06));
-            cv.fillRect(kx, qBoxY + qBoxH - 2, kw, 2, t.accent);
+            const qBoxY = 100, qBoxH = sz(cv, 36), qSize = sz(cv, 13);
+            cv.roundRect(kx, qBoxY, kw, qBoxH, 8, '#080d14');
+            cv.strokeRoundRect(kx, qBoxY, kw, qBoxH, 8, 1.5, '#00a3e0');
 
             const hasText = !!customQuery.trim();
-            const clrW = sz(cv, 66), clrH = qBoxH - 12, clrX = kx + kw - clrW - 6, clrY = qBoxY + 5;
-            const displayText = hasText ? fitTail(cv, customQuery, clrX - kx - 36, qSize) + '_' : 'Type your question, or pick one below';
-            cv.text(displayText, kx + 16, qBoxY + qBoxH / 2 + qSize * 0.36, qSize, hasText ? t.text : faint(t));
+            const clrW = sz(cv, 66), clrH = qBoxH - 10, clrX = kx + kw - clrW - 6, clrY = qBoxY + 5;
+            const displayText = hasText ? fitTail(cv, customQuery, clrX - kx - 36, qSize) + '_' : 'Type your question with touch keyboard or tap a preset below...';
+            cv.text(displayText, kx + 18, qBoxY + qBoxH / 2 + qSize * 0.36, qSize, hasText ? '#ffffff' : '#64748b', { font: hasText ? 'bold' : 'normal' });
 
             // Clear button inside input bar
             if (hasText) {
-                drawButton(cv, t, clrX, clrY, clrW, clrH, 'Clear', 'kb_btn_clear', () => {
+                const cs = sz(cv, 10.5);
+                cv.roundRect(clrX, clrY, clrW, clrH, 6, withAlpha('#e1001a', 0.22));
+                cv.strokeRoundRect(clrX, clrY, clrW, clrH, 6, 1, '#e1001a');
+                cv.text('CLEAR', clrX + clrW / 2, clrY + clrH / 2 + cs * 0.36, cs, '#ff6b6b', { align: 'center', font: 'bold' });
+                cv.target(clrX, clrY, clrW, clrH, () => {
                     customQuery = '';
                     render(true);
-                });
+                }, 'kb_btn_clear', 8);
             }
 
             // 2. Quick Preset Chips Row
-            const presetY = qBoxY + qBoxH + 10, presetH = sz(cv, 24), pSize = sz(cv, 11);
+            const presetY = qBoxY + qBoxH + 8, presetH = sz(cv, 24), pSize = sz(cv, 10.5);
             const presets = [
                 'What is my boost?',
                 'Brake pad health',
@@ -975,18 +959,21 @@ mgu.run({
             presets.forEach((pr, pIdx) => {
                 const pw = cv.textWidth(pr, pSize) + sz(cv, 22);
                 if (px + pw > kx + kw) return;
-                drawButton(cv, t, px, presetY, pw, presetH, pr, 'kb_preset_' + pIdx, () => {
+                cv.roundRect(px, presetY, pw, presetH, presetH / 2, '#101a28');
+                cv.strokeRoundRect(px, presetY, pw, presetH, presetH / 2, 1, '#1e324c');
+                cv.text(pr, px + pw / 2, presetY + presetH / 2 + pSize * 0.36, pSize, '#cbd5e1', { align: 'center' });
+                cv.target(px, presetY, pw, presetH, () => {
                     customQuery = pr;
                     render(true);
-                }, { size: pSize });
+                }, 'kb_preset_' + pIdx, presetH / 2);
                 px += pw + 10;
             });
 
             // 3. Speller Keyboard Key Rows: four rows of keys and the action row share the room down to the panel's bottom
-            const kbY = presetY + presetH + 12;
+            const kbY = presetY + presetH + 10;
             const keyGap = 6;
             const keyH = Math.min(sz(cv, 40), Math.floor((52 + 458 + ex - 12 - kbY - 4 * keyGap) / 5));
-            const kSize = sz(cv, 15);
+            const kSize = sz(cv, 14);
 
             const rows = [
                 ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '?'],
@@ -1002,52 +989,64 @@ mgu.run({
 
                 row.forEach((k, cIdx) => {
                     const kxPos = kx + cIdx * (keyW + keyGap);
-                    const kkey = 'kb_k_' + rIdx + '_' + cIdx;
-                    G.pushButton(cv, t, kxPos, ry, keyW, keyH, { focus: G.isFocus(cv, kkey) });
-                    cv.text(k, kxPos + keyW / 2, ry + keyH / 2 + kSize * 0.36, kSize, t.text, { align: 'center', font: 'label' });
+                    cv.roundRect(kxPos, ry, keyW, keyH, 6, '#0f1724');
+                    cv.strokeRoundRect(kxPos, ry, keyW, keyH, 6, 1, '#1e2d42');
+                    cv.text(k, kxPos + keyW / 2, ry + keyH / 2 + kSize * 0.36, kSize, '#ffffff', { align: 'center', font: 'bold' });
 
                     cv.target(kxPos, ry, keyW, keyH, () => {
                         if (customQuery.length < QUERY_MAX) customQuery += k;
                         render(true);
-                    }, kkey, 3, { own: true });
+                    }, 'kb_k_' + rIdx + '_' + cIdx, 6);
                 });
             });
 
             // 4. Action Row (Row 5)
             const aY = kbY + 4 * (keyH + keyGap);
-            const aH = keyH;
+            const aH = keyH, aSize = sz(cv, 12), aBase = aY + aH / 2 + aSize * 0.36;
 
             // Cancel button
             const canW = 150, canX = kx;
-            drawButton(cv, t, canX, aY, canW, aH, 'Cancel', 'kb_act_cancel', () => {
+            cv.roundRect(canX, aY, canW, aH, 8, '#141f2e');
+            cv.strokeRoundRect(canX, aY, canW, aH, 8, 1, '#253347');
+            cv.text('CANCEL', canX + canW / 2, aBase, aSize, '#94a3b8', { align: 'center', font: 'bold' });
+            cv.target(canX, aY, canW, aH, () => {
                 showKeyboard = false;
                 render(true);
-            });
+            }, 'kb_act_cancel', 8);
 
             // Spacebar
             const spW = 380, spX = canX + canW + keyGap;
-            drawButton(cv, t, spX, aY, spW, aH, 'Space', 'kb_act_space', () => {
+            cv.roundRect(spX, aY, spW, aH, 8, '#0f1724');
+            cv.strokeRoundRect(spX, aY, spW, aH, 8, 1, '#1e2d42');
+            cv.text('SPACEBAR', spX + spW / 2, aBase, aSize, '#cbd5e1', { align: 'center', font: 'bold' });
+            cv.target(spX, aY, spW, aH, () => {
                 if (customQuery.length < QUERY_MAX) customQuery += ' ';
                 render(true);
-            });
+            }, 'kb_act_space', 8);
 
             // Backspace / Del
             const delW = 170, delX = spX + spW + keyGap;
-            drawButton(cv, t, delX, aY, delW, aH, 'Delete', 'kb_act_del', () => {
+            cv.roundRect(delX, aY, delW, aH, 8, '#1f1418');
+            cv.strokeRoundRect(delX, aY, delW, aH, 8, 1, '#421a22');
+            cv.text('BACKSPACE', delX + delW / 2, aBase, aSize, '#ff8080', { align: 'center', font: 'bold' });
+            cv.target(delX, aY, delW, aH, () => {
                 customQuery = customQuery.slice(0, -1);
                 render(true);
-            });
+            }, 'kb_act_del', 8);
 
-            // Ask Copilot / Submit: the blue one once there is a question
+            // Ask Copilot / Submit
             const askX = delX + delW + keyGap, askW = kx + kw - askX;
-            drawButton(cv, t, askX, aY, askW, aH, 'Ask M-Copilot', 'kb_act_go', () => {
+            cv.roundRect(askX, aY, askW, aH, 8, hasText ? '#00a3e0' : '#1e293b');
+            if (hasText) cv.strokeRoundRect(askX, aY, askW, aH, 8, 1.5, '#00f0ff');
+            cv.text('ASK M-COPILOT >', askX + askW / 2, aBase, aSize, hasText ? '#ffffff' : '#64748b', { align: 'center', font: 'bold', spacing: 1 });
+            cv.target(askX, aY, askW, aH, () => {
                 if (hasText) {
                     const q = customQuery.trim();
                     customQuery = '';
                     showKeyboard = false;
                     askCopilot(q, 'Custom: ' + (q.length > 25 ? q.slice(0, 25) + '...' : q));
                 }
-            }, { primary: hasText, busy: !hasText, chevron: hasText });
+            }, 'kb_act_go', 10);
         }
 
         /* ---------- M-Copilot AI Main Screen (2-Panel Wide Architecture) ---------- */
@@ -1055,57 +1054,55 @@ mgu.run({
             const curCat = TOPIC_CATEGORIES[activeCategory] || TOPIC_CATEGORIES[0];
             const topics = curCat.topics;
 
-            // Panel 1 (Left): the topics, as an iDrive list under its category tabs
+            // Panel 1 (Left): Quick Topics & Custom Query Action (No header text)
             G.panelExact(cv, t, 40, 52, 440, 458 + (cv.extra || 0), '');
 
-            // category tabs: plain text, the open one white over a thin blue line (as the HMI's own tabs)
+            // category tabs
             const ex = cv.extra || 0;
             // (sized for this display: sz)
-            const tabY = 52, tabH = sz(cv, 34), catSize = sz(cv, 12.5);
-            const tabW = 100;
+            const tabY = 62, tabH = sz(cv, 30), catSize = sz(cv, 10.5);
             TOPIC_CATEGORIES.forEach((cat, cIdx) => {
-                const tabX = 56 + cIdx * 104, isCurCat = activeCategory === cIdx;
-                const name = fitText(cv, cat.name.charAt(0) + cat.name.slice(1).toLowerCase(), tabW - 8, catSize);
-                const lw = cv.textWidth(name, catSize), cfocus = G.isFocus(cv, 'cat_' + cIdx);
-                if (cfocus) G.focusBar(cv, t, tabX + 2, tabY + 4, tabW - 4, tabH - 8, 3);
-                cv.text(name, tabX + tabW / 2, tabY + tabH / 2 + catSize * 0.36, catSize, isCurCat || cfocus ? t.text : t.dim, { align: 'center', spacing: 0.4 });
-                if (isCurCat && !cfocus) cv.fillRect(tabX + (tabW - lw) / 2, tabY + tabH - 5, lw, 3, t.sel || t.accent);
+                const tabW = 96, tabX = 60 + cIdx * 101, isCurCat = activeCategory === cIdx;
+                cv.roundRect(tabX, tabY, tabW, tabH, 7, isCurCat ? '#004e8c' : t.track);
+                cv.strokeRoundRect(tabX, tabY, tabW, tabH, 7, 1, isCurCat ? '#00a3e0' : t.panelEdge);
+                cv.text(fitText(cv, cat.name, tabW - 8, catSize, { font: 'bold' }), tabX + tabW / 2, tabY + tabH / 2 + catSize * 0.36, catSize, isCurCat ? '#00f0ff' : '#94a3b8', { align: 'center', font: isCurCat ? 'bold' : 'normal' });
                 cv.target(tabX, tabY, tabW, tabH, () => {
                     activeCategory = cIdx;
                     selectedTopicIdx = 0;
                     currentPrompt = cat.topics[0].title;
                     render(true);
-                }, 'cat_' + cIdx, 3, { own: true });
+                }, 'cat_' + cIdx, 6);
             });
-            G.hairline(cv, t, 56, tabY + tabH, 408);
 
-            // the topics, then Ask your own question: one list of the HMI's rows filling the column (taller rows on a
-            // bigger screen), its text in the HMI's regular weight; the row the controller is on has the focus bar
-            const chipTop = tabY + tabH, rowsN = topics.length + 1, step = Math.floor((52 + 458 + ex - 10 - chipTop) / rowsN);
-            const topicSize = Math.min(sz(cv, 16), Math.round(step * 0.42)), RO = { font: 'label', spacing: 0.5 };
+            // the question box at the bottom, the topic chips filling the room above it (taller on bigger screens)
+            const inputH = sz(cv, 42), inputX = 60, inputW = 400, inputY = 52 + 458 + ex - 14 - inputH;
+            const chipTop = tabY + tabH + 10, step = Math.floor((inputY - 8 - chipTop) / topics.length), topicH = Math.min(sz(cv, 50), step - 6);
+            const topicSize = Math.min(sz(cv, 13), Math.round(topicH * 0.42));
             topics.forEach((p, idx) => {
-                const py = chipTop + idx * step, key = 'chip_' + idx, focus = G.isFocus(cv, key);
-                const isCur = currentPrompt === p.title;
-                // the topic asked: the row in use (a faint wash, the blue mark); a chevron: it opens an answer
-                G.listRow(cv, t, 56, py, 408, step, { active: isCur, focus });
-                cv.text(fitText(cv, p.title, 408 - 60, topicSize, RO), 74, py + step / 2 + topicSize * 0.36, topicSize, isCur && !focus ? hiCol(t) : t.text, RO);
-                G.chevron(cv, 448, py + step / 2, sz(cv, 5), focus ? '#ffffff' : faint(t));
-                cv.target(56, py, 408, step, () => {
+                const py = chipTop + idx * step;
+                const isSelected = selectedTopicIdx === idx, isCur = currentPrompt === p.title;
+                cv.roundRect(60, py, 400, topicH, 9, isSelected ? withAlpha('#00a3e0', 0.22) : t.track);
+                cv.strokeRoundRect(60, py, 400, topicH, 9, isSelected ? 1.5 : 1, isSelected ? '#00a3e0' : t.panelEdge);
+                cv.circle(82, py + topicH / 2, 5, isCur ? '#00f0ff' : (isSelected ? '#00a3e0' : t.dim));
+                const topicOpt = { font: isSelected ? 'bold' : 'normal' };
+                cv.text(fitText(cv, p.title, 446 - 102, topicSize, topicOpt), 102, py + topicH / 2 + topicSize * 0.36, topicSize, isSelected ? '#ffffff' : '#cbd5e1', topicOpt);
+                cv.target(60, py, 400, topicH, () => {
                     selectedTopicIdx = idx;
                     showKeyboard = false;
                     askCopilot(p.query, p.title, { fresh: true, faults: !!p.faults });
-                }, key, 3, { own: true });
+                }, 'chip_' + idx, 8);
             });
-            const inputY = chipTop + topics.length * step, ifocus = G.isFocus(cv, 'btn_custom_input');
-            G.listRow(cv, t, 56, inputY, 408, step, { active: showKeyboard, focus: ifocus, line: false });
+
+            cv.roundRect(inputX, inputY, inputW, inputH, 10, showKeyboard ? withAlpha('#00a3e0', 0.25) : '#0b111a');
+            cv.strokeRoundRect(inputX, inputY, inputW, inputH, 10, showKeyboard ? 1.5 : 1, showKeyboard ? '#00f0ff' : '#1e2d42');
             const hasCustom = !!customQuery.trim();
-            const inputLabel = hasCustom ? (fitTail(cv, customQuery, 408 - 60, topicSize, RO) + (showKeyboard ? '_' : '')) : (showKeyboard ? 'Typing your question..._' : 'Ask your own question');
-            cv.text(inputLabel, 74, inputY + step / 2 + topicSize * 0.36, topicSize, ifocus || hasCustom || showKeyboard ? t.text : t.dim, RO);
-            G.chevron(cv, 448, inputY + step / 2, sz(cv, 5), ifocus ? '#ffffff' : t.dim);
-            cv.target(56, inputY, 408, step, () => {
+            const inSize = sz(cv, 13.5), inOpt = { font: (hasCustom || showKeyboard) ? 'bold' : 'normal' };
+            const inputLabel = hasCustom ? (fitTail(cv, customQuery, inputW - 44, inSize, inOpt) + (showKeyboard ? '_' : '')) : (showKeyboard ? 'Typing custom question..._' : 'Ask Custom Question...');
+            cv.text(inputLabel, inputX + 18, inputY + inputH / 2 + inSize * 0.36, inSize, hasCustom ? '#ffffff' : (showKeyboard ? '#00f0ff' : '#94a3b8'), inOpt);
+            cv.target(inputX, inputY, inputW, inputH, () => {
                 showKeyboard = !showKeyboard;
                 render(true);
-            }, 'btn_custom_input', 3, { own: true });
+            }, 'btn_custom_input', 10);
 
             // Panel 2 (Right): Interactive Touch Keyboard OR Dialogue Stream
             if (showKeyboard) {
@@ -1114,30 +1111,44 @@ mgu.run({
             }
 
             const dEx = 48 + (cv.extra || 0);   // the dialogue grows down to the page's bottom
-            G.panelExact(cv, t, 510, 52, 1050, 410 + dEx, fitText(cv, currentPrompt, 640, 25, { font: 'light' }));
+            G.panelExact(cv, t, 510, 52, 1050, 410 + dEx, 'Dialogue: ' + currentPrompt);
 
             // Live Engine Vitals in header
-            cv.text(vitalsLine(), 1530, 90, 13, t.dim, { align: 'right', font: 'num' });
+            cv.text(vitalsLine(), 1530, 80, 13, t.dim, { align: 'right', font: 'num' });
 
-            // the answer, straight on the panel as the HMI shows a text page
-            const rx = 530, ry = 112, rw = 1010, rh = 332 + dEx;
+            // Response Box Card
+            const rx = 530, ry = 104, rw = 1010, rh = 340 + dEx;
+            cv.roundRect(rx, ry, rw, rh, 12, '#090e15');
+            cv.strokeRoundRect(rx, ry, rw, rh, 12, 1, t.panelEdge);
 
-            // follow-up questions along the bottom after a real answer
+            // Left decorative M stripe on response card
+            cv.fillRect(rx + 2, ry + 12, 4, rh - 24, '#00a3e0');
+
+            // follow-up chips along the bottom of the card after a real answer
             const chips = canFollowUp && !isThinking, chipH = sz(cv, 32), chipY = ry + rh - chipH - 12, chipSize = sz(cv, 12.5);
             // while it answers: Cancel, where the follow-ups go (touch or the controller's focus)
-            if (isThinking) drawButton(cv, t, rx + 8, chipY, cv.textWidth('Cancel', chipSize) + sz(cv, 44), chipH, 'Cancel', 'cancel_answer', cancelAnswer, { size: chipSize });
+            if (isThinking) {
+                const w = cv.textWidth('CANCEL', chipSize, { font: 'bold' }) + sz(cv, 30), cx = rx + 24;
+                cv.roundRect(cx, chipY, w, chipH, 8, '#141f2e');
+                cv.strokeRoundRect(cx, chipY, w, chipH, 8, 1, '#94a3b8');
+                cv.text('CANCEL', cx + w / 2, chipY + chipH / 2 + chipSize * 0.36, chipSize, '#e2e8f0', { align: 'center', font: 'bold' });
+                cv.target(cx, chipY, w, chipH, cancelAnswer, 'cancel_answer', 8);
+            }
             if (chips) {
-                let cx = rx + 8;
+                let cx = rx + 24;
                 FOLLOW_UPS.forEach((f, i) => {
-                    const w = cv.textWidth(f.title, chipSize) + sz(cv, 30);
-                    drawButton(cv, t, cx, chipY, w, chipH, f.title, 'follow_' + i, () => askCopilot(f.query, f.title, { fresh: false }), { size: chipSize });
+                    const w = cv.textWidth(f.title, chipSize, { font: 'bold' }) + sz(cv, 30);
+                    cv.roundRect(cx, chipY, w, chipH, 8, withAlpha('#00a3e0', 0.15));
+                    cv.strokeRoundRect(cx, chipY, w, chipH, 8, 1, '#00a3e0');
+                    cv.text(f.title, cx + w / 2, chipY + chipH / 2 + chipSize * 0.36, chipSize, '#e2e8f0', { align: 'center', font: 'bold' });
+                    cv.target(cx, chipY, w, chipH, () => askCopilot(f.query, f.title, { fresh: false }), 'follow_' + i, 8);
                     cx += w + 12;
                 });
             }
 
             // Render Response text with wrap and scroll: bigger while the car is moving (a glance, not a read)
             // (sized for this display: a line holds fewer characters as the text grows)
-            const big = telemetry.moving === true, size = big ? sz(cv, 19) : sz(cv, 15.5), lineH = Math.round(size * 1.55);
+            const big = telemetry.moving === true, size = big ? sz(cv, 17.5) : sz(cv, 13.5), lineH = Math.round(size * (big ? 1.6 : 1.62));
             rowH = lineH;
             const shown = isThinking ? currentResponse + '  ' + Math.floor((Date.now() - thinkStart) / 1000) + ' s' : currentResponse;
             // (about 0.42 em a character in the label font: the card's width, a little to spare)
@@ -1150,43 +1161,49 @@ mgu.run({
             if (dialogueScroll > maxScroll) dialogueScroll = maxScroll;
 
             const visible = lines.slice(dialogueScroll, dialogueScroll + maxVisibleLines);
-            const body = withAlpha(t.text, 0.86);
             visible.forEach((line, idx) => {
-                const ly = ry + Math.round(lineH * 0.8) + idx * lineH;
-                let col = body;
+                const ly = ry + 12 + Math.round(lineH * 0.8) + idx * lineH;
+                let col = '#e2e8f0';
+                let isBold = false;
 
-                if (line.startsWith('[OK]') || line.startsWith('✓') || line.includes('PASS') || line.includes('OPTIMAL')) col = t.ok;
-                else if (line.startsWith('[!]') || line.includes('CAUTION') || line.includes('FAIL') || line.includes('Warning')) col = t.warn;
-                else if ((line.startsWith('[') && line.endsWith(']')) || (line.startsWith('- ') && line.includes(':')) || /^\d+\./.test(line)) col = t.text;
+                if (line.startsWith('[OK]') || line.startsWith('✓') || line.includes('PASS') || line.includes('OPTIMAL')) col = '#2af575';
+                else if (line.startsWith('[!]') || line.includes('CAUTION') || line.includes('FAIL') || line.includes('Warning')) col = '#ffb703';
+                else if ((line.startsWith('[') && line.endsWith(']')) || (line.startsWith('- ') && line.includes(':'))) {
+                    isBold = true;
+                    col = '#ffffff';
+                } else if (/^\d+\./.test(line)) col = '#ffffff';
 
-                cv.text(line, rx + 8, ly, size, col);
+                cv.text(line, rx + 24, ly, size, col, { font: isBold ? 'bold' : 'normal' });
             });
 
-            // Scrollbar & Page indicator when content exceeds the page
+            // Scrollbar & Page indicator when content exceeds card
             if (lines.length > maxVisibleLines) {
-                const sbX = rx + rw - 6, sbY = ry + 4, sbH = (bar ? chipY - ry - 6 : rh) - 36;
-                G.scrollbar(cv, t, sbX, sbY, sbH, lines.length, maxVisibleLines, dialogueScroll);
+                const sbX = rx + rw - 14, sbY = ry + 20, sbH = (bar ? chipY - ry - 6 : rh) - 40;
+                cv.roundRect(sbX, sbY, 4, sbH, 2, withAlpha(t.panelEdge, 0.4));
+                const thumbH = Math.max(24, Math.floor((maxVisibleLines / lines.length) * sbH));
+                const thumbY = sbY + Math.floor((dialogueScroll / maxScroll) * (sbH - thumbH));
+                cv.roundRect(sbX, thumbY, 4, thumbH, 2, '#00a3e0');
 
-                // Page indicator
+                // Page badge
                 const curPage = Math.floor(dialogueScroll / maxVisibleLines) + 1;
                 const totPages = Math.ceil(lines.length / maxVisibleLines);
                 const textH = bar ? chipY - ry - 6 : rh;
-                cv.text(curPage + ' / ' + totPages, rx + rw - 18, ry + textH - 10, 12, faint(t), { align: 'right', font: 'num' });
+                cv.text(`PAGE ${curPage}/${totPages}`, rx + rw - 24, ry + textH - 12, 12, t.dim, { align: 'right', font: 'num' });
 
                 // Touch targets to scroll
                 cv.target(rx, ry, rw, textH / 2, () => {
                     dialogueScroll = Math.max(0, dialogueScroll - 4);
                     render(true);
-                }, 'card_scroll_up', 3, { touch: true });
+                }, 'card_scroll_up', 4);
 
                 cv.target(rx, ry + textH / 2, rw, textH / 2, () => {
                     dialogueScroll = Math.min(maxScroll, dialogueScroll + 4);
                     render(true);
-                }, 'card_scroll_down', 3, { touch: true });
+                }, 'card_scroll_down', 4);
             }
         }
 
-/* ---------- Data check: what this car gives, source by source ---------- */
+        /* ---------- Data check: what this car gives, source by source ---------- */
         let missingAtInstall = null;
         const missingList = () => {
             if (missingAtInstall === null) {
@@ -1298,37 +1315,37 @@ mgu.run({
                 return [NAMES[r.name], st];
             });
             return { car: carRows, live, engine };
-
         }
         function drawDataCheck(cv, t) {
             const ex = cv.extra || 0;
             G.panelExact(cv, t, 40, 52, 1520, 458 + ex, '');
-            // status dots in the HMI's colours: there (green), waiting (amber), failed (red), not on this car (grey)
-            const COL = { green: t.ok, amber: t.warn, red: t.crit, grey: faint(t) };
-            const step = 22 + Math.min(10, Math.floor(ex / 16)), top = 112;
+            const COL = { green: '#2af575', amber: '#ffb703', red: '#ef4444', grey: t.dim };
+            const step = 22 + Math.min(10, Math.floor(ex / 16)), top = 100;
             const row = (x, w, i, label, st) => {
                 const y = top + i * step;
-                cv.circle(x + 5, y - 4.5, 3.5, COL[st.c] || t.dim);
+                cv.circle(x + 6, y - 4, 4, COL[st.c] || t.dim);
                 cv.text(label, x + 18, y, 13, t.dim);
                 const v = st.v.length > 34 ? st.v.slice(0, 33) + '…' : st.v;
-                cv.text(v, x + w, y, 13, st.c === 'grey' ? faint(t) : t.text, { align: 'right' });
+                cv.text(v, x + w, y, 13, st.c === 'grey' ? t.dim : '#e2e8f0', { align: 'right' });
             };
-            // each source's title as the HMI titles a list: light, a hairline under it
-            const head = (x, label, w) => G.sectionTitle(cv, t, x, top - 30, w, label, 19);
+            const head = (x, label) => cv.text(label, x, top - 26, 14, '#00a3e0', { font: 'bold', spacing: 1 });
             const D = dataCheckData();
             const x1 = 60, w1 = 460, x2 = 560, w2 = 460, x3 = 1060, w3 = 470;
-            head(x1, 'Car and links', w1);
+            head(x1, 'CAR & LINKS');
             D.car.forEach((r, i) => row(x1, w1, i, r[0], r[1]));
-            head(x2, 'Live signals', w2);
+            head(x2, 'LIVE SIGNALS');
             D.live.forEach((r, i) => row(x2, w2, i, r[0], r[1]));
-            head(x3, liveOn() && diag && diag.available ? 'Engine computer · live' : 'Engine computer', w3);
+            head(x3, liveOn() && diag && diag.available ? 'ENGINE COMPUTER · LIVE' : 'ENGINE COMPUTER');
             D.engine.forEach((r, i) => row(x3, w3, i, r[0], r[1]));
 
             // buttons: read now (the same safety rules: steady car, never while asleep)
-            const by = top + 15 * step - 6, bw = 225, bh = Math.min(52, sz(cv, 32));
-            [['engine', 'Read engine now', x3], ['faults', 'Read faults now', x3 + bw + 20]].forEach(([what, label, bx]) => {
+            const by = top + 15 * step + 6, bw = 225, bh = Math.min(52, sz(cv, 32));
+            [['engine', 'READ ENGINE NOW', x3], ['faults', 'READ FAULTS NOW', x3 + bw + 20]].forEach(([what, label, bx]) => {
                 const busy = checking === what;
-                drawButton(cv, t, bx, by, bw, bh, busy ? 'Reading...' : label, 'dc_' + what, () => checkNow(what), { primary: busy, busy: !!checking && !busy });
+                cv.roundRect(bx, by, bw, bh, 8, busy ? withAlpha('#00a3e0', 0.35) : '#004e8c');
+                cv.strokeRoundRect(bx, by, bw, bh, 8, 1.5, '#00a3e0');
+                cv.text(busy ? 'READING...' : label, bx + bw / 2, by + bh / 2 + sz(cv, 4), sz(cv, 12), '#ffffff', { align: 'center', font: 'bold' });
+                cv.target(bx, by, bw, bh, () => checkNow(what), 'dc_' + what, 8);
             });
         }
         async function checkNow(what) {
@@ -1370,7 +1387,7 @@ mgu.run({
             if (!force && now - lastRenderTime < 250) return;
             const cv = ctx.canvas(W, H);
             // what the frame shows: unchanged, the frame isn't drawn again (a safety redraw every 2 s)
-            const sig = [ctx.display && ctx.display.focusKey, settings.get('theme'), ai.hasInternet, ai.isConfigured(), showPhoneQr, showKeyboard, customQuery, activeCategory, selectedTopicIdx, currentPrompt, currentResponse,
+            const sig = [ai.hasInternet, ai.isConfigured(), showPhoneQr, showKeyboard, customQuery, activeCategory, selectedTopicIdx, currentPrompt, currentResponse,
                 dialogueScroll, canFollowUp, isThinking, telemetry.moving, vitalsLine(), statusMsg && now - statusTime < 3500 ? statusMsg : '', ai.modelLabel(), providerName(),
                 cv.extra || 0, page === 2 ? cloudPair.getPairingUrl() + JSON.stringify(vehicle.profile || {}) + (ai.config.model || '') : '', page, page === 1 ? Math.floor(now / 1000) + (checking || '') : ''].join('|');
             if (!force && sig === lastSig && now - lastRenderTime < 2000) return;
@@ -1379,7 +1396,6 @@ mgu.run({
 
             const t = ctx.theme();
             cv.clear(t.bg);
-            G.background(cv, t, 0, 0, W, H + (cv.extra || 0));
 
             // Mandatory Online & Config Checks (the Data check page works without internet or pairing)
             if (page === 1) {
@@ -1394,22 +1410,19 @@ mgu.run({
                 drawMainCopilot(cv, t, now);
             }
 
-            // the page tabs along the top and the HMI-style status line: read-only, and which AI answers
+            // G-Series Live Cockpit frame tabs along the top: clean single title + live status badges
             const ml = ai.modelLabel();
-            const provName = providerName() + (ml ? ' · ' + ml : '');
+            const provName = providerName().toUpperCase() + (ml ? ' · ' + ml : '');
             G.frame(cv, t, PAGES, page, [
-                { text: 'Read-only', color: t.ok },
-                { text: ai.isConfigured() ? provName + ' online' : 'Setup required', color: ai.isConfigured() ? t.accent : t.warn }
+                { text: 'READ-ONLY SAFE', color: '#2af575' },
+                { text: ai.isConfigured() ? `${provName} ONLINE` : 'SETUP REQUIRED', color: ai.isConfigured() ? '#00a3e0' : '#ffb703' }
             ]);
 
-            // Global Notification banner: the HMI's message box (dark, a hairline edge, a blue mark)
+            // Global Notification banner
             if (statusMsg && (now - statusTime < 3500)) {
-                const sy = H + (cv.extra || 0), msg = fitText(cv, statusMsg, 1100, 17);
-                const bw = Math.max(640, cv.textWidth(msg, 17) + 64), bx = W / 2 - bw / 2, bh = 46, byy = sy - 60;
-                cv.roundRect(bx, byy, bw, bh, 4, '#161c23');
-                cv.strokeRoundRect(bx, byy, bw, bh, 4, 1, withAlpha('#ffffff', 0.22));
-                cv.fillRect(bx, byy + 8, 3, bh - 16, t.accent);
-                cv.text(msg, W / 2, byy + bh / 2 + 6, 17, t.text, { align: 'center' });
+                const sy = H + (cv.extra || 0);
+                cv.roundRect(W / 2 - 320, sy - 56, 640, 42, 10, '#00a3e0');
+                cv.text(statusMsg, W / 2, sy - 29, 18, '#ffffff', { align: 'center', font: 'bold' });
             }
 
             await ui.image('MAIN_GFX', cv);
@@ -1434,8 +1447,6 @@ mgu.run({
         // buttons are left out (the kit then drops the empty bar and gives the page its height). On the
         // HMI's own path they stay, so the controller can still reach both actions there.
         if (ctx.hideButton) { ctx.hideButton('BTN_PROMPT'); ctx.hideButton('BTN_REPAIR'); }
-        // a new colour theme (Settings): drawn at once
-        settings.onChange((k) => { if (k === 'theme') render(true); });
 
         ui.onClick('BTN_REPAIR', () => {
             page = 2;

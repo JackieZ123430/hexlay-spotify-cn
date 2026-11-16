@@ -114,17 +114,8 @@ class Recorder {
      * A tap passes run({ x, y, w, h }): where on the target it was (target px) and its size; the controller nothing.
      * key names it from frame to frame (the controller stays on it). Drawn by the caller; where the kit
      * runs the screen (display.js) it rings the one the controller is on.
-     * o (optional): { list, row, step } - a row of a list that scrolls (the knob goes row to row, and at the list's
-     * end scrolls it a row - step px, default its height - as the HMI's own lists); touch - for a finger only (a
-     * scroll bar's halves: the knob never stops on it); own - the caller draws the controller's focus bar itself
-     * (under its text, as the HMI does: cv.focusKey is the key the controller is on), so the kit draws none.
      */
-    target(x, y, w, h, run, key, r, o) {
-        const t = { x, y, w, h, run, key: String(key), r };
-        if (o) { if (o.list != null) { t.list = String(o.list); t.row = o.row; if (o.step) t.step = o.step; } if (o.own) t.own = true; if (o.touch) t.touch = true; }
-        this.targets.push(t);
-        return this;
-    }
+    target(x, y, w, h, run, key, r) { this.targets.push({ x, y, w, h, run, key: String(key), r }); return this; }
 
     /* ---------- canvas.js API ---------- */
     /** Draw pixel image `id` (see setImage) scaled into x, y, w, h with optional corner radius r (Protocol 4 OP_IMAGE 18). */

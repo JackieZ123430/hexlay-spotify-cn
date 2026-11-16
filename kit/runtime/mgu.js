@@ -126,14 +126,12 @@ class Settings {
         for (const s of this.schema) {
             if (s.aliases && Object.prototype.hasOwnProperty.call(s.aliases, this.values[s.key])) this.values[s.key] = s.aliases[this.values[s.key]];
         }
-        // one-time move of saved settings to the new default theme (iDrive Red, v4); later choices are kept.
-        // "migrateFrom" (app.json, the theme setting): only a car still on one of these themes (the app's
-        // old default) moves; a theme the owner picked stays
+        // one-time move of saved settings to the new default theme (M Tricolour); later choices are kept
         const th = this.item('theme');
-        if (th && this.values._themeV !== 4) {
+        if (th && this.values._themeV !== 2) {
             const saved = fs.existsSync(this.file);
-            this.values._themeV = 4;            // (a fresh install has the default: the mark is saved with its first setting)
-            if (saved && (!th.migrateFrom || th.migrateFrom.indexOf(this.values.theme) >= 0)) {
+            this.values._themeV = 2;            // (a fresh install has the default: the mark is saved with its first setting)
+            if (saved) {
                 this.values.theme = th.default;
                 try { Settings.writeWhole(this.file, JSON.stringify(this.values, null, 1)); } catch (e) { /* read-only */ }
             }
@@ -508,21 +506,17 @@ function wireSettings(ctx) {
             });
         } else ui.onClick(comp, () => { settings.cycle(s.key); return refresh(); });
     });
-    // Settings: drawn over the page by the renderer (sheet.js), in the HMI's settings list style, where
-    // the kit runs the screen (touch and the controller stay the app's); else - or with "nativeSettings":
-    // true in app.json - the HMI's own settings screen (the renderer hides the drawn page under it and
-    // leaves the controller to the HMI: Display._shown). Either shows the values chosen in the other.
+    // Settings: drawn over the page by the renderer (sheet.js) where the kit runs the screen,
+    // else the HMI's settings screen. The HMI's screen shows the values chosen in either.
     settings.onChange(() => { if (!ctx.display.sheet) refresh(); });
     if (ui.comp('BTN_SETTINGS')) {
         ui.onClick('BTN_SETTINGS', () => {
             const d = ctx.display;
             if (d.sheet && d.sheet.settings) { d.closeSheet(); return null; }
-            if (!SPEC.nativeSettings) {
-                const sh = listSheet(settings, null, { version: SPEC.version });
-                sh.settings = true;
-                sh.onClose = () => refresh();
-                if (d.openSheet(sh)) return null;
-            }
+            const sh = listSheet(settings, null, { version: SPEC.version });
+            sh.settings = true;
+            sh.onClose = () => refresh();
+            if (d.openSheet(sh)) return null;
             return refresh().then(() => ui.open('SETTINGS'));
         });
     }

@@ -111,7 +111,7 @@ This repository is built on the open-source BMW iDrive 7 platform:
 * **Checked on Linux as on the car**: the built package, installed with the installer's owners and modes (`oap_<uid>`, 750) next to the Store's records (0644), run as an app's uid on the head unit's Node 8.9.4 and 8.16.2. Memory in use equal to `free`'s; each process's own memory equal to the kernel's page-table count (`smaps_rollup`) and its resident size to `ps`; a busy loop read as exactly one core, on one core of the per-core bars; the load equal to `/proc/loadavg`; a bare `node` named after its script; an app leaking 3 MB a second shown growing 90 MB in 30 s; MGU Store apps and tools named, BMW-style apps by uid; the kernel refusing it to signal any other app's process; `/proc` with `hidepid=2` / `invisible`; and 1,500 samples of 430 processes coming and going (about 16 ms each on a desktop processor, no memory growth).
 * **Foreground only, light on the head unit**: it reads `/proc` only while it is on screen, every 2 s by default (*Update every*: 1, 2, 5 or 10 s), and draws a frame only when something changed. The history starts when the app opens.
 * **Settings tab**: colour theme (M Tricolour by default, M Red, Ice White, Night Amber), grouping and the update rate.
-* On a computer without `/proc` (the browser emulator on Windows) it shows sample data, marked **SAMPLE DATA** in the header; the screenshots here are of it.
+* On a computer without `/proc` (the browser emulator on Windows) it shows sample data; the screenshots here are of it.
 
 | Processor | Processes |
 | :---: | :---: |

@@ -10,7 +10,7 @@
  *       DRIVE     ready for full power, fuel and range, weather grip, how was that drive, running hot, cool-down
  *       PERFORM   launch, track day prep, tune health, heat soak, gearbox and clutch load, mods
  *       KNOW-HOW  oil spec, gearbox care, fuel and octane, known weak points, due at this mileage, trip prep
- *     plus an on-screen keyboard for any question (follow-up questions keep the context).
+ *     plus an on-screen keyboard for any question, locked while the car moves (follow-up questions keep the context).
  *   - What the AI is told (ai.js buildVehicleContext): only what the car reported - live driving
  *     signals, temperatures, tyres, fuel, odometer, the cluster's service list, the fault memory
  *     when asked about - and who the car is (vehicle.js: make, model year and type from the VIN,
@@ -166,6 +166,11 @@ mgu.run({
         let customQuery = '';
         const QUERY_MAX = 160;
         const tail = (s, n) => (s.length > n ? '…' + s.slice(-(n - 1)) : s);
+        // no typing while the car moves (telemetry.moving: over 8 km/h, until under 3): the keyboard closes and
+        // the question box won't open it; what was typed is kept for when the car stands. Topics and follow-ups
+        // are one tap and stay. Unknown speed (no car signal) doesn't lock.
+        const typingLocked = () => telemetry.moving === true;
+        const DRIVING_LOCK_MSG = 'Typing is locked while driving - use a topic, or stop the car';
 
         let currentPrompt = TOPIC_CATEGORIES[0].topics[0].title;
         let currentResponse = 'M-Copilot ready. Select a category & topic chip or ask a custom question.';
@@ -994,7 +999,7 @@ mgu.run({
                     cv.text(k, kxPos + keyW / 2, ry + keyH / 2 + kSize * 0.36, kSize, '#ffffff', { align: 'center', font: 'bold' });
 
                     cv.target(kxPos, ry, keyW, keyH, () => {
-                        if (customQuery.length < QUERY_MAX) customQuery += k;
+                        if (customQuery.length < QUERY_MAX && !typingLocked()) customQuery += k;
                         render(true);
                     }, 'kb_k_' + rIdx + '_' + cIdx, 6);
                 });
@@ -1020,7 +1025,7 @@ mgu.run({
             cv.strokeRoundRect(spX, aY, spW, aH, 8, 1, '#1e2d42');
             cv.text('SPACEBAR', spX + spW / 2, aBase, aSize, '#cbd5e1', { align: 'center', font: 'bold' });
             cv.target(spX, aY, spW, aH, () => {
-                if (customQuery.length < QUERY_MAX) customQuery += ' ';
+                if (customQuery.length < QUERY_MAX && !typingLocked()) customQuery += ' ';
                 render(true);
             }, 'kb_act_space', 8);
 
@@ -1093,16 +1098,29 @@ mgu.run({
                 }, 'chip_' + idx, 8);
             });
 
-            cv.roundRect(inputX, inputY, inputW, inputH, 10, showKeyboard ? withAlpha('#00a3e0', 0.25) : '#0b111a');
-            cv.strokeRoundRect(inputX, inputY, inputW, inputH, 10, showKeyboard ? 1.5 : 1, showKeyboard ? '#00f0ff' : '#1e2d42');
-            const hasCustom = !!customQuery.trim();
-            const inSize = sz(cv, 13.5), inOpt = { font: (hasCustom || showKeyboard) ? 'bold' : 'normal' };
-            const inputLabel = hasCustom ? (fitTail(cv, customQuery, inputW - 44, inSize, inOpt) + (showKeyboard ? '_' : '')) : (showKeyboard ? 'Typing custom question..._' : 'Ask Custom Question...');
-            cv.text(inputLabel, inputX + 18, inputY + inputH / 2 + inSize * 0.36, inSize, hasCustom ? '#ffffff' : (showKeyboard ? '#00f0ff' : '#94a3b8'), inOpt);
-            cv.target(inputX, inputY, inputW, inputH, () => {
-                showKeyboard = !showKeyboard;
-                render(true);
-            }, 'btn_custom_input', 10);
+            const locked = typingLocked();
+            if (locked) {
+                // driving: the box says so, dimmed, and a tap only explains
+                const lSize = sz(cv, 12.5);
+                cv.roundRect(inputX, inputY, inputW, inputH, 10, '#0b111a');
+                cv.strokeRoundRect(inputX, inputY, inputW, inputH, 10, 1, '#1e2d42');
+                cv.text(fitText(cv, 'Typing locked while driving', inputW - 36, lSize, { font: 'bold' }), inputX + 18, inputY + inputH / 2 + lSize * 0.36, lSize, '#64748b', { font: 'bold' });
+                cv.target(inputX, inputY, inputW, inputH, () => {
+                    notify(DRIVING_LOCK_MSG);
+                    render(true);
+                }, 'btn_custom_input', 10);
+            } else {
+                cv.roundRect(inputX, inputY, inputW, inputH, 10, showKeyboard ? withAlpha('#00a3e0', 0.25) : '#0b111a');
+                cv.strokeRoundRect(inputX, inputY, inputW, inputH, 10, showKeyboard ? 1.5 : 1, showKeyboard ? '#00f0ff' : '#1e2d42');
+                const hasCustom = !!customQuery.trim();
+                const inSize = sz(cv, 13.5), inOpt = { font: (hasCustom || showKeyboard) ? 'bold' : 'normal' };
+                const inputLabel = hasCustom ? (fitTail(cv, customQuery, inputW - 44, inSize, inOpt) + (showKeyboard ? '_' : '')) : (showKeyboard ? 'Typing custom question..._' : 'Ask Custom Question...');
+                cv.text(inputLabel, inputX + 18, inputY + inputH / 2 + inSize * 0.36, inSize, hasCustom ? '#ffffff' : (showKeyboard ? '#00f0ff' : '#94a3b8'), inOpt);
+                cv.target(inputX, inputY, inputW, inputH, () => {
+                    showKeyboard = !showKeyboard;
+                    render(true);
+                }, 'btn_custom_input', 10);
+            }
 
             // Panel 2 (Right): Interactive Touch Keyboard OR Dialogue Stream
             if (showKeyboard) {
@@ -1386,6 +1404,11 @@ mgu.run({
         async function render(force = false) {
             const now = Date.now();
             if (!force && now - lastRenderTime < 250) return;
+            // the car started moving with the keyboard open: it closes (the typed text is kept)
+            if (showKeyboard && typingLocked()) {
+                showKeyboard = false;
+                notify(DRIVING_LOCK_MSG);
+            }
             const cv = ctx.canvas(W, H);
             // what the frame shows: unchanged, the frame isn't drawn again (a safety redraw every 2 s)
             const sig = [ai.hasInternet, ai.isConfigured(), showPhoneQr, showKeyboard, customQuery, activeCategory, selectedTopicIdx, currentPrompt, currentResponse,

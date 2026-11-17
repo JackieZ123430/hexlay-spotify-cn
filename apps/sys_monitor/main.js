@@ -478,11 +478,7 @@ mgu.run({
             else if (page === PG_OVERVIEW) drawOverview(cv, t);
             else if (page === PG_CPU) drawProcessor(cv, t);
             else drawProcesses(cv, t);
-            const m = snap && snap.mem;
-            G.frame(cv, t, PAGES, page, [
-                sample ? { text: 'SAMPLE DATA' }
-                    : m ? { text: 'MEMORY ' + pct(m.used / m.total * 100) + ' %', color: pressure(t, m.used / m.total) } : null,
-            ]);
+            G.frame(cv, t, PAGES, page);   // no status chips: the pages show memory themselves
             await ui.image('MAIN_GFX', cv);
         }
         /** Draw now (after a tap, a sample, a setting); a failed frame is logged, the next one tries again. */

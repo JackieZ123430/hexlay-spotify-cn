@@ -1411,13 +1411,8 @@ mgu.run({
                 drawMainCopilot(cv, t, now);
             }
 
-            // G-Series Live Cockpit frame tabs along the top: clean single title + live status badges
-            const ml = ai.modelLabel();
-            const provName = providerName().toUpperCase() + (ml ? ' · ' + ml : '');
-            G.frame(cv, t, PAGES, page, [
-                { text: 'READ-ONLY SAFE', color: '#2af575' },
-                { text: ai.isConfigured() ? `${provName} ONLINE` : 'SETUP REQUIRED', color: ai.isConfigured() ? '#00a3e0' : '#ffb703' }
-            ]);
+            // the page tabs along the top, no status chips: the pages show their own state
+            G.frame(cv, t, PAGES, page);
 
             // Global Notification banner
             if (statusMsg && (now - statusTime < 3500)) {

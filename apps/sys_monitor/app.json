@@ -2,7 +2,7 @@
   "id": "sys_monitor",
   "title": "System Monitor",
   "description": "What uses the head unit's memory and processor: free RAM, a live history, and every app and program with the memory it takes. Read only.",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "vendor": "custom",
   "loggingId": "OASM",
   "iconGlyph": "memory",

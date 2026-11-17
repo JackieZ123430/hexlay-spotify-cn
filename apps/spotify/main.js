@@ -52,12 +52,6 @@ function fmtTime(ms) {
     return m + ':' + (rem < 10 ? '0' : '') + rem;
 }
 
-// String truncation with clean ellipsis
-function trunc(str, maxLen) {
-    if (!str || typeof str !== 'string') return '';
-    return str.length > maxLen ? str.slice(0, maxLen - 1) + '..' : str;
-}
-
 // Sleek iDrive vertical scrollbar
 function drawScrollbar(cv, t, x, y, h, total, visibleCount, scrollOffset, onScrollUp, onScrollDown) {
     if (total <= visibleCount) return;
@@ -1267,10 +1261,7 @@ mgu.run({
             // 1. Connection check: In Online mode, if there is no internet, disable app
             if (isOnline && !spotify.hasInternet) {
                 drawNoInternet(cv, t);
-                G.frame(cv, t, PAGES, page, [
-                    { text: 'SPOTIFY' },
-                    { text: 'NO INTERNET (LOCKED)', color: '#e1001a' }
-                ]);
+                G.frame(cv, t, PAGES, page);
                 await ui.image('MAIN_GFX', cv);
                 return;
             }
@@ -1282,10 +1273,7 @@ mgu.run({
                 } else {
                     drawRequireConnect(cv, t);
                 }
-                G.frame(cv, t, PAGES, page, [
-                    { text: 'SPOTIFY' },
-                    { text: 'LOGIN REQUIRED', color: '#ffb703' }
-                ]);
+                G.frame(cv, t, PAGES, page);
                 await ui.image('MAIN_GFX', cv);
                 return;
             }
@@ -1296,13 +1284,8 @@ mgu.run({
             else if (page === 2) drawNowPlaying(cv, t);
             else if (page === 3) drawConnect(cv, t);
 
-            // G20 Live Cockpit frame tabs along the top: keep badges compact so tabs & Settings are never crowded out
-            G.frame(cv, t, PAGES, page, [
-                { text: spotify.activeDevice ? trunc(spotify.activeDevice, 28) : 'SPOTIFY' },
-                spotify.stalled
-                    ? { text: 'NOT RESPONDING', color: '#ffb703' }
-                    : { text: spotify.isPlaying ? 'PLAYING' : 'PAUSED', color: spotify.isPlaying ? '#1ed760' : t.dim }
-            ]);
+            // the page tabs along the top, no status chips: the pages show their own state
+            G.frame(cv, t, PAGES, page);
 
             drawNotice(cv, t);
             await ui.image('MAIN_GFX', cv);

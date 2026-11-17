@@ -170,7 +170,8 @@ mgu.run({
         // the question box won't open it; what was typed is kept for when the car stands. Topics and follow-ups
         // are one tap and stay. Unknown speed (no car signal) doesn't lock.
         const typingLocked = () => telemetry.moving === true;
-        const DRIVING_LOCK_MSG = 'Typing is locked while driving - use a topic, or stop the car';
+        const lockMsg = () => (customQuery.trim() ? 'Typing locked while driving - your question is kept for when you stop'
+            : 'Typing is locked while driving - use a topic, or stop the car');
 
         let currentPrompt = TOPIC_CATEGORIES[0].topics[0].title;
         let currentResponse = 'M-Copilot ready. Select a category & topic chip or ask a custom question.';
@@ -968,7 +969,7 @@ mgu.run({
                 cv.strokeRoundRect(px, presetY, pw, presetH, presetH / 2, 1, '#1e324c');
                 cv.text(pr, px + pw / 2, presetY + presetH / 2 + pSize * 0.36, pSize, '#cbd5e1', { align: 'center' });
                 cv.target(px, presetY, pw, presetH, () => {
-                    customQuery = pr;
+                    if (!typingLocked()) customQuery = pr;
                     render(true);
                 }, 'kb_preset_' + pIdx, presetH / 2);
                 px += pw + 10;
@@ -1100,13 +1101,15 @@ mgu.run({
 
             const locked = typingLocked();
             if (locked) {
-                // driving: the box says so, dimmed, and a tap only explains
-                const lSize = sz(cv, 12.5);
+                // driving: the box says so, dimmed, with the end of a question typed before (kept), and a tap only explains
+                const lSize = sz(cv, 12.5), lOpt = { font: 'bold' }, lHead = customQuery.trim() ? 'Locked while driving: ' : 'Typing locked while driving';
                 cv.roundRect(inputX, inputY, inputW, inputH, 10, '#0b111a');
                 cv.strokeRoundRect(inputX, inputY, inputW, inputH, 10, 1, '#1e2d42');
-                cv.text(fitText(cv, 'Typing locked while driving', inputW - 36, lSize, { font: 'bold' }), inputX + 18, inputY + inputH / 2 + lSize * 0.36, lSize, '#64748b', { font: 'bold' });
+                const lRoom = inputW - 36 - (customQuery.trim() ? cv.textWidth(lHead, lSize, lOpt) : 0);
+                cv.text(customQuery.trim() ? lHead + fitTail(cv, customQuery.trim(), lRoom, lSize, lOpt) : fitText(cv, lHead, inputW - 36, lSize, lOpt),
+                    inputX + 18, inputY + inputH / 2 + lSize * 0.36, lSize, '#64748b', lOpt);
                 cv.target(inputX, inputY, inputW, inputH, () => {
-                    notify(DRIVING_LOCK_MSG);
+                    notify(lockMsg());
                     render(true);
                 }, 'btn_custom_input', 10);
             } else {
@@ -1404,10 +1407,11 @@ mgu.run({
         async function render(force = false) {
             const now = Date.now();
             if (!force && now - lastRenderTime < 250) return;
-            // the car started moving with the keyboard open: it closes (the typed text is kept)
+            // the car started moving with the keyboard open, typing or not: it closes at the next frame (within
+            // 250 ms of the speed crossing 8 km/h) and what was typed is kept for when the car stands
             if (showKeyboard && typingLocked()) {
                 showKeyboard = false;
-                notify(DRIVING_LOCK_MSG);
+                notify(lockMsg());
             }
             const cv = ctx.canvas(W, H);
             // what the frame shows: unchanged, the frame isn't drawn again (a safety redraw every 2 s)
@@ -1484,6 +1488,9 @@ mgu.run({
         // ---- lifecycle: nothing runs while M-Copilot is not on screen; everything stops on exit
         function foreground() {
             clearLive();
+            // back on screen the speed is unknown until the car sends it again: a keyboard left open would take
+            // keys meanwhile, perhaps while driving, so it comes back closed (the typed text is kept)
+            showKeyboard = false;
             startCar();
             loadSampling(true);
             cloudPair.startPolling();

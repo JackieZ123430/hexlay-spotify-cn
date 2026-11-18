@@ -178,10 +178,22 @@ try {
     assert.strictEqual(P.cpuShare(pc, pc), null, 'no time passed');
     assert.deepStrictEqual(P.parseLoadavg('1.42 1.31 1.24 2/612 4567'), { one: 1.42, five: 1.31, fifteen: 1.24, running: 2, threads: 612 });
     assert.strictEqual(P.parseLoadavg(''), null);
-    assert.deepStrictEqual(P.pickTemp([{ type: 'acpitz', c: 45 }, { type: 'x86_pkg_temp', c: 61 }]), { c: 61, zone: 'x86_pkg_temp' });
-    assert.deepStrictEqual(P.pickTemp([{ type: 'cpu-thermal', c: 55 }, { type: 'soc', c: 58 }, { type: 'battery', c: 70 }]), { c: 58, zone: 'soc' });
-    assert.strictEqual(P.pickTemp([{ type: 'acpitz', c: 45 }]), null, 'a board sensor is not the processor\'s');
+    assert.deepStrictEqual(P.pickTemp([{ type: 'acpitz', c: 45 }, { type: 'x86_pkg_temp', c: 61 }]), { c: 61, zone: 'x86_pkg_temp', board: false });
+    assert.deepStrictEqual(P.pickTemp([{ type: 'cpu-thermal', c: 55 }, { type: 'soc', c: 58 }, { type: 'battery', c: 70 }]), { c: 58, zone: 'soc', board: false });
+    // Intel's coretemp (hwmon only): the package, not its hotter core
+    assert.deepStrictEqual(P.pickTemp([{ type: 'acpitz', c: 45 }, { type: 'coretemp:Core 0', c: 66 }, { type: 'coretemp:Package id 0', c: 64 }]),
+        { c: 64, zone: 'coretemp:Package id 0', board: false });
+    assert.deepStrictEqual(P.pickTemp([{ type: 'acpitz', c: 45 }, { type: 'coretemp:Core 1', c: 52 }, { type: 'coretemp:Core 0', c: 50 }]),
+        { c: 52, zone: 'coretemp:Core 1', board: false }, 'no package sensor: the hottest core');
+    assert.deepStrictEqual(P.pickTemp([{ type: 'TCPU', c: 57 }, { type: 'B0D4', c: 59 }]), { c: 59, zone: 'B0D4', board: false }, 'Intel\'s processor thermal device');
+    assert.deepStrictEqual(P.pickTemp([{ type: 'acpitz', c: 45 }, { type: 'INT3400 Thermal', c: 20 }]), { c: 45, zone: 'acpitz', board: true },
+        'only a board sensor: shown, marked as the board\'s');
+    assert.strictEqual(P.pickTemp([{ type: 'iwlwifi_1', c: 40 }, { type: 'BAT0', c: 30 }]), null, 'the wifi\'s and the battery\'s are not the processor\'s');
     assert.strictEqual(P.pickTemp([{ type: 'x86_pkg_temp', c: NaN }]), null, 'unreadable');
+    assert.strictEqual(P.pickTemp([{ type: 'x86_pkg_temp', c: 0 }]), null, 'a zone that reads 0 reads nothing');
+    assert.strictEqual(P.sysTemp('61000\n'), 61);
+    assert.strictEqual(P.sysTemp('61'), 61, 'a driver that gives degrees');
+    assert(isNaN(P.sysTemp(null)) && isNaN(P.sysTemp('')) && isNaN(P.sysTemp('x')));
     assert.strictEqual(P.scriptName(['node', '/var/opt/idrive7-renderd/js/foreground_gate.js']), 'foreground_gate');
     assert.strictEqual(P.scriptName(['node', '--expose-gc', '/var/opt/mgu-updater/current/js/updater.js']), 'MGU Store updater');
     assert.strictEqual(P.scriptName(['node', '/opt/x/server/index.js']), 'server', 'index.js: its folder');
@@ -228,7 +240,27 @@ try {
     assert.strictEqual(by(400).app, 'Spotify', 'an app keeps its app name (no script naming)');
     // load, temperature (the package sensor), clock (the cores' average)
     assert.deepStrictEqual(a.load, { one: 1.42, five: 1.31, fifteen: 1.24, running: 2, threads: 612 });
-    assert.deepStrictEqual(a.temp, { c: 61, zone: 'x86_pkg_temp' });
+    assert.deepStrictEqual(a.temp, { c: 61, zone: 'x86_pkg_temp', board: false });
+    assert.deepStrictEqual(s.sensorList(), ['acpitz 45 C', 'x86_pkg_temp 61 C']);
+    // a head unit with its processor's sensors in hwmon only (coretemp; an older kernel's in device/), and an ACPI zone
+    {
+        const sys2 = path.join(tmp, 'sys2');
+        write(path.join(sys2, 'class', 'thermal', 'thermal_zone0', 'type'), 'acpitz\n');
+        write(path.join(sys2, 'class', 'thermal', 'thermal_zone0', 'temp'), '47000\n');
+        write(path.join(sys2, 'class', 'hwmon', 'hwmon0', 'name'), 'acpitz\n');
+        write(path.join(sys2, 'class', 'hwmon', 'hwmon0', 'temp1_input'), '47000\n');
+        write(path.join(sys2, 'class', 'hwmon', 'hwmon1', 'device', 'name'), 'coretemp\n');
+        [['temp1', 'Package id 0', 63000], ['temp2', 'Core 0', 62000], ['temp3', 'Core 1', 65000]].forEach((x) => {
+            write(path.join(sys2, 'class', 'hwmon', 'hwmon1', 'device', x[0] + '_label'), x[1] + '\n');
+            write(path.join(sys2, 'class', 'hwmon', 'hwmon1', 'device', x[0] + '_input'), x[2] + '\n');
+        });
+        const s2 = new P.Sampler({ root: proc, oapDir: oap, self: { pid: 405, uid: 12240 }, storeState, uplinkUids: uidsD, sys: sys2 });
+        assert.deepStrictEqual(s2.sample().temp, { c: 63, zone: 'coretemp:Package id 0', board: false });
+        // nothing at all: no temperature, nothing breaks
+        const s3 = new P.Sampler({ root: proc, oapDir: oap, self: { pid: 405, uid: 12240 }, storeState, uplinkUids: uidsD, sys: path.join(tmp, 'nosys') });
+        assert.strictEqual(s3.sample().temp, null);
+        assert.deepStrictEqual(s3.sensorList(), []);
+    }
     assert.deepStrictEqual(a.freq, { hz: 1.9e9, max: 2.4e9 });
     // memory: each process's own (RssAnon); the resident size with its shared files beside it
     assert.strictEqual(by(300).mem, Math.round(900000 * 0.75) * KB);

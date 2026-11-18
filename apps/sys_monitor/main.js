@@ -109,6 +109,11 @@ mgu.run({
                 });
                 trend.forEach((a, k) => { if (!seen.has(k)) trend.delete(k); });
                 if (seq === 1) log.info('first sample: ' + snap.procs.length + ' processes (' + snap.hidden + ' not readable) in ' + (Date.now() - t0) + ' ms');
+                // which sensor the temperature is from, and every one found (what to look at when there is none)
+                if (seq === 1 && sampler.sensorList) {
+                    log.info('temperature: ' + (snap.temp ? snap.temp.zone + (snap.temp.board ? ' (board)' : '') : 'none')
+                        + '; sensors: ' + (sampler.sensorList().join(', ') || 'none found'));
+                }
             } catch (e) { log.warn('sample: ' + (e && e.stack || e)); }
             redraw();
         }
@@ -293,7 +298,7 @@ mgu.run({
             tiles.push(['Processor', c ? pct(c.busy) + ' %' : '--', snap.ncpu ? snap.ncpu + ' cores' : '', t.cold]);
             if (load) tiles.push(['Load', load.one.toFixed(2), '15 min ' + load.fifteen.toFixed(2), t.text]);
             // (the head unit may keep its sensors from apps: then no tile, rather than a blank one)
-            if (snap.temp) tiles.push(['Temperature', Math.round(snap.temp.c) + ' °C', '', snap.temp.c >= 90 ? t.crit : snap.temp.c >= 80 ? t.warn : t.text]);
+            if (snap.temp) tiles.push(['Temperature', Math.round(snap.temp.c) + ' °C', snap.temp.board ? 'board' : '',snap.temp.c >= 90 ? t.crit : snap.temp.c >= 80 ? t.warn : t.text]);
             if (snap.freq) tiles.push(['Clock', (snap.freq.hz / 1e9).toFixed(2) + ' GHz', snap.freq.max ? 'max ' + (snap.freq.max / 1e9).toFixed(1) + ' GHz' : '', t.text]);
             if (load && load.threads) tiles.push(['Threads', String(load.threads), load.running != null ? load.running + ' running' : '', t.text]);
             tiles.forEach((d, i) => tile(cv, t, i, tiles.length, d[0], d[1], d[2], d[3]));

@@ -179,16 +179,31 @@ function parseLoadavg(text) {
     return { one: l[0], five: l[1], fifteen: l[2], running: rt ? Number(rt[1]) : null, threads: rt ? Number(rt[2]) : null };
 }
 
+// sensors that are the processor's (or its SoC's): thermal zone types, hwmon "name:label"
+const CPU_SENSOR = /x86_pkg|coretemp|k10temp|package|tctl|tdie|cpu|core|soc|proc|b0d4|tsens/i;
+// sensors that are something else (and the ACPI zone that only stands for the others)
+const NOT_CPU = /bat|charger|wifi|wlan|iwl|ath\d|nvme|ssd|disk|drive|skin|ambient|int3400|gpu|nouveau|radeon/i;
 /**
- * The processor's temperature from the kernel's thermal zones ({ c, zone }): the package sensor (x86_pkg_temp)
- * where there is one, else the hottest zone named for the processor; null when none can be read.
+ * The processor's temperature from the kernel's sensors ([{ type, c }]: thermal zones by their type, hwmon ones as
+ * "name:label") -> { c, zone, board }: the package sensor (x86_pkg_temp, coretemp's "Package id") where there is one,
+ * else the hottest one named for the processor or its SoC, else the hottest board sensor (acpitz: board true);
+ * null when none can be read.
  */
 function pickTemp(zones) {
-    const ok = zones.filter((z) => isFinite(z.c) && z.c > -40 && z.c < 150);
-    const pkg = ok.find((z) => /x86_pkg_temp/i.test(z.type));
-    if (pkg) return { c: pkg.c, zone: pkg.type };
-    const cpu = ok.filter((z) => /cpu|pkg|core|soc|proc/i.test(z.type)).sort((a, b) => b.c - a.c)[0];
-    return cpu ? { c: cpu.c, zone: cpu.type } : null;
+    const ok = zones.filter((z) => isFinite(z.c) && z.c > -40 && z.c < 150 && z.c !== 0 && !NOT_CPU.test(z.type));
+    const hottest = (a) => a.sort((x, y) => y.c - x.c)[0];
+    const pkg = hottest(ok.filter((z) => /x86_pkg_temp|package id|tctl|tdie/i.test(z.type)));
+    if (pkg) return { c: pkg.c, zone: pkg.type, board: false };
+    const cpu = hottest(ok.filter((z) => CPU_SENSOR.test(z.type)));
+    if (cpu) return { c: cpu.c, zone: cpu.type, board: false };
+    const board = hottest(ok);
+    return board ? { c: board.c, zone: board.type, board: true } : null;
+}
+/** A sysfs temperature (millidegrees; a few drivers give degrees) -> °C, NaN when unreadable. */
+function sysTemp(text) {
+    const s = text == null ? '' : String(text).trim();
+    const n = s ? Number(s) : NaN;
+    return Math.abs(n) >= 1000 ? n / 1000 : n;
 }
 
 // interpreters whose processes are named after the script they run
@@ -330,13 +345,29 @@ class Sampler {
     }
     /** The files the processor's temperature and clock are in (sysfs; any may be missing or unreadable). */
     _sensors() {
-        if (this.sensors) return this.sensors;
-        const s = { zones: [], freq: [], max: null };
+        // (looked for once; again each minute while no temperature sensor was found: a driver may load later)
+        if (this.sensors && (this.sensors.zones.length || Date.now() - this.sensors.at < 60000)) return this.sensors;
+        const s = { zones: [], freq: [], max: null, at: Date.now() };
         if (this.sys) {
             const tz = path.join(this.sys, 'class', 'thermal');
             list(tz).filter((n) => /^thermal_zone\d+$/.test(n)).forEach((n) => {
                 const type = String(readText(path.join(tz, n, 'type')) || '').trim();
                 if (type) s.zones.push({ type, file: path.join(tz, n, 'temp') });
+            });
+            // hwmon: Intel's coretemp (the processor's own sensors) is only here, not among the thermal zones
+            const hw = path.join(this.sys, 'class', 'hwmon');
+            list(hw).filter((n) => /^hwmon\d+$/.test(n)).forEach((n) => {
+                // (older kernels keep a driver's files in its device folder)
+                [path.join(hw, n), path.join(hw, n, 'device')].some((d) => {
+                    const files = list(d).filter((f) => /^temp\d+_input$/.test(f)).sort();
+                    if (!files.length) return false;
+                    const name = String(readText(path.join(d, 'name')) || readText(path.join(hw, n, 'name')) || n).trim();
+                    files.forEach((f) => {
+                        const label = String(readText(path.join(d, f.replace('_input', '_label'))) || '').trim();
+                        s.zones.push({ type: name + ':' + (label || f.replace('_input', '')), file: path.join(d, f) });
+                    });
+                    return true;
+                });
             });
             const cpus = path.join(this.sys, 'devices', 'system', 'cpu');
             list(cpus).filter((n) => /^cpu\d+$/.test(n)).forEach((n) => {
@@ -349,10 +380,17 @@ class Sampler {
         this.sensors = s;
         return s;
     }
-    /** { temp: { c, zone } | null, freq: { hz, max } | null } now. */
+    /** The temperature sensors found, each with what it reads now, for the log. */
+    sensorList() {
+        return this._sensors().zones.map((z) => {
+            const c = sysTemp(readText(z.file));
+            return z.type + ' ' + (isFinite(c) ? c + ' C' : 'unreadable');
+        });
+    }
+    /** { temp: { c, zone, board } | null, freq: { hz, max } | null } now. */
     _processor() {
         const s = this._sensors();
-        const temp = pickTemp(s.zones.map((z) => ({ type: z.type, c: Number(readText(z.file)) / 1000 })));
+        const temp = pickTemp(s.zones.map((z) => ({ type: z.type, c: sysTemp(readText(z.file)) })));
         const hz = s.freq.map((f) => Number(readText(f)) * 1000).filter((v) => v > 0);
         return { temp, freq: hz.length ? { hz: hz.reduce((a, b) => a + b, 0) / hz.length, max: s.max } : null };
     }
@@ -521,5 +559,5 @@ function fmtAge(s) {
 
 module.exports = {
     Sampler, AppNames, group, sortRows, breakdown, label, title, parseMeminfo, parseStatus, parseStatm, parseStat, parseCpu,
-    cpuShare, parseLoadavg, pickTemp, scriptName, cmdline, fullName, hidepid, osMem, fmtBytes, fmtAge, HZ, STORE_STATE, UPLINK_UIDS,
+    cpuShare, parseLoadavg, pickTemp, sysTemp, scriptName, cmdline, fullName, hidepid, osMem, fmtBytes, fmtAge, HZ, STORE_STATE, UPLINK_UIDS,
 };

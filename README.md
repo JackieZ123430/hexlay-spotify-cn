@@ -6,7 +6,7 @@ Three apps for BMW iDrive 7 head units (MGU), installed through the [MGU Store](
 | :--- | :---: | :---: | :--- |
 | [Spotify](#spotify) | 1.0.30 | Yes | Nothing |
 | [M-Copilot](#m-copilot) | 1.0.33 | Yes | Driving signals, service list, fault memory (read-only) |
-| [System Monitor](#system-monitor) | 1.0.5 | No | Nothing, only the head unit's own processes |
+| [System Monitor](#system-monitor) | 1.0.6 | No | Nothing, only the head unit's own processes |
 
 ## Install
 
@@ -61,7 +61,7 @@ The screenshots are from the browser emulator with its sample B58.
 
 Shows what uses the head unit's memory and processor, like a computer's activity monitor.
 
-- Overview, per-core processor use and temperature, and every app and program with its memory and how much it grew in the last 3 minutes, which makes leaks easy to spot. Tap a row for details.
+- Overview, per-core processor use and temperature, and every app and program with its memory and how much it grew in the last 3 minutes, which makes leaks easy to spot. Tap any column heading to sort by it, again to reverse; tap a row for details.
 - Apps from the MGU Store are shown by name, BMW's own apps by their user id.
 - It only reads `/proc`. It can't stop or change anything, and needs no car signals or internet.
 

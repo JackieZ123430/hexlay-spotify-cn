@@ -8,8 +8,8 @@
  *              each core, what the time went to, and the apps and programs keeping it busy
  *   Processes  every app and program with its own memory, share of RAM, how much it grew in the last
  *              3 minutes (a memory leak shows as a steady rise) and its processor use; a row per app (its
- *              processes added up) or per process (setting "Group processes by app"); tap a heading to sort,
- *              a row for its details
+ *              processes added up) or per process (setting "Group processes by app"); tap any heading to sort
+ *              by it (again: the other way round), a row for its details
  *
  * A viewer: it reads Linux /proc and the MGU Store's records (procs.js) and nothing else. It never writes a
  * file of its own besides what the kit keeps for every app (settings, log), never starts a program, signals or
@@ -22,7 +22,7 @@ const path = require('path');
 const mgu = require('./kit/mgu');
 const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
-const { Sampler, group, sortRows, breakdown, fmtBytes, fmtAge } = require('./procs');
+const { Sampler, group, sortRows, SORT_FIRST, breakdown, fmtBytes, fmtAge } = require('./procs');
 const { SampleSampler } = require('./sample');
 
 const W = 1600, H = 520;
@@ -84,7 +84,7 @@ mgu.run({
         let snap = null, seq = 0, timer = null;
         const history = [];                 // [at, memory used %, processor busy % or null]
         const trend = new Map();            // row key (both groupings) -> [[at, own memory]]
-        let page = 0, sortBy = 'mem', scroll = 0;
+        let page = 0, sortBy = 'mem', sortDir = 'desc', scroll = 0;
         let detail = null;                  // { key, label }: a row's details are shown
 
         /* ---------- sampling: only while the screen shows ---------- */
@@ -158,11 +158,11 @@ mgu.run({
         });
 
         /** Rows (grouped as set, or by app), each with its growth, sorted. */
-        function rows(byApp, by) {
+        function rows(byApp, by, dir) {
             if (!snap) return [];
             const list = group(snap.procs, byApp);
             list.forEach((r) => { r.grow = growth(r.key); });
-            return sortRows(list, by);
+            return sortRows(list, by, dir);
         }
         function openDetail(r) { detail = { key: r.key, label: r.label }; redraw(); }
         function closeDetail() { detail = null; redraw(); }
@@ -357,26 +357,39 @@ mgu.run({
             return moved;
         });
 
+        /** A filled sort arrow centred on (cx, cy): pointing up (up true) or down. */
+        function sortArrow(cv, cx, cy, up, col) {
+            const hw = 7, hh = 4.5, tip = up ? cy - hh : cy + hh, base = up ? cy + hh : cy - hh;
+            cv.quad([[cx - hw, base], [cx + hw, base], [cx, tip], [cx, tip]], col);
+        }
         function drawProcesses(cv, t) {
-            const grouped = !!settings.get('group'), list = rows(grouped, sortBy), total = snap.mem ? snap.mem.total : null;
+            const grouped = !!settings.get('group'), list = rows(grouped, sortBy, sortDir), total = snap.mem ? snap.mem.total : null;
             const title = (grouped ? 'Apps and programs' : 'Processes') + '  ' + list.length;
             const p = G.panel(cv, t, 24, 44, 1552, 468, title);
             const note = 'Memory: each one\'s own, without shared files' + (snap.hidden ? '  ·  ' + snap.hidden + ' not readable' : '');
             cv.text(note, 1552, 80, 20, t.dim, { align: 'right' });
 
-            // the column headings: tap one to sort by it (the one sorted by in the theme's colour)
+            // the column headings: tap one to sort by it, again to turn the order round (the one sorted by in the
+            // theme's colour, with an arrow: down most first / Z to A, up the other way; numbers keep their edge)
             const hy = 128;
             const X = { name: 72, count: 760, mem: 960, pct: 1120, grow: 1300, cpu: 1470 };
             const heading = (label, x, align, by) => {
-                const on = by && sortBy === by, opt = { align, font: 'bold', spacing: 1.2 };
-                const text = label.toUpperCase() + (on ? '  v' : ''), w = cv.textWidth(text, 18, opt);
-                cv.text(text, x, hy, 18, on ? t.sel || t.accent : t.dim, opt);
-                if (by && cv.own) cv.target((align === 'right' ? x - w : x) - 12, hy - 30, w + 24, 44, () => { sortBy = by; scroll = 0; redraw(); }, 'sort_' + by, 8);
+                const on = sortBy === by, opt = { align, font: 'bold', spacing: 1.2 }, col = on ? t.sel || t.accent : t.dim;
+                const text = label.toUpperCase(), w = cv.textWidth(text, 18, opt), x0 = align === 'right' ? x - w : x;
+                cv.text(text, x, hy, 18, col, opt);
+                const aw = 14, gap = 10, ax = align === 'right' ? x0 - gap - aw : x0 + w + gap;
+                if (on) sortArrow(cv, ax + aw / 2, hy - 7, sortDir === 'asc', col);
+                if (cv.own) {
+                    cv.target(Math.min(x0, ax) - 12, hy - 30, w + aw + gap + 24, 44, () => {
+                        sortDir = sortBy === by ? (sortDir === 'asc' ? 'desc' : 'asc') : SORT_FIRST[by];
+                        sortBy = by; scroll = 0; redraw();
+                    }, 'sort_' + by, 8);
+                }
             };
             heading('Name', X.name, 'left', 'name');
-            heading(grouped ? 'Processes' : 'PID', X.count, 'right', null);
+            heading(grouped ? 'Processes' : 'PID', X.count, 'right', 'count');
             heading('Memory', X.mem, 'right', 'mem');
-            heading('% of RAM', X.pct, 'right', null);
+            heading('% of RAM', X.pct, 'right', 'pct');
             heading('Last 3 min', X.grow, 'right', 'grow');
             heading('Processor', X.cpu, 'right', 'cpu');
             cv.fillRect(48, hy + 12, 1504, 2, withAlpha(t.tick, 0.5));
@@ -465,7 +478,7 @@ mgu.run({
 
         /* ---------- frame ---------- */
         function frameSig() {
-            return [page, detail && detail.key, scroll, seq, sortBy, settings.get('theme'), settings.get('group')].join('|');
+            return [page, detail && detail.key, scroll, seq, sortBy, sortDir, settings.get('theme'), settings.get('group')].join('|');
         }
         let lastSig = '', lastDrawAt = 0;
         function loopFrame() {

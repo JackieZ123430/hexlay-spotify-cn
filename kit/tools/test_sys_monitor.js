@@ -319,6 +319,19 @@ try {
     assert.strictEqual(P.sortRows(g, 'name')[0].label, 'Car Vitals');
     g.forEach((r) => { r.grow = r.label === 'MGU Store' ? 30 * MB : r.label === 'Spotify' ? -2 * MB : null; });
     assert.deepStrictEqual(P.sortRows(g, 'grow').slice(0, 2).map((r) => r.label), ['MGU Store', 'Spotify'], 'growth: most first, unknown last');
+    // every column, both ways round
+    const lbl = (a) => a.map((r) => r.label);
+    assert.deepStrictEqual(lbl(P.sortRows(g, 'grow', 'asc')).slice(0, 2), ['Spotify', 'MGU Store'], 'growth: least first, unknown still last');
+    assert.strictEqual(P.sortRows(g, 'grow', 'asc').slice(-1)[0].grow, null);
+    assert.deepStrictEqual(lbl(P.sortRows(g, 'pct')), lbl(P.sortRows(g, 'mem')), '% of RAM: as the memory');
+    const mems = (a) => a.map((r) => r.mem);
+    assert.deepStrictEqual(mems(P.sortRows(g, 'mem', 'asc')), mems(P.sortRows(g, 'mem')).reverse(), 'memory: least first');
+    assert.deepStrictEqual(lbl(P.sortRows(g, 'name', 'desc')), lbl(P.sortRows(g, 'name')).reverse(), 'names: Z to A');
+    assert(P.sortRows(g, 'count')[0].count >= 2 && P.sortRows(g, 'count', 'asc')[0].count === 1, 'processes per row');
+    const byPid = P.sortRows(P.group(b.procs, false), 'count', 'asc').map((r) => r.pids[0]);
+    assert.deepStrictEqual(byPid, byPid.slice().sort((x, y) => x - y), 'a process row: by its PID');
+    assert.deepStrictEqual(lbl(P.sortRows(g, 'nonsense')), lbl(P.sortRows(g, 'mem')), 'an unknown column: memory');
+    Object.keys(P.SORT_FIRST).forEach((k) => assert.strictEqual(P.sortRows(g, k).length, g.length));
     // where the memory in use goes: apps (the Store's tools are programs), other programs, the rest
     const parts = P.breakdown(b);
     const own = (f) => b.procs.filter(f).reduce((x, p) => x + p.mem, 0);

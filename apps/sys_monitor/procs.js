@@ -512,16 +512,28 @@ function group(procs, byApp) {
     return Array.from(rows.values());
 }
 
-/** Sort rows: by 'mem' / 'cpu' / 'grow' (most first; grow: row.grow, set by the caller) or 'name' (A to Z). */
-function sortRows(rows, by) {
+// what each column sorts by first: names A to Z, numbers the most first
+const SORT_FIRST = { name: 'asc', count: 'desc', mem: 'desc', pct: 'desc', grow: 'desc', cpu: 'desc' };
+/**
+ * Sort rows by a column: 'name', 'count' (processes; a process row's PID), 'mem', 'pct', 'grow' (row.grow, set by
+ * the caller) or 'cpu'; dir 'asc' / 'desc' (default: SORT_FIRST's).
+ */
+function sortRows(rows, by, dir) {
     const lower = (r) => r.label.toLowerCase();
     const name = (a, b) => (lower(a) < lower(b) ? -1 : lower(a) > lower(b) ? 1 : 0);
-    const num = (v) => (v == null ? -Infinity : v);
-    const cmp = by === 'name' ? name
-        : by === 'cpu' ? (a, b) => (num(b.cpu) - num(a.cpu)) || (b.mem - a.mem) || name(a, b)
-            : by === 'grow' ? (a, b) => (num(b.grow) - num(a.grow)) || (b.mem - a.mem) || name(a, b)
-                : (a, b) => (b.mem - a.mem) || name(a, b);
-    return rows.slice().sort(cmp);
+    if (!SORT_FIRST[by]) by = 'mem';
+    const s = (dir || SORT_FIRST[by]) === 'asc' ? 1 : -1;
+    if (by === 'name') return rows.slice().sort((a, b) => s * name(a, b));
+    // the number sorted by (% of RAM is the memory's share: the same order); a process row's count column is its PID
+    const val = by === 'pct' ? (r) => r.mem
+        : by === 'count' ? (r) => (r.key.indexOf('pid:') === 0 ? r.pids[0] : r.count)
+            : (r) => r[by];
+    // (unknown values last either way; then the most memory, then by name)
+    return rows.slice().sort((a, b) => {
+        const va = val(a), vb = val(b);
+        if ((va == null) !== (vb == null)) return va == null ? 1 : -1;
+        return (va == null ? 0 : s * (va - vb)) || (b.mem - a.mem) || name(a, b);
+    });
 }
 
 /**
@@ -558,6 +570,6 @@ function fmtAge(s) {
 }
 
 module.exports = {
-    Sampler, AppNames, group, sortRows, breakdown, label, title, parseMeminfo, parseStatus, parseStatm, parseStat, parseCpu,
+    Sampler, AppNames, group, sortRows, SORT_FIRST, breakdown, label, title, parseMeminfo, parseStatus, parseStatm, parseStat, parseCpu,
     cpuShare, parseLoadavg, pickTemp, sysTemp, scriptName, cmdline, fullName, hidepid, osMem, fmtBytes, fmtAge, HZ, STORE_STATE, UPLINK_UIDS,
 };

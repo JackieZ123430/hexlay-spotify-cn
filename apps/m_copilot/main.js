@@ -25,7 +25,6 @@ const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
 const { AiBridge } = require('./ai');
 const { CloudPairManager } = require('./cloud_pair');
-const tlsDates = require('./kit/tls_dates');
 const qrcodegen = require('./kit/qrcodegen');
 
 const W = 1600, H = 520;

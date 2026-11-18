@@ -523,13 +523,10 @@ $('#clearlog').onclick = () => $('#log').replaceChildren();
  * is then hidden as on the car (no SHOW, no ticks); the knob, push and press move the focus here. The current app's
  * tile opens it again ({t:'hmi', a:'open'}), another app's tile starts that one ({t:'app'}: it opens once started).
  * Sizes in the screen's 1920 x 720 px (emu.css .pk-*). */
-// the order of the tiles on the car (the user's photo of it); apps not listed follow by name
-const ORDER = ['brake_test', 'warmup', 'service', 'redline', 'gforce', 'edrive', 'dyno', 'dtc_scanner', 'draggy', 'doom', 'car_vitals'];
 const PK = { cols: 5, row: 236, padTop: 18, padBottom: 30, view: 640, track: 590 };   // (emu.css: grid rows, padding, .pk-body / .pk-bar height)
 const P = { tiles: [], focus: 0, scroll: 0, busy: null, shown: false };
 function buildPicker(apps, titles) {
-  const ids = ORDER.filter((k) => apps.includes(k)).concat(apps.filter((a) => !ORDER.includes(a)));
-  P.tiles = ids.map((id) => ({ id, title: titles[id] || id }));
+  P.tiles = apps.map((id) => ({ id, title: titles[id] || id }));
   $('.pk-grid').replaceChildren(...P.tiles.map((t, i) => {
     const icon = el('img', { src: '/icon/' + encodeURIComponent(t.id) + '.png', alt: '', draggable: false });
     t.el = el('div', { className: 'pk-tile', role: 'option', 'aria-label': t.title, 'data-i': i }, icon, el('span', { textContent: t.title }));

@@ -7,6 +7,8 @@ Two apps for BMW iDrive 7 head units (MGU), installed through the [MGU Store](ht
 | [Spotify](#spotify) | 1.0.30 | Yes | Nothing |
 | [M-Copilot](#m-copilot) | 1.0.33 | Yes | Driving signals, service list, fault memory (read-only) |
 
+System Monitor has moved to its own repository, [hexlay/idrive7-system-monitor](https://github.com/hexlay/idrive7-system-monitor). To keep getting updates, add `hexlay/idrive7-system-monitor` as a source in the MGU Store.
+
 ## Install
 
 1. In the car, open **MGU Store > Sources > Add source** and enter `hexlay/idrive7-custom-apps`.

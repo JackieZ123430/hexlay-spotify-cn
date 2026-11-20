@@ -1,0 +1,147 @@
+{
+  "id": "spotify",
+  "title": "Spotify",
+  "description": "BMW iDrive 7 的 Spotify Connect 播放控制和曲库浏览应用",
+  "version": "1.0.3101",
+  "vendor": "custom",
+  "loggingId": "OASP",
+  "iconGlyph": "music",
+  "mguInternet": true,
+  "mguHmi": [
+    "ID7"
+  ],
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "canvas",
+      "title": "Spotify",
+      "buttons": [
+        [
+          "BTN_PAGE",
+          "下一页"
+        ],
+        [
+          "BTN_SETTINGS",
+          "设置"
+        ]
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "key": "theme",
+      "label": "配色主题",
+      "type": "choice",
+      "default": "m_tricolour",
+      "aliases": {
+        "spotify": "m_tricolour",
+        "idrive": "m_tricolour",
+        "idrive_red": "m_tricolour"
+      },
+      "options": [
+        [
+          "m_red",
+          "M 红色"
+        ],
+        [
+          "m_tricolour",
+          "M 三色"
+        ],
+        [
+          "ice",
+          "冰晶白"
+        ],
+        [
+          "amber",
+          "夜间琥珀"
+        ]
+      ]
+    },
+    {
+      "key": "demo",
+      "label": "播放模式",
+      "type": "choice",
+      "default": "off",
+      "options": [
+        [
+          "off",
+          "在线模式（默认）"
+        ],
+        [
+          "on",
+          "演示模式（离线）"
+        ]
+      ]
+    },
+    {
+      "key": "screen",
+      "label": "屏幕尺寸",
+      "type": "choice",
+      "default": "auto",
+      "options": [
+        [
+          "auto",
+          "自动"
+        ],
+        [
+          "10.25",
+          "10.25 英寸"
+        ],
+        [
+          "12.3",
+          "12.3 英寸"
+        ],
+        [
+          "8.8",
+          "8.8 英寸"
+        ]
+      ]
+    },
+    {
+      "key": "layout",
+      "label": "屏幕布局",
+      "type": "choice",
+      "default": "full",
+      "options": [
+        [
+          "full",
+          "全屏"
+        ],
+        [
+          "standard",
+          "标准"
+        ]
+      ]
+    },
+    {
+      "key": "renderer",
+      "label": "渲染器",
+      "type": "choice",
+      "default": "auto",
+      "options": [
+        [
+          "auto",
+          "GPU 60 帧（默认）"
+        ],
+        [
+          "software",
+          "软件渲染"
+        ]
+      ]
+    },
+    {
+      "key": "pollRate",
+      "label": "播放同步间隔",
+      "type": "number",
+      "unit": "s",
+      "default": 2,
+      "steps": [
+        1,
+        2,
+        3,
+        5,
+        10
+      ]
+    }
+  ]
+}

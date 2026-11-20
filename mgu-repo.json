@@ -1,18 +1,35 @@
 {
   "schema": 1,
-  "apps": {
-    "path": "apps/*",
-    "manifest": "app.json",
-    "icon": "icon.png",
-    "mguHmi": ["ID7"],
-    "requires": { "idrive7-renderd": "2.1.7", "mgu-inputgate": "1.0.0" },
-    "build": {
-      "python": "kit/tools/build.py",
-      "args": ["{id}"],
-      "sdk": "oap-sdk",
-      "output": "dist/{id}@{version}.tgz",
-      "shared": ["LICENSE", "LICENSE.MIT", "kit/runtime", "kit/platform", "kit/localization", "kit/tools/build.py", "kit/tools/pack_data.py",
-        "kit/tools/localize.py", "kit/tools/locale-revisions.json", "kit/tools/oapgen", "oap-sdk"]
+  "components": [
+    {
+      "id": "spotify",
+      "kind": "app",
+      "path": "apps/spotify",
+      "manifest": "app.zh-CN.json",
+      "title": "Spotify",
+      "description": "BMW iDrive 7 的 Spotify Connect 播放控制和曲库浏览应用",
+      "mguHmi": [
+        "ID7"
+      ],
+      "requires": {
+        "idrive7-renderd": "2.1.7",
+        "mgu-inputgate": "1.0.0"
+      },
+      "icon": "icon.png",
+      "build": {
+        "python": "localization/build_zh_cn.py",
+        "args": [
+          "{id}"
+        ],
+        "sdk": "oap-sdk",
+        "output": "dist/{id}@{version}.tgz",
+        "shared": [
+          "kit",
+          "apps",
+          "localization"
+        ]
+      }
     }
-  }
+  ],
+  "tools": []
 }

@@ -1,0 +1,11 @@
+{
+  "source": "https://github.com/JackieZ123430/hexlay-spotify-cn",
+  "apps": {
+    "spotify": {
+      "path": "apps/spotify",
+      "kitRoot": ".",
+      "version": "1.0.3101",
+      "upstreamVersion": "1.0.31"
+    }
+  }
+}

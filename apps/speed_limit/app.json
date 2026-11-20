@@ -2,7 +2,7 @@
   "id": "speed_limit",
   "title": "Speed Limit",
   "description": "The speed limit of the road you're on, on the cluster's map and the head-up display, from an offline OpenStreetMap map of Georgia. Read-only.",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "vendor": "custom",
   "loggingId": "OASL",
   "iconGlyph": "60",
@@ -83,15 +83,6 @@
           "header",
           "SL_HEAD_CL",
           "Cluster"
-        ],
-        [
-          "dropdown",
-          "SL_CL_PLACE",
-          "Place",
-          [
-            "Beside the speed",
-            "On the phone map"
-          ]
         ],
         [
           "text",
@@ -306,60 +297,6 @@
     {
       "key": "hudY",
       "label": "HUD sign: up / down",
-      "type": "number",
-      "unit": "px",
-      "default": 0,
-      "hidden": true
-    },
-    {
-      "key": "clusterPlace",
-      "label": "Place on the cluster",
-      "type": "choice",
-      "default": "speed",
-      "options": [
-        [
-          "speed",
-          "Beside the speed"
-        ],
-        [
-          "map",
-          "On the phone map"
-        ]
-      ],
-      "hidden": true
-    },
-    {
-      "key": "panelSize",
-      "label": "Cluster sign size (beside the speed)",
-      "type": "number",
-      "unit": "px",
-      "default": 80,
-      "steps": [
-        56,
-        64,
-        72,
-        80,
-        88,
-        96,
-        104,
-        112,
-        120,
-        136,
-        152
-      ],
-      "hidden": true
-    },
-    {
-      "key": "panelX",
-      "label": "Cluster sign left / right (beside the speed)",
-      "type": "number",
-      "unit": "px",
-      "default": 0,
-      "hidden": true
-    },
-    {
-      "key": "panelY",
-      "label": "Cluster sign up / down (beside the speed)",
       "type": "number",
       "unit": "px",
       "default": 0,

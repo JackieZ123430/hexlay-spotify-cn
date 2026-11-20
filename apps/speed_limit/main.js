@@ -21,7 +21,7 @@ const Car = require('./kit/car');
 const { LimitPack } = require('./limitpack');
 const { Matcher } = require('./matcher');
 const { Position, DemoDrive } = require('./position');
-const { Outputs, TARGETS, clusterTarget } = require('./outputs');
+const { Outputs, TARGETS } = require('./outputs');
 
 const APP_ID = 'speed_limit';
 const PACK = path.join(__dirname, 'georgia.pack');
@@ -173,25 +173,23 @@ async function background(bg) {
 /* ---------- the page: the HMI's own list, laid out as Maps on cluster's (app.json screen "menu") ----------
  * General: Show on (Cluster, HUD, Cluster and HUD, Off), Red sign over the limit, When there's no limit (nothing, or
  * "---" as BMW's own), Speed limit.
- * Cluster: Place (beside the speed: BMW's LIMIT box, the panel target; or on the phone map), Cluster sign, Size (a
- * slider), Position with Move left / right / up / down and Default position (each place keeps its own).
+ * Cluster (on the phone map, Maps on cluster's): Cluster sign, Size (a slider), Position with Move left / right / up /
+ * down and Default position.
  * HUD: HUD sign, Keep HUD sign over BMW's pop-ups, Size, Position, the moves and Default position.
  * A section's controls are greyed while Show on leaves its display out. Map: the data's date and licence. Info rows
  * read "Name: Value"; a row is written only when it changes, and only while the page shows. ASCII only. */
 const SHOW = ['cluster', 'hud', 'both', 'off'];
 const OVER = ['0', '5', '10', '15', '20'];
 const NOLIMIT = ['nothing', 'dashes'];
-const PLACE = ['speed', 'map'];
 // the slider's sizes (positions 0..10) and the move step on each target
 const SIZES = {
     hud: [64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144],
-    panel: [56, 64, 72, 80, 88, 96, 104, 112, 120, 136, 152],
     map: [70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 180],
 };
-const STEP = { hud: 10, panel: 10, map: 20 };
-/** A section's place now: the HUD's, or the cluster's (the panel or the map, setting "clusterPlace"). */
-function placeOf(k, s) {
-    const target = k === 'hud' ? 'hud' : clusterTarget(s), T = TARGETS[target];
+const STEP = { hud: 10, map: 20 };
+/** A section's place: the HUD's, or the cluster's (the phone map). */
+function placeOf(k) {
+    const target = k === 'hud' ? 'hud' : 'map', T = TARGETS[target];
     return { target, show: k, size: T.size, x: T.x, y: T.y, def: T.def, sizes: SIZES[target], step: STEP[target], row: k === 'hud' ? 'SL_HUD' : 'SL_CL' };
 }
 
@@ -210,7 +208,7 @@ function signState(e, t) {
     if (show !== t && show !== 'both') return 'Off';
     if (!e.active) return e.enabled() ? 'Car off' : 'Off';
     if (!o.connected) return 'Unavailable (no cluster-render)';
-    if (t === 'cluster' && o.clusterTarget === 'map' && !o.mapBusy) return 'Waiting for the phone map';
+    if (t === 'cluster' && !o.mapBusy) return 'Waiting for the phone map';
     if (!e.view) return 'No limit to show';
     const st = o[t === 'cluster' ? 'cluster' : 'hud'];
     return /^shown/.test(st) ? 'Shown' : /^waiting|^parked/.test(st) ? 'Waiting (' + st + ')' : 'Waiting';
@@ -244,7 +242,7 @@ mgu.run({
 
         /** A display's section: its status row, size slider, position row and buttons (greyed while it is not chosen). */
         function renderPlace(k) {
-            const P = placeOf(k, s), R = P.row, slider = sliders[k], live = on(P);
+            const P = placeOf(k), R = P.row, slider = sliders[k], live = on(P);
             const x = Number(s.get(P.x)) || 0, y = Number(s.get(P.y)) || 0;
             // the slider at the size nearest the setting; its text says the size itself (keyed by the place too: two
             // places can share a slider position with different sizes)
@@ -259,11 +257,6 @@ mgu.run({
             ['_SIZE', '_LEFT', '_RIGHT', '_UP', '_DOWN'].concat(k === 'hud' ? ['_KEEP'] : []).forEach((n) => once('en:' + R + n, live, () => ui.enabled(R + n, live)));
             const back = live && (x !== 0 || y !== 0);
             once('en:' + R + '_DEFAULT', back, () => ui.enabled(R + '_DEFAULT', back));
-            if (k === 'cluster') {
-                const place = Math.max(0, PLACE.indexOf(s.get('clusterPlace')));
-                once('place', place, () => ui.selected('SL_CL_PLACE', place));
-                once('en:SL_CL_PLACE', live, () => ui.enabled('SL_CL_PLACE', live));
-            }
         }
 
         function render() {
@@ -285,13 +278,12 @@ mgu.run({
         ui.onClick('SL_SHOW', (ev) => { const v = SHOW[ev.row]; if (v) { done.show = ev.row; s.set('show', v); } });
         ui.onClick('SL_OVER', (ev) => { const v = OVER[ev.row]; if (v != null) { done.over = ev.row; s.set('overspeed', v); } });
         ui.onClick('SL_NOLIMIT', (ev) => { const v = NOLIMIT[ev.row]; if (v) { done.nolim = ev.row; s.set('noLimit', v); } });
-        ui.onClick('SL_HUD_KEEP', () => { if (on(placeOf('hud', s))) s.set('hudKeep', !s.get('hudKeep')); });
-        ui.onClick('SL_CL_PLACE', (ev) => { const v = PLACE[ev.row]; if (v) { done.place = ev.row; s.set('clusterPlace', v); } });
+        ui.onClick('SL_HUD_KEEP', () => { if (on(placeOf('hud'))) s.set('hudKeep', !s.get('hudKeep')); });
         ['hud', 'cluster'].forEach((k) => {
             const R = k === 'hud' ? 'SL_HUD' : 'SL_CL', slider = sliders[k];
-            if (slider && slider.on) slider.on('changed', (step) => { const P = placeOf(k, s), v = P.sizes[step]; if (v && on(P)) { done[R + ':sizeStep'] = step; s.set(P.size, v); } });
+            if (slider && slider.on) slider.on('changed', (step) => { const P = placeOf(k), v = P.sizes[step]; if (v && on(P)) { done[R + ':sizeStep'] = step; s.set(P.size, v); } });
             const move = (dx, dy) => () => {
-                const P = placeOf(k, s);
+                const P = placeOf(k);
                 if (!on(P)) return;
                 const B = room(P, s), x = Number(s.get(P.x)) || 0, y = Number(s.get(P.y)) || 0;
                 const nx = Math.round(Math.max(B.x0, Math.min(B.x1, x + dx * P.step))), ny = Math.round(Math.max(B.y0, Math.min(B.y1, y + dy * P.step)));
@@ -302,7 +294,7 @@ mgu.run({
             ui.onClick(R + '_RIGHT', move(1, 0));
             ui.onClick(R + '_UP', move(0, -1));
             ui.onClick(R + '_DOWN', move(0, 1));
-            ui.onClick(R + '_DEFAULT', () => { const P = placeOf(k, s); if (s.get(P.x)) s.set(P.x, 0); if (s.get(P.y)) s.set(P.y, 0); });
+            ui.onClick(R + '_DEFAULT', () => { const P = placeOf(k); if (s.get(P.x)) s.set(P.x, 0); if (s.get(P.y)) s.set(P.y, 0); });
         });
         s.onChange(render);
         // the status rows: at most once a second, and only while the page is open

@@ -6,7 +6,7 @@ Three apps for BMW iDrive 7 head units (MGU), installed through the [MGU Store](
 | :--- | :---: | :---: | :--- |
 | [Spotify](#spotify) | 1.0.32 | Yes | Nothing |
 | [M-Copilot](#m-copilot) | 1.0.35 | Yes | Driving signals, service list, fault memory (read-only) |
-| [Speed Limit](#speed-limit) | 1.0.2 | No | Position, speed and power state (read-only) |
+| [Speed Limit](#speed-limit) | 1.0.3 | No | Position, speed and power state (read-only) |
 
 System Monitor has moved to its own repository, [hexlay/idrive7-system-monitor](https://github.com/hexlay/idrive7-system-monitor). To keep getting updates, add `hexlay/idrive7-system-monitor` as a source in the MGU Store.
 
@@ -78,8 +78,10 @@ reads the car's position, speed and power state.
   - **Map:** the map data's date and licence.
 - **Starts with the car** and runs in the background. Parked, locked or set to Off, it stops: it drops its
   subscriptions, closes the map and gives the head-up display and cluster back, so it draws no power.
-- **Light:** the map is read from the file in small pieces (well under 1 MB in memory instead of 15 MB), each update
-  takes a few microseconds, and nothing runs while the car stands still on a known road.
+- **Light:** the map is read from the file in small pieces (about 1 MB in memory instead of 15 MB), each update takes
+  a few microseconds, and it wakes twice a second while driving, every 2 s while standing still, and never while
+  parked or off (`kit/tools/test_speed_limit_power.js` counts it). At start-up it waits for the car's power state, so
+  a parked car's head unit starting up never opens the map or subscribes to anything.
 - **Cluster:** the sign joins the phone map (Maps on cluster) in its top-left corner, while that map is shown.
 - **Head-up display:** the round sign beside BMW's own speed; size and place on the page.
 - **Roads without a limit on the map** show the legal default with a grey ring: 60 km/h in a settlement, 90 outside,
@@ -134,7 +136,8 @@ If the store shows **Online** but an app doesn't, look at the `uplink:` line nea
 - `node kit/tools/emu.js <app_id>` runs an app in the browser emulator. Add `--car b58` or `--car n63` for a sample car.
 - The tests are in `kit/tools/test_*.js` and run in CI on Node 8.9.4 and 8.16.2, the versions on the head units.
 - Speed Limit's map: `python3 kit/tools/pack_sli.py georgia-latest.osm.pbf -o apps/speed_limit/georgia.pack` (a
-  Geofabrik extract; about a minute). `node kit/tools/test_speed_limit.js` replays drives through Tbilisi on it.
+  Geofabrik extract; about a minute). `node kit/tools/test_speed_limit.js` replays drives through Tbilisi on it;
+  after a build, `node kit/tools/test_speed_limit_power.js` checks its wake-ups from start-up to parked.
 
 For the platform itself (signals, renderer, controller input, deploying over SSH) see [idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps).
 

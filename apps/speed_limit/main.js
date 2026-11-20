@@ -6,7 +6,8 @@
  *
  * Starts with the car (app.json "autostart": background() runs without screens). It works only while it is shown
  * somewhere (setting "Show on": Cluster, HUD, or both) and the car is on (power state 7 ignition, 8 starting,
- * 10 drive-ready, 12 ending): then it matches the position to a road twice a second (not while standing still) and
+ * 10 drive-ready, 12 ending): then it matches the position to a road twice a second (every 2 s, without matching
+ * again, while standing still) and
  * shows the limit. Otherwise it idles: the position and speed subscriptions are dropped, the map file is closed,
  * the cluster-render connection goes (the HUD and the cluster are given back) and no timer runs; only the power
  * state stays subscribed, so it wakes with the car.
@@ -24,7 +25,9 @@ const { Outputs, TARGETS } = require('./outputs');
 
 const APP_ID = 'speed_limit';
 const PACK = path.join(__dirname, 'georgia.pack');
-const TICK_MS = 500;
+const TICK_MS = 500;            // driving: twice a second
+const STILL_MS = 2000;          // standing still (a light, a jam): every 2 s
+const BOOT_WAIT_MS = 5000;      // at start-up, the time the power state has to arrive before the app runs without it
 const VIEW_HOLD_MS = 8000;
 const ACTIVE = { 7: true, 8: true, 10: true, 12: true };
 
@@ -47,6 +50,7 @@ class Engine {
         this.carOn = undefined;         // from the power state; undefined: not known (then it runs)
         this.active = false;
         this.timer = null;
+        this.bootTimer = null;
         this.res = null;
         this.view = null;
         this.viewAt = 0;
@@ -72,17 +76,24 @@ class Engine {
             VehicleCondition: (v) => this._condition(Car.conditionOf(v && v.statusConditionVehicle)),
         }, this.log)).catch((e) => ({ error: String(e) }));
         if (this.demoOn) { this.log.info('demo drive (no car)'); this.carOn = true; } else if (sub && sub.error) this.log.warn('power state not available (' + sub.error + '): running while the app runs');
+        else if (this.condition === undefined) {
+            // the head unit starting up: wait for the power state before running (a parked car's start-up then never
+            // opens the map or subscribes to anything); without one after BOOT_WAIT_MS, run while the app runs
+            this.bootTimer = setTimeout(() => { this.bootTimer = null; this._evaluate(); }, BOOT_WAIT_MS);
+            return;
+        }
         this._evaluate();
     }
 
     enabled() { return this.settings.get('show') !== 'off'; }
 
     /** Run while shown somewhere and the car is on (or its state is not known). */
-    _evaluate() { this._setActive(this.enabled() && this.carOn !== false && !this.packError); }
+    _evaluate() { if (!this.bootTimer) this._setActive(this.enabled() && this.carOn !== false && !this.packError); }
 
     _condition(c) {
         if (c === undefined || c === this.condition) return;
         this.condition = c;
+        if (this.bootTimer) { clearTimeout(this.bootTimer); this.bootTimer = null; }
         if (!this.demoOn) this.carOn = !!ACTIVE[c];
         this._evaluate();
     }
@@ -99,10 +110,10 @@ class Engine {
             } catch (e) { this.packError = String(e.message || e); this.log.error('map: ' + this.packError); this.active = false; return; }
             if (!this.demoOn) this.position.start().catch((e) => this.log.warn('position: ' + e));
             this.outputs.start();
-            this.timer = setInterval(() => this._tick(), TICK_MS);
+            this._schedule(0);
         } else {
             this.log.info((this.enabled() ? 'car off' : 'switched off') + ': idle (subscriptions dropped, map closed, HUD and cluster given back)');
-            clearInterval(this.timer); this.timer = null;
+            clearTimeout(this.timer); this.timer = null;
             this.position.stop().catch(() => {});
             this.outputs.stop();
             if (this.pack) this.pack.close();
@@ -112,14 +123,21 @@ class Engine {
         this._changed();
     }
 
+    /** The next tick: twice a second while driving, every 2 s while standing still; none while idle. */
+    _schedule(ms) {
+        clearTimeout(this.timer);
+        this.timer = setTimeout(() => { this.timer = null; if (this.active) { this._tick(); if (this.active) this._schedule(this._still() ? STILL_MS : TICK_MS); } }, ms);
+    }
+
+    /** Standing still on a matched road: nothing to match again (the position only wanders). */
+    _still() { return this.speed !== null && this.speed < 2 && !!this.fix && !!this.res && this.res.state === 'match'; }
+
     _tick() {
         const now = Date.now();
         if (!this.demo) { this.position.poll(now); this.outputs.tick(now); } else this.outputs.tick(now);
         this.fix = this.demo ? this.demo.fix(now) : this.position.fix(now);
         this.speed = this.demo ? this.demo.speedKmh(now) : this.position.speedKmh(now);
-        // standing still on a matched road: nothing to match again (the position only wanders)
-        const still = this.speed !== null && this.speed < 2 && this.fix && this.res && this.res.state === 'match';
-        if (!still) this.res = this.matcher.update(this.fix, now);
+        if (!this._still()) this.res = this.matcher.update(this.fix, now);
         this._decide(now);
         this.outputs.update(this.view, now);
         this._changed();

@@ -98,7 +98,9 @@ class Outputs {
                 return;
             }
             const w = this._where(t);
-            const sign = drawSign(this.view.limit, { size: w.size, inferred: this.view.inferred, over: this.view.over });
+            // the pixels only when the sign changes (limit, size, default, over): not on every tick
+            const key = [this.view.limit, w.size, !!this.view.inferred, !!this.view.over].join(':');
+            const sign = L && L.size === w.size && L.key === key ? null : drawSign(this.view.limit, { size: w.size, inferred: this.view.inferred, over: this.view.over });
             if (L && L.size !== w.size) { cr.drop(L.ref); L = null; }
             const yld = t === 'hud' && this.settings.get('hudKeep') ? 0 : 1;
             if (!L) {
@@ -109,12 +111,14 @@ class Outputs {
                 if (L.yld !== yld) { cr.set(L.ref, { yield: yld }); L.yld = yld; }
                 if (!L.visible) { cr.set(L.ref, { visible: 1 }); L.visible = true; }
             }
-            if (L.key !== sign.key) { cr.pixels(L.ref, sign.px); L.key = sign.key; }
+            if (sign && L.key !== sign.key) { cr.pixels(L.ref, sign.px); L.key = sign.key; }
         });
     }
 
-    /** Now and then: ask cluster-render who draws on the map target. */
+    /** Now and then: ask cluster-render who draws on the map target (only while there is a limit to show, or the sign
+     * is on the map: nothing to ask otherwise). */
     tick(now) {
+        if (!(this.view && this.view.limit) && !this.mapBusy) return;
         const cr = this.cr;
         const show = this.settings.get('show');
         if (!cr || !cr.ready || (show !== 'cluster' && show !== 'both')) return;

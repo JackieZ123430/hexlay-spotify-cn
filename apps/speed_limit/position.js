@@ -168,12 +168,12 @@ class DemoDrive {
         this.steady = Number(o.speed) || 0;
         this.pts = [];
         if (!pack) return;
-        for (let i = 0; i < pack.count; i++) {
-            const P = pack.piece(i);
-            if (P.way !== (way || 20647951)) continue;
-            const p = pack.points(i, P);
+        const ids = [];
+        for (let i = 0; i < pack.count; i++) if (pack.piece(i).way === (way || 20647951)) ids.push(i);
+        pack.chain(ids).forEach((i) => {
+            const p = pack.points(i);
             for (let k = this.pts.length ? 2 : 0; k < p.length; k += 2) this.pts.push([p[k], p[k + 1]]);
-        }
+        });
         this.len = [0];
         for (let i = 1; i < this.pts.length; i++) this.len.push(this.len[i - 1] + Math.hypot(this.pts[i][0] - this.pts[i - 1][0], this.pts[i][1] - this.pts[i - 1][1]));
         this.t0 = Date.now();

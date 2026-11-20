@@ -181,7 +181,7 @@ function liveUi(hu, displayOf, softImage) {
         rows: async () => {},
         selected: async (n, row) => note(n, (c) => { c.sel = row; }),
         visible: async (n, on) => note(n, (c) => { c.vis = !!on; }),
-        enabled: async () => {},
+        enabled: async (n, on) => note(n, (c) => { c.en = !!on; }),
         checked: async (n, on, row) => { if (!row) note(n, (c) => { c.chk = !!on; }); },
         onClick: (n, fn) => comp(n).on('action', (ev) => {
             log.info('click ' + n);
@@ -345,7 +345,7 @@ function runLive(stage, dataDir) {
     hu.on('screens', (stack) => { send({ t: 'screens', stack }); focus(null); });
     hu.on('nui', (p) => send({ t: 'nui', comps: p }));
     hu.on('hmiscreen', (n) => send({ t: 'note', s: 'The HMI screen ' + n + ' is not drawn here.' }));
-    send({ t: 'spec', spec: { id: spec.id, title: spec.title, version: spec.version, settings: spec.settings || [], screens: spec.screens || [] }, values: values() });
+    send({ t: 'spec', spec: { id: spec.id, title: spec.title, version: spec.version, settings: spec.settings || [], screens: spec.screens || [], credits: spec.credits }, values: values() });
 
     // the HMI's focus over the shown screen's buttons, for the controller while the app does not hold it
     let focused = null;
@@ -425,6 +425,7 @@ function runLive(stage, dataDir) {
             }, false);
             if (!m.grabbed) hmiCcu({ frontRotaryEncoderOperation: e.knob, pb: e.pb, df: e.df });
         } else if (m.t === 'click') ui.comp(m.id).emit('action', m.row != null && isFinite(Number(m.row)) ? { row: Number(m.row) } : {});
+        else if (m.t === 'slide') ui.comp(m.id).emit('changed', Number(m.value));      // a slider moved (the SDK's 'changed', the new step)
         else if (m.t === 'tap') hmiTap(Number(m.x), Number(m.y));
         else if (m.t === 'reconnect') reconnect();
         else if (m.t === 'hmi') {

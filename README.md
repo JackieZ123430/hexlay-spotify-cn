@@ -6,7 +6,7 @@ Three apps for BMW iDrive 7 head units (MGU), installed through the [MGU Store](
 | :--- | :---: | :---: | :--- |
 | [Spotify](#spotify) | 1.0.32 | Yes | Nothing |
 | [M-Copilot](#m-copilot) | 1.0.35 | Yes | Driving signals, service list, fault memory (read-only) |
-| [Speed Limit](#speed-limit) | 1.0.1 | No | Position, speed and power state (read-only) |
+| [Speed Limit](#speed-limit) | 1.0.2 | No | Position, speed and power state (read-only) |
 
 System Monitor has moved to its own repository, [hexlay/idrive7-system-monitor](https://github.com/hexlay/idrive7-system-monitor). To keep getting updates, add `hexlay/idrive7-system-monitor` as a source in the MGU Store.
 
@@ -70,12 +70,18 @@ The speed limit of the road you're on, on the head-up display and on the cluster
 OpenStreetMap map of Georgia that ships with the app. No internet, no BMW map, and nothing is sent to the car: it only
 reads the car's position, speed and power state.
 
-- **One switch.** The app's page is the car's own list, like Maps on cluster's: what it shows now, where the position
-  comes from, and a checkbox to turn it on or off. No GPU renderer is needed.
-- **Starts with the car** and runs in the background. Parked, locked or switched off, it stops: it drops its
-  subscriptions and gives the head-up display and cluster back, so it draws no power.
-- **Head-up display:** the round sign beside BMW's own speed.
-- **Cluster:** only while the phone map (Maps on cluster) is shown, in the map's top-left corner.
+- **The page is laid out like Maps on cluster's**, as the car's own list (no GPU renderer):
+  - **General:** **Show on** (Cluster, HUD, Cluster and HUD, or Off), **Red sign over the limit** (Off, +5,
+    +10, +15 or +20 km/h), and what it shows now: **Speed limit** and **Cluster sign**.
+  - **HUD:** **HUD sign**, **Keep HUD sign over BMW's pop-ups**, **Size** (a slider), **Position** with **Move
+    left / right / up / down** and **Default position**. They are greyed while Show on leaves the HUD out.
+  - **Map:** the map data's date and licence.
+- **Starts with the car** and runs in the background. Parked, locked or set to Off, it stops: it drops its
+  subscriptions, closes the map and gives the head-up display and cluster back, so it draws no power.
+- **Light:** the map is read from the file in small pieces (well under 1 MB in memory instead of 15 MB), each update
+  takes a few microseconds, and nothing runs while the car stands still on a known road.
+- **Cluster:** the sign joins the phone map (Maps on cluster) in its top-left corner, while that map is shown.
+- **Head-up display:** the round sign beside BMW's own speed; size and place on the page.
 - **Roads without a limit on the map** show the legal default with a grey ring: 60 km/h in a settlement, 90 outside,
   110 on motorways, 20 in living streets.
 - It needs **cluster-render** for the head-up display and the cluster; it comes with Maps on cluster from the
@@ -86,9 +92,13 @@ second to the nearest road within 25 m that runs the way the car is heading (one
 round), and the limit for that direction is shown. Another road takes over after two updates in a row, or at once
 at a junction. In a tunnel the last limit is kept until the position comes back.
 
-| Switched off | The two signs |
+| Show on | Red sign over the limit |
 | :---: | :---: |
-| ![Speed Limit switched off](docs/screenshots/speed_limit_off.png) | ![Speed Limit signs](docs/screenshots/speed_limit_signs.png) |
+| ![Speed Limit show on](docs/screenshots/speed_limit_show_on.png) | ![Speed Limit over the limit setting](docs/screenshots/speed_limit_overspeed.png) |
+| **HUD settings** | **Show on: Cluster** (the HUD settings greyed) |
+| ![Speed Limit HUD settings](docs/screenshots/speed_limit_hud_settings.png) | ![Speed Limit cluster only](docs/screenshots/speed_limit_cluster_only.png) |
+| **The signs** | |
+| ![Speed Limit signs](docs/screenshots/speed_limit_signs.png) | |
 | **Head-up display** (black is see-through) | **Cluster, over the phone map** |
 | ![Speed Limit on the HUD](docs/screenshots/speed_limit_hud.png) | ![Speed Limit on the cluster](docs/screenshots/speed_limit_cluster.png) |
 

@@ -60,7 +60,7 @@ function send(s, obj) {
     s.write(Buffer.concat([h, j]));
 }
 
-const settings = { v: { hud: 'on', hudSize: 88, hudX: 0, hudY: 0, cluster: 'map', clusterSize: 110, clusterX: 0, clusterY: 0 }, get(k) { return this.v[k]; } };
+const settings = { v: { show: 'both', hudSize: 88, hudX: 0, hudY: 0, clusterSize: 110, clusterX: 0, clusterY: 0 }, get(k) { return this.v[k]; } };
 const log = { info() {}, warn() {}, error() {} };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 let fails = 0;
@@ -113,11 +113,20 @@ const ops = (op) => got.filter((g) => g.t === 'J' && g.m.op === op).map((g) => g
     await wait(100);
     check(ops('set').some((m) => m.ref === hx.ref && m.visible === 0), 'no limit: HUD layer hidden');
 
-    // settings: cluster off, HUD moved
+    // settings: kept over BMW's pop-ups; the HUD sign moved; then "cluster": the HUD sign hidden
+    settings.v.hudKeep = true;
+    out.update({ limit: 90, inferred: true, over: false }, Date.now());
+    await wait(100);
+    check(ops('set').some((m) => m.ref === hx.ref && m.yield === 0), "kept over BMW's pop-ups: yield 0");
     settings.v.hudX = 40;
     out.update({ limit: 90, inferred: true, over: false }, Date.now());
     await wait(100);
     check(ops('set').some((m) => m.ref === hx.ref && m.x === hx.x + 40), 'HUD sign moved by the setting');
+    const hiddenBefore = ops('set').filter((m) => m.ref === hx.ref && m.visible === 0).length;
+    settings.v.show = 'cluster';
+    out.update({ limit: 90, inferred: true, over: false }, Date.now());
+    await wait(100);
+    check(ops('set').filter((m) => m.ref === hx.ref && m.visible === 0).length === hiddenBefore + 1, '"Cluster": HUD sign hidden');
 
     out.stop();
     await wait(200);

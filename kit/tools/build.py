@@ -90,6 +90,9 @@ WIDGETS = {
     # settings use it in an LT_State_Wide); the 70/30 one-row columns cut both off
     'tworow':    ('button', 'LT_Button_2Row_2Text', {2: 1, 3: 2}),
     'checkbox':  ('checkBox', 'LT_CheckBox_1Row', {2: 1, 3: 2}),
+    # a drop-down row with its choice on the right, and a stepped slider (as Maps on cluster's page: Show on, Size)
+    'dropdown':  ('dropDownMenu', 'LT_DropDownMenu_1Row_2Col3070', {2: 1, 3: 3}),
+    'slider':    ('slider', 'LT_Slider_LeftJustified_Fill_Steps', {2: 1, 3: 3}),
     'scroll':    ('label', 'LT_ScrollLabel_UnlimitedRow_TextDyn', {2: 1, 3: 1}),
     'laptimer':  ('label', 'LT_Label_Laptimer', {3: 0}),
 }
@@ -200,7 +203,9 @@ def build_ui(spec, language='en'):
                 'Text1stRow': {'value': credit_title, 'type': 'StringId'},
                 'Text2ndRow': {'value': credit_link, 'type': 'StringId'},
             }]))
-        # the project's own credit, last row
+        # the project's own credit, last row (app.json "credits": false leaves it out: a link the car can't open)
+        if spec.get('credits') is False:
+            return
         repo_title, repo_link = sid(app, 'REPO_CREDITS_TITLE'), sid(app, 'REPO_CREDITS_LINK')
         strings[repo_title] = 'iDrive 7 custom apps'
         strings[repo_link] = 'GitHub cauliflowermossgrape · github.com/cauliflowermossgrape/idrive7-apps'
@@ -244,6 +249,19 @@ def build_ui(spec, language='en'):
             for it in scr.get('items', []):
                 kindi, name = it[0], it[1]
                 label = it[2] if len(it) > 2 else ''
+                if kindi == 'dropdown':
+                    # ["dropdown", NAME, header, [choices]]: the HMI shows the chosen row right of the header
+                    items.append(comp(kindi, name, rows=[{'ItemText': {'value': hmi_text(o), 'type': 'Text'}} for o in it[3]],
+                                      cells={'HeaderText': {'value': hmi_text(label), 'type': 'Text'}, 'SelectedItem': {'value': 0, 'type': 'UInt'}}))
+                    continue
+                if kindi == 'slider':
+                    # ["slider", NAME, text, steps]: positions 0..steps, its text written at run time ("Size: ...")
+                    n = int(it[3])
+                    items.append(comp(kindi, name, rows=[{
+                        'TextDescription': {'value': hmi_text(label), 'type': 'Text'}, 'TextDescriptionVisible': {'value': True, 'type': 'Bool'},
+                        'MiddleIndicatorVisible': {'value': False, 'type': 'Bool'}, 'MinValue': {'value': 0, 'type': 'SInt'},
+                        'MaxValue': {'value': n, 'type': 'SInt'}, 'NumberOfSteps': {'value': n, 'type': 'SInt'}}]))
+                    continue
                 if kindi == 'twocol':
                     rows = [{'Text1stCol': {'value': label, 'type': 'Text'}, 'Text2ndCol': {'value': '', 'type': 'Text'}}]
                 elif kindi == 'tworow':
@@ -532,7 +550,7 @@ def build(app_id, language='en'):
             body = file.read()
         with open(entry, 'wb') as file:
             file.write(credit.encode('utf-8') + body)
-    rt_spec = {k: spec.get(k) for k in ('id', 'title', 'version', 'screens', 'settings', 'config', 'startWidget', 'nativeSettings')}
+    rt_spec = {k: spec.get(k) for k in ('id', 'title', 'version', 'screens', 'settings', 'config', 'startWidget', 'nativeSettings', 'credits')}
     rt_spec['mguInternet'] = bool(spec.get('mguInternet') or spec.get('internet'))
     rt_spec['stateIds'] = state_ids
     json.dump(rt_spec, open(os.path.join(src, 'javascript', 'kit', 'app-spec.json'), 'w', encoding='utf-8', newline='\n'), indent=1)

@@ -29,10 +29,10 @@ function gauss() { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd();
 
 const t0 = Date.now();
 const pack = LimitPack.open(file);
-console.log('pack: ' + pack.describe() + ', ' + (pack.buf.length / 1e6).toFixed(1) + ' MB, opened in ' + (Date.now() - t0) + ' ms');
+console.log('pack: ' + pack.describe() + ', ' + (pack.size / 1e6).toFixed(1) + ' MB, opened in ' + (Date.now() - t0) + ' ms');
 
 /* ---------- ways: their pieces in order, and where they end ---------- */
-const ways = new Map();     // way -> [piece ids] (consecutive in the pack, in the way's order)
+const ways = new Map();     // way -> [piece ids] (put in driving order by geom(): the pack keeps them by place)
 for (let i = 0; i < pack.count; i++) {
     const w = pack.piece(i).way;
     let a = ways.get(w);
@@ -41,7 +41,9 @@ for (let i = 0; i < pack.count; i++) {
 }
 const key = (x, y) => Math.round(x) + ',' + Math.round(y);
 const ends = new Map();     // rounded end point -> [{ way, atStart }]
+const chained = new Set();
 function geom(way) {
+    if (!chained.has(way)) { ways.set(way, pack.chain(ways.get(way))); chained.add(way); }
     const pts = [];
     for (const id of ways.get(way)) {
         const p = pack.points(id);

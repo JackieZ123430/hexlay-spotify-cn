@@ -5,15 +5,14 @@
  *   const out = new Outputs('speed_limit', log, settings).start();
  *   out.update({ limit, inferred, over } | null, now);   out.tick(now);   out.stop();   out.diag()
  *
- * HUD (800 x 480): an image layer, class overlay, where the settings put it (BMW's own speed stays in its slot below;
- * transparent pixels are see-through). It gives way to the stock HUD lists like every layer (yield 1).
- * Cluster map (1088 x 480, under the gauges): settings "cluster"
- *   map      only while another app (Maps on cluster) is showing its picture on the map target: cluster-render's
- *            status lists every client's layers ("layer 3 video of <app> on map, content z 0: shown"); asked for
- *            every 3 s while the car is on. This app never makes the map target wanted by itself in this mode, so
- *            it never takes the cluster's centre from the stock map.
- *   always   the sign makes the target wanted (the cluster's centre then shows it whenever there is a limit)
- *   off
+ * Setting "show": cluster | hud | both | off (as Maps on cluster's Show on).
+ * Cluster map (1088 x 480, under the gauges): only while another app (Maps on cluster) is showing its picture on the
+ * map target: cluster-render's status lists every client's layers ("layer 3 video of <app> on map, content z 0:
+ * shown"); asked for every 3 s while active. The sign never makes the map target wanted by itself, so it never takes
+ * the cluster's centre from the stock map.
+ * HUD (800 x 480): an image layer, class overlay, where the hidden settings put it (BMW's own speed stays in its slot
+ * below; transparent pixels are see-through). It gives way to BMW's pop-ups on the HUD (yield 1), unless the setting
+ * "hudKeep" keeps it over them (yield 0).
  * A layer without a limit to show is hidden (visible 0); the HUD is given back after cluster-render's linger (3 s).
  * stop() drops the layers and closes the connection: cluster-render releases the surfaces at once.
  */
@@ -78,10 +77,8 @@ class Outputs {
     }
 
     _wanted(t) {
-        const s = this.settings;
-        if (t === 'hud') return s.get('hud') !== 'off';
-        const mode = s.get('cluster');
-        return mode === 'always' || (mode === 'map' && this.mapBusy);
+        const show = this.settings.get('show');
+        return t === 'hud' ? show === 'hud' || show === 'both' : (show === 'cluster' || show === 'both') && this.mapBusy;
     }
 
     /** Show this (or nothing). */
@@ -103,21 +100,24 @@ class Outputs {
             const w = this._where(t);
             const sign = drawSign(this.view.limit, { size: w.size, inferred: this.view.inferred, over: this.view.over });
             if (L && L.size !== w.size) { cr.drop(L.ref); L = null; }
+            const yld = t === 'hud' && this.settings.get('hudKeep') ? 0 : 1;
             if (!L) {
-                const ref = cr.image({ target: t, class: 'overlay', z: 20, x: w.x, y: w.y, w: w.size, h: w.size, iw: w.size, ih: w.size, fps: 4, visible: 1 });
-                L = this.layers[t] = { ref, size: w.size, x: w.x, y: w.y, key: '', visible: true };
+                const ref = cr.image({ target: t, class: 'overlay', z: 20, x: w.x, y: w.y, w: w.size, h: w.size, iw: w.size, ih: w.size, fps: 4, visible: 1, yield: yld });
+                L = this.layers[t] = { ref, size: w.size, x: w.x, y: w.y, key: '', visible: true, yld };
             } else {
                 if (L.x !== w.x || L.y !== w.y) { cr.set(L.ref, { x: w.x, y: w.y }); L.x = w.x; L.y = w.y; }
+                if (L.yld !== yld) { cr.set(L.ref, { yield: yld }); L.yld = yld; }
                 if (!L.visible) { cr.set(L.ref, { visible: 1 }); L.visible = true; }
             }
             if (L.key !== sign.key) { cr.pixels(L.ref, sign.px); L.key = sign.key; }
         });
     }
 
-    /** Now and then: ask cluster-render who draws on the map target (cluster "map" mode only). */
+    /** Now and then: ask cluster-render who draws on the map target. */
     tick(now) {
         const cr = this.cr;
-        if (!cr || !cr.ready || this.settings.get('cluster') !== 'map') return;
+        const show = this.settings.get('show');
+        if (!cr || !cr.ready || (show !== 'cluster' && show !== 'both')) return;
         if (now - this.lastStatus < STATUS_MS) return;
         this.lastStatus = now;
         cr.status();

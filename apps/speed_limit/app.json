@@ -1,12 +1,13 @@
 {
   "id": "speed_limit",
   "title": "Speed Limit",
-  "description": "The speed limit of the road you're on, on the head-up display and the cluster's map, from an offline OpenStreetMap map of Georgia. One switch; read-only.",
-  "version": "1.0.1",
+  "description": "The speed limit of the road you're on, on the cluster's map and the head-up display, from an offline OpenStreetMap map of Georgia. Read-only.",
+  "version": "1.0.2",
   "vendor": "custom",
   "loggingId": "OASL",
   "iconGlyph": "60",
   "autostart": true,
+  "credits": false,
   "mguHmi": [
     "ID7"
   ],
@@ -37,14 +38,98 @@
       "settings": true,
       "items": [
         [
-          "text",
-          "SL_NOW",
-          ""
+          "header",
+          "SL_HEAD_GENERAL",
+          "General"
+        ],
+        [
+          "dropdown",
+          "SL_SHOW",
+          "Show on",
+          [
+            "Cluster",
+            "HUD",
+            "Cluster and HUD",
+            "Off"
+          ]
+        ],
+        [
+          "dropdown",
+          "SL_OVER",
+          "Red sign over the limit",
+          [
+            "Off",
+            "+5 km/h",
+            "+10 km/h",
+            "+15 km/h",
+            "+20 km/h"
+          ]
         ],
         [
           "text",
-          "SL_WHERE",
-          ""
+          "SL_LIMIT",
+          "Speed limit: -"
+        ],
+        [
+          "text",
+          "SL_CLUSTER",
+          "Cluster sign: -"
+        ],
+        [
+          "header",
+          "SL_HEAD_HUD",
+          "HUD"
+        ],
+        [
+          "text",
+          "SL_HUD",
+          "HUD sign: -"
+        ],
+        [
+          "checkbox",
+          "SL_HUD_KEEP",
+          "Keep HUD sign over BMW's pop-ups"
+        ],
+        [
+          "slider",
+          "SL_HUD_SIZE",
+          "Size: -",
+          10
+        ],
+        [
+          "text",
+          "SL_HUD_POS",
+          "Position: -"
+        ],
+        [
+          "button",
+          "SL_HUD_LEFT",
+          "Move left"
+        ],
+        [
+          "button",
+          "SL_HUD_RIGHT",
+          "Move right"
+        ],
+        [
+          "button",
+          "SL_HUD_UP",
+          "Move up"
+        ],
+        [
+          "button",
+          "SL_HUD_DOWN",
+          "Move down"
+        ],
+        [
+          "button",
+          "SL_HUD_DEFAULT",
+          "Default position"
+        ],
+        [
+          "header",
+          "SL_HEAD_MAP",
+          "Map"
         ],
         [
           "text",
@@ -56,26 +141,64 @@
   ],
   "settings": [
     {
-      "key": "enabled",
-      "label": "Speed limit on the HUD and cluster",
-      "type": "bool",
-      "default": true
-    },
-    {
-      "key": "hud",
-      "label": "Head-up display",
+      "key": "show",
+      "label": "Show on",
       "type": "choice",
-      "default": "on",
+      "default": "both",
       "options": [
         [
-          "on",
-          "Show the sign"
+          "cluster",
+          "Cluster"
+        ],
+        [
+          "hud",
+          "HUD"
+        ],
+        [
+          "both",
+          "Cluster and HUD"
         ],
         [
           "off",
           "Off"
         ]
       ],
+      "hidden": true
+    },
+    {
+      "key": "overspeed",
+      "label": "Red sign over the limit",
+      "type": "choice",
+      "default": "10",
+      "options": [
+        [
+          "0",
+          "Off"
+        ],
+        [
+          "5",
+          "+5 km/h"
+        ],
+        [
+          "10",
+          "+10 km/h"
+        ],
+        [
+          "15",
+          "+15 km/h"
+        ],
+        [
+          "20",
+          "+20 km/h"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "hudKeep",
+      "label": "Keep HUD sign over BMW's pop-ups",
+      "type": "bool",
+      "default": false,
       "hidden": true
     },
     {
@@ -102,26 +225,6 @@
       "type": "number",
       "unit": "px",
       "default": 0,
-      "steps": [
-        -200,
-        -160,
-        -120,
-        -80,
-        -60,
-        -40,
-        -20,
-        0,
-        20,
-        40,
-        60,
-        80,
-        120,
-        160,
-        200,
-        260,
-        320,
-        380
-      ],
       "hidden": true
     },
     {
@@ -130,39 +233,6 @@
       "type": "number",
       "unit": "px",
       "default": 0,
-      "steps": [
-        -160,
-        -120,
-        -80,
-        -60,
-        -40,
-        -20,
-        0,
-        20,
-        40,
-        60
-      ],
-      "hidden": true
-    },
-    {
-      "key": "cluster",
-      "label": "Instrument cluster",
-      "type": "choice",
-      "default": "map",
-      "options": [
-        [
-          "map",
-          "With the phone map (Maps on cluster)"
-        ],
-        [
-          "always",
-          "Always (takes the cluster's centre)"
-        ],
-        [
-          "off",
-          "Off"
-        ]
-      ],
       "hidden": true
     },
     {
@@ -215,31 +285,6 @@
         200,
         280,
         320
-      ],
-      "hidden": true
-    },
-    {
-      "key": "overspeed",
-      "label": "Over the limit: red sign from",
-      "type": "choice",
-      "default": "0",
-      "options": [
-        [
-          "0",
-          "Off"
-        ],
-        [
-          "5",
-          "+5 km/h"
-        ],
-        [
-          "10",
-          "+10 km/h"
-        ],
-        [
-          "15",
-          "+15 km/h"
-        ]
       ],
       "hidden": true
     },
@@ -319,23 +364,6 @@
         10,
         20,
         30
-      ],
-      "hidden": true
-    },
-    {
-      "key": "record",
-      "label": "Record drives (for tuning)",
-      "type": "choice",
-      "default": "off",
-      "options": [
-        [
-          "off",
-          "Off"
-        ],
-        [
-          "on",
-          "On (last 5 drives, in the app's data)"
-        ]
       ],
       "hidden": true
     }

@@ -1,34 +1,32 @@
 'use strict';
 /**
- * Speed Limit - the speed limit of the road the car is on, on the head-up display and the cluster's map, from an
+ * Speed Limit - the speed limit of the road the car is on, on the cluster's map and the head-up display, from an
  * offline OpenStreetMap pack (georgia.pack, kit/tools/pack_sli.py). Read only: it subscribes to the car's position,
  * speed and power state and writes nothing to any unit.
  *
- * Starts with the car (app.json "autostart": background() runs without screens). While the car is on (power state
- * 7 ignition, 8 starting, 10 drive-ready, 12 ending) it matches the position to a road twice a second and shows
- * the limit. Parked or locked (WOHNEN, PARKEN...), it stops: the position and speed subscriptions are dropped, the
- * cluster-render layers go (the HUD and the cluster are given back) and no timer runs; only the power state stays
- * subscribed, so it wakes with the car. Switched off on its page, it idles the same way whatever the car does.
+ * Starts with the car (app.json "autostart": background() runs without screens). It works only while it is shown
+ * somewhere (setting "Show on": Cluster, HUD, or both) and the car is on (power state 7 ignition, 8 starting,
+ * 10 drive-ready, 12 ending): then it matches the position to a road twice a second (not while standing still) and
+ * shows the limit. Otherwise it idles: the position and speed subscriptions are dropped, the map file is closed,
+ * the cluster-render connection goes (the HUD and the cluster are given back) and no timer runs; only the power
+ * state stays subscribed, so it wakes with the car.
  *
- * The app's page is the HMI's own list (no GPU renderer), as Maps on cluster's: what it shows now, where the
- * position comes from and where the sign goes, the map's date, and the one switch. The rest of the settings (sign
- * sizes and places, the over-the-limit colour, the defaults for roads without a limit) are kept hidden with their
- * defaults (app.json "hidden").
+ * The app's page is the HMI's own list (no GPU renderer), laid out as Maps on cluster's (below). Its settings are
+ * app.json "hidden" ones: the page itself shows and changes them.
  */
-const fs = require('fs');
 const path = require('path');
 const mgu = require('./kit/mgu');
 const Car = require('./kit/car');
-const { LimitPack, F, CLASS } = require('./limitpack');
+const { LimitPack } = require('./limitpack');
 const { Matcher } = require('./matcher');
 const { Position, DemoDrive } = require('./position');
-const { Outputs } = require('./outputs');
+const { Outputs, TARGETS } = require('./outputs');
 
 const APP_ID = 'speed_limit';
+const PACK = path.join(__dirname, 'georgia.pack');
 const TICK_MS = 500;
 const VIEW_HOLD_MS = 8000;
 const ACTIVE = { 7: true, 8: true, 10: true, 12: true };
-const COND_NAMES = { 1: 'parked (bus off)', 2: 'parked', 3: 'stand-by', 5: 'parked, living', 7: 'ignition on', 8: 'starting', 10: 'drive-ready', 12: 'switching off' };
 
 /* ---------- the engine: runs with or without the app's screens ---------- */
 class Engine {
@@ -36,17 +34,17 @@ class Engine {
         this.log = bg.log;
         this.settings = bg.settings;
         this.signals = bg.signals;
-        this.dataDir = bg.dataDir;
-        this.pack = null;
+        this.pack = null;               // open only while active
+        this.matcher = null;
+        this.meta = null;               // the map's META (its date, for the page), read once
         this.packError = '';
-        try { this.pack = LimitPack.open(path.join(__dirname, 'georgia.pack')); this.log.info('map: ' + this.pack.describe()); } catch (e) { this.packError = String(e.message || e); this.log.error('map: ' + this.packError); }
-        this.matcher = this.pack ? new Matcher(this.pack, { defaults: this.defaults() }) : null;
+        try { const p = LimitPack.open(PACK); this.meta = p.meta; this.log.info('map: ' + p.describe()); p.close(); } catch (e) { this.packError = String(e.message || e); this.log.error('map: ' + this.packError); }
         this.position = new Position(this.signals, this.log);
-        // the PC's emulator and preview (setting "demo", never set in a car): a drive on the Tbilisi Bypass Road
-        this.demo = this.settings.get('demo') === 'on' && this.pack ? new DemoDrive(this.pack, { way: this.settings.get('demoWay'), speed: this.settings.get('demoSpeed') }) : null;
         this.outputs = new Outputs(APP_ID, this.log, this.settings);
+        this.demoOn = this.settings.get('demo') === 'on';   // the PC's emulator and preview; never set in a car
+        this.demo = null;
         this.condition = undefined;
-        this.carOn = undefined;     // from the power state; undefined: not known (then it runs)
+        this.carOn = undefined;         // from the power state; undefined: not known (then it runs)
         this.active = false;
         this.timer = null;
         this.res = null;
@@ -54,14 +52,12 @@ class Engine {
         this.viewAt = 0;
         this.speed = null;
         this.fix = null;
-        this.stats = { ticks: 0, msMax: 0, msSum: 0 };
         this.listeners = [];
-        this.rec = null;
         this.settings.onChange((k) => {
+            if (k === 'show') this._evaluate();
             if (/^def/.test(k) && this.matcher) this.matcher.setDefaults(this.defaults());
-            if (k === 'record' && this.settings.get('record') !== 'on') this._recClose();
-            if (k === 'enabled') this._evaluate();
-            this.outputs.update(this.view, Date.now());
+            if (this.active) this.outputs.update(this.view, Date.now());
+            this._changed();
         });
     }
 
@@ -71,27 +67,23 @@ class Engine {
     }
 
     async start() {
-        // the power state: the one subscription kept while the car is off
+        // the power state: the one subscription kept while idle
         const sub = await Promise.resolve(this.signals.watch('de.bmw.infrastructure.VehicleCondition', '1', {
             VehicleCondition: (v) => this._condition(Car.conditionOf(v && v.statusConditionVehicle)),
         }, this.log)).catch((e) => ({ error: String(e) }));
-        this.condSub = sub;
-        if (this.demo) { this.log.info('demo drive (no car)'); this.carOn = true; }
-        else if (sub && sub.error) this.log.warn('power state not available (' + sub.error + '): running while the app runs');
-        // no power state yet: start; the first value stops it again if the car is parked
+        if (this.demoOn) { this.log.info('demo drive (no car)'); this.carOn = true; } else if (sub && sub.error) this.log.warn('power state not available (' + sub.error + '): running while the app runs');
         this._evaluate();
     }
 
-    enabled() { return this.settings.get('enabled') !== false; }
+    enabled() { return this.settings.get('show') !== 'off'; }
 
-    /** Run while switched on and the car is on (or its state is not known). */
-    _evaluate() { this._setActive(this.enabled() && this.carOn !== false); }
+    /** Run while shown somewhere and the car is on (or its state is not known). */
+    _evaluate() { this._setActive(this.enabled() && this.carOn !== false && !this.packError); }
 
     _condition(c) {
         if (c === undefined || c === this.condition) return;
         this.condition = c;
-        this.log.info('power state ' + c + ' (' + (COND_NAMES[c] || '?') + ')');
-        if (!this.demo) this.carOn = !!ACTIVE[c];
+        if (!this.demoOn) this.carOn = !!ACTIVE[c];
         this._evaluate();
     }
 
@@ -100,34 +92,36 @@ class Engine {
         this.active = on;
         if (on) {
             this.log.info('on: matching');
-            this.position.start().catch((e) => this.log.warn('position: ' + e));
+            try {
+                this.pack = LimitPack.open(PACK);
+                this.matcher = new Matcher(this.pack, { defaults: this.defaults() });
+                if (this.demoOn) this.demo = new DemoDrive(this.pack, { way: this.settings.get('demoWay'), speed: this.settings.get('demoSpeed') });
+            } catch (e) { this.packError = String(e.message || e); this.log.error('map: ' + this.packError); this.active = false; return; }
+            if (!this.demoOn) this.position.start().catch((e) => this.log.warn('position: ' + e));
             this.outputs.start();
-            if (this.matcher) this.matcher.reset();
             this.timer = setInterval(() => this._tick(), TICK_MS);
         } else {
-            this.log.info((this.enabled() ? 'car off' : 'switched off') + ': idle (subscriptions dropped, HUD and cluster given back)');
+            this.log.info((this.enabled() ? 'car off' : 'switched off') + ': idle (subscriptions dropped, map closed, HUD and cluster given back)');
             clearInterval(this.timer); this.timer = null;
             this.position.stop().catch(() => {});
             this.outputs.stop();
-            this.view = null; this.res = null; this.fix = null;
-            this._recClose();
+            if (this.pack) this.pack.close();
+            this.pack = null; this.matcher = null; this.demo = null;
+            this.view = null; this.res = null; this.fix = null; this.speed = null;
         }
         this._changed();
     }
 
     _tick() {
         const now = Date.now();
-        this.position.poll(now);
-        this.outputs.tick(now);
-        const fix = this.fix = this.demo ? this.demo.fix(now) : this.position.fix(now);
+        if (!this.demo) { this.position.poll(now); this.outputs.tick(now); } else this.outputs.tick(now);
+        this.fix = this.demo ? this.demo.fix(now) : this.position.fix(now);
         this.speed = this.demo ? this.demo.speedKmh(now) : this.position.speedKmh(now);
-        if (this.matcher) {
-            const res = this.res = this.matcher.update(fix, now);
-            this.stats.ticks++; this.stats.msSum += res.ms; this.stats.msMax = Math.max(this.stats.msMax, res.ms);
-        }
+        // standing still on a matched road: nothing to match again (the position only wanders)
+        const still = this.speed !== null && this.speed < 2 && this.fix && this.res && this.res.state === 'match';
+        if (!still) this.res = this.matcher.update(this.fix, now);
         this._decide(now);
         this.outputs.update(this.view, now);
-        this._record(now, fix);
         this._changed();
     }
 
@@ -139,44 +133,12 @@ class Engine {
             this.view = { limit: r.limit, inferred: r.inferred, over: over(r.limit) };
             this.viewAt = now;
         } else if (this.view && now - this.viewAt < VIEW_HOLD_MS) {
-            this.view = Object.assign({}, this.view, { over: over(this.view.limit) });
+            this.view = { limit: this.view.limit, inferred: this.view.inferred, over: over(this.view.limit) };
         } else this.view = null;
     }
 
-    /* ---------- the drive log (setting "record"): one CSV per drive, for kit/tools/test_speed_limit.js --log ---------- */
-    _record(now, fix) {
-        if (this.settings.get('record') !== 'on') return;
-        if (!this.rec) {
-            const name = 'drive-' + new Date(now).toISOString().replace(/[:T]/g, '-').slice(0, 16) + '.csv';
-            this.rec = { file: path.join(this.dataDir, name), buf: ['t,lat,lon,heading,speed,source,state,way,limit,inferred,dist'], at: now, bytes: 0 };
-            this._recPrune();
-        }
-        const r = this.res || {};
-        this.rec.buf.push([now, fix ? fix.lat.toFixed(7) : '', fix ? fix.lon.toFixed(7) : '', fix && fix.heading != null ? fix.heading.toFixed(1) : '',
-            this.speed != null ? this.speed.toFixed(1) : '', fix ? fix.source : '', r.state || '', r.way || '', r.limit || '', r.inferred ? 1 : 0, r.dist != null ? r.dist.toFixed(1) : ''].join(','));
-        if (now - this.rec.at >= 10000) this._recFlush(now);
-    }
-
-    _recFlush(now) {
-        const R = this.rec;
-        if (!R || !R.buf.length) return;
-        const text = R.buf.join('\n') + '\n';
-        R.buf = []; R.at = now || Date.now(); R.bytes += text.length;
-        fs.appendFile(R.file, text, () => {});
-        if (R.bytes > 4e6) this.rec = null;          // a new file after 4 MB
-    }
-
-    _recClose() { if (this.rec) { this._recFlush(); this.rec = null; } }
-
-    _recPrune() {
-        try {
-            const old = fs.readdirSync(this.dataDir).filter((f) => /^drive-.*\.csv$/.test(f)).sort();
-            old.slice(0, Math.max(0, old.length - 5)).forEach((f) => { try { fs.unlinkSync(path.join(this.dataDir, f)); } catch (e) { /* in use */ } });
-        } catch (e) { /* no data dir */ }
-    }
-
     onChange(fn) { this.listeners.push(fn); }
-    _changed() { this.listeners.forEach((fn) => { try { fn(); } catch (e) { /* page */ } }); }
+    _changed() { for (let i = 0; i < this.listeners.length; i++) this.listeners[i](); }
 }
 
 async function background(bg) {
@@ -185,66 +147,106 @@ async function background(bg) {
     return engine;
 }
 
-/* ---------- the page: the HMI's own list (app.json screen "menu") ---------- */
-// (ASCII: the HMI's list rows take the app's strings; the kit's fonts are not used here)
-function nowText(engine) {
-    const r = engine.res, v = engine.view;
-    if (!engine.pack) return 'No map: ' + engine.packError;
-    if (!engine.enabled()) return 'Off';
-    if (!engine.active) return 'Car off: nothing is read or shown';
-    if (v) {
-        const road = r && r.cls >= 0 ? ', ' + CLASS[r.cls].replace('_', ' ') + (r.flags & F.URBAN ? ' in a settlement' : '') : '';
-        return 'Now: ' + v.limit + ' km/h' + (v.inferred ? ' (default, no limit on the map)' : '') + road;
-    }
-    if (!r || r.state === 'nofix') return 'Waiting for a position';
-    if (r.state === 'outside') return 'Outside the map (' + (engine.pack.meta.region || '') + ')';
-    return 'No road here';
+/* ---------- the page: the HMI's own list, laid out as Maps on cluster's (app.json screen "menu") ----------
+ * General: Show on (Cluster, HUD, Cluster and HUD, Off), Red sign over the limit, Speed limit, Cluster sign.
+ * HUD: HUD sign, Keep HUD sign over BMW's pop-ups, Size (a slider), Position with Move left / right / up / down and
+ * Default position, greyed while the HUD is not chosen. Map: the data's date and licence. Info rows read
+ * "Name: Value"; a row is written only when it changes, and only while the page shows. ASCII only. */
+const SHOW = ['cluster', 'hud', 'both', 'off'];
+const OVER = ['0', '5', '10', '15', '20'];
+const SIZES = [64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144];     // the slider's positions 0..10
+const MOVE_PX = 10;
+
+function limitText(e) {
+    const r = e.res, v = e.view;
+    if (e.packError) return 'Speed limit: no map';
+    if (!e.active) return 'Speed limit: ' + (e.enabled() ? 'car off' : 'off');
+    if (v) return 'Speed limit: ' + v.limit + ' km/h' + (v.inferred ? ' (default for this road)' : '');
+    if (!r || r.state === 'nofix') return 'Speed limit: waiting for a position';
+    if (r.state === 'outside') return 'Speed limit: outside the map';
+    return 'Speed limit: no road here';
 }
 
-function whereText(engine) {
-    if (!engine.enabled() || !engine.active) return '';
-    const f = engine.fix, o = engine.outputs.diag(), s = engine.settings;
-    const src = f ? ({ nav: 'navigation', gnss: 'GPS', demo: 'demo drive' }[f.source] || f.source) : 'none';
-    let out;
-    if (!o.connected) out = 'cluster-render not running (install Maps on cluster)';
-    else {
-        const parts = [];
-        if (s.get('hud') !== 'off') parts.push('HUD');
-        if (s.get('cluster') === 'always' || (s.get('cluster') === 'map' && o.mapBusy)) parts.push('cluster');
-        else if (s.get('cluster') === 'map') parts.push('cluster with the phone map');
-        out = parts.join(', ') || 'nowhere';
-    }
-    return 'Position: ' + src + '. Shown on: ' + out;
+function signState(e, t) {
+    const show = e.settings.get('show'), o = e.outputs.diag();
+    if (show !== t && show !== 'both') return 'Off';
+    if (!e.active) return e.enabled() ? 'Car off' : 'Off';
+    if (!o.connected) return 'Unavailable (no cluster-render)';
+    if (t === 'cluster' && !o.mapBusy) return 'Waiting for the phone map';
+    if (!e.view) return 'No limit to show';
+    return /^shown/.test(o[t === 'cluster' ? 'map' : 'hud']) ? 'Shown' : 'Waiting';
 }
 
-function mapText(engine) {
-    const m = engine.pack && engine.pack.meta;
-    return m ? 'Map: ' + (m.region || '') + ', OpenStreetMap ' + (m.data || '') + ' (c) OpenStreetMap contributors, ODbL' : '';
+/** How far the HUD sign may move from its default place and stay on the HUD (outputs.js TARGETS.hud). */
+function hudRoom(s) {
+    const T = TARGETS.hud, z = Number(s.get('hudSize')) || 88;
+    return { x0: z / 2 - T.cx, x1: T.w - T.cx - z / 2, y0: z / 2 - T.cy, y1: T.h - T.cy - z / 2 };
+}
+
+function posText(x, y) {
+    if (!x && !y) return 'Position: Default';
+    const h = x > 0 ? x + ' px right' : x < 0 ? -x + ' px left' : '', v = y > 0 ? y + ' px down' : y < 0 ? -y + ' px up' : '';
+    return 'Position: ' + (h && v ? h + ', ' + v : h || v);
+}
+
+function mapText(e) {
+    return e.meta ? 'Map: OpenStreetMap ' + (e.meta.data || '') + ', (c) OpenStreetMap contributors, ODbL' : 'Map: -';
 }
 
 mgu.run({
     background,
     async start(ctx) {
-        const { ui } = ctx;
+        const { ui, settings: s } = ctx;
         const engine = ctx.background || await background(ctx);
-        const last = {};
-        const put = (name, text) => {
-            if (last[name] === text) return null;
-            last[name] = text;
-            return ui.text(name, text);
+        const done = {};
+        const once = (key, value, fn) => { if (done[key] === value) return; done[key] = value; Promise.resolve().then(fn).catch(() => {}); };
+        const hudOn = () => s.get('show') === 'hud' || s.get('show') === 'both';
+        const size = ui.comp('SL_HUD_SIZE');
+        function render() {
+            if (!ui.isVisible('MAIN')) return;
+            const x = Number(s.get('hudX')) || 0, y = Number(s.get('hudY')) || 0, hud = hudOn();
+            const show = Math.max(0, SHOW.indexOf(s.get('show'))), over = Math.max(0, OVER.indexOf(String(s.get('overspeed'))));
+            const step = Math.max(0, SIZES.indexOf(Number(s.get('hudSize'))));
+            const lim = limitText(engine), cl = 'Cluster sign: ' + signState(engine, 'cluster'), hs = 'HUD sign: ' + signState(engine, 'hud');
+            once('show', show, () => ui.selected('SL_SHOW', show));
+            once('over', over, () => ui.selected('SL_OVER', over));
+            once('limit', lim, () => ui.text('SL_LIMIT', lim));
+            once('cluster', cl, () => ui.text('SL_CLUSTER', cl));
+            once('hud', hs, () => ui.text('SL_HUD', hs));
+            once('keep', !!s.get('hudKeep'), () => ui.checked('SL_HUD_KEEP', !!s.get('hudKeep')));
+            once('sizeText', step, () => ui.cells('SL_HUD_SIZE', 0, { TextDescription: 'Size: ' + SIZES[step] + ' px' }));
+            once('sizeStep', step, () => (size && size.setStepValue ? size.setStepValue(step) : ui.cells('SL_HUD_SIZE', 0, { Value: step })));
+            once('pos', x + ',' + y, () => ui.text('SL_HUD_POS', posText(x, y)));
+            once('map', mapText(engine), () => ui.text('SL_MAP', mapText(engine)));
+            ['SL_HUD_KEEP', 'SL_HUD_SIZE', 'SL_HUD_LEFT', 'SL_HUD_RIGHT', 'SL_HUD_UP', 'SL_HUD_DOWN'].forEach((n) => once('en:' + n, hud, () => ui.enabled(n, hud)));
+            const back = hud && (x !== 0 || y !== 0);
+            once('en:SL_HUD_DEFAULT', back, () => ui.enabled('SL_HUD_DEFAULT', back));
+        }
+        // the HMI moves a drop-down's choice and the slider itself: only the setting follows
+        ui.onClick('SL_SHOW', (ev) => { const v = SHOW[ev.row]; if (v) { done.show = ev.row; s.set('show', v); } });
+        ui.onClick('SL_OVER', (ev) => { const v = OVER[ev.row]; if (v != null) { done.over = ev.row; s.set('overspeed', v); } });
+        ui.onClick('SL_HUD_KEEP', () => { if (hudOn()) s.set('hudKeep', !s.get('hudKeep')); });
+        if (size && size.on) size.on('changed', (step) => { const v = SIZES[step]; if (v && hudOn()) { done.sizeStep = step; s.set('hudSize', v); } });
+        const move = (dx, dy) => () => {
+            if (!hudOn()) return;
+            const R = hudRoom(s), x = Number(s.get('hudX')) || 0, y = Number(s.get('hudY')) || 0;
+            const nx = Math.round(Math.max(R.x0, Math.min(R.x1, x + dx))), ny = Math.round(Math.max(R.y0, Math.min(R.y1, y + dy)));
+            if (nx !== x) s.set('hudX', nx);
+            if (ny !== y) s.set('hudY', ny);
         };
-        let pending = null;
-        const refresh = () => {
-            if (pending) return;
-            // at most once a second, and only while the page is open
-            pending = setTimeout(() => {
-                pending = null;
-                if (!ui.isVisible('MAIN')) return;
-                Promise.all([put('SL_NOW', nowText(engine)), put('SL_WHERE', whereText(engine)), put('SL_MAP', mapText(engine))]).catch(() => {});
-            }, 1000);
-        };
-        engine.onChange(refresh);
-        ui.onVisible((name, v) => { if (name === 'MAIN' && v) { Object.keys(last).forEach((k) => delete last[k]); refresh(); } });
-        await Promise.all([put('SL_NOW', nowText(engine)), put('SL_WHERE', whereText(engine)), put('SL_MAP', mapText(engine))]);
+        ui.onClick('SL_HUD_LEFT', move(-MOVE_PX, 0));
+        ui.onClick('SL_HUD_RIGHT', move(MOVE_PX, 0));
+        ui.onClick('SL_HUD_UP', move(0, -MOVE_PX));
+        ui.onClick('SL_HUD_DOWN', move(0, MOVE_PX));
+        ui.onClick('SL_HUD_DEFAULT', () => { if (s.get('hudX')) s.set('hudX', 0); if (s.get('hudY')) s.set('hudY', 0); });
+        s.onChange(render);
+        // the status rows: at most once a second, and only while the page is open
+        let timer = null;
+        engine.onChange(() => {
+            if (timer || !ui.isVisible('MAIN')) return;
+            timer = setTimeout(() => { timer = null; render(); }, 1000);
+        });
+        ui.onVisible((name, v) => { if (name === 'MAIN' && v) { Object.keys(done).forEach((k) => delete done[k]); render(); } });
+        render();
     },
 });

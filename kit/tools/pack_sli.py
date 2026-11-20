@@ -29,7 +29,9 @@ Layout (little endian; sections 4-byte aligned):
   PNTS  u32 n, n x { i16 dx, i16 dy }  decimetres from the piece's first point
   GRID  u32 cells, u32 key[cells] (row * cols + col, sorted), u32 first[cells + 1], u32 piece[]
 
-A oneway road's piece runs the way traffic goes (oneway=-1 is turned round, its limits swapped).
+A oneway road's piece runs the way traffic goes (oneway=-1 is turned round, its limits swapped). Pieces are in the
+Z-order of the grid cell they start in, so a place's roads are close together in the file; a way's pieces are not
+(chain them by their end points).
 """
 import argparse
 import bisect
@@ -637,6 +639,16 @@ def compile_pack(roads, rings, places, coords, log):
     row0 = int(math.floor(ymin / CELL)) - 1
     cols = int(math.ceil(xmax / CELL)) - col0 + 2
     rows = int(math.ceil(ymax / CELL)) - row0 + 2
+
+    # pieces (and so their points) in Z-order of the cell they start in: the roads near one place sit together in
+    # the file, so the app reads a few small pages of it per place instead of holding all of it in memory
+    def zkey(p):
+        c, r = int(p[0] / 10 // CELL) - col0, int(p[1] / 10 // CELL) - row0
+        k = 0
+        for b in range(16):
+            k |= ((c >> b) & 1) << (2 * b) | ((r >> b) & 1) << (2 * b + 1)
+        return k
+    pieces.sort(key=zkey)
     cells = {}
     for i, p in enumerate(pieces):
         pts = p[9]

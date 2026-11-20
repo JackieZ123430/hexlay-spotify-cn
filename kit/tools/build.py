@@ -475,6 +475,10 @@ def build(app_id, language='en'):
         pkg['mguInternet'] = True
     if spec.get('mguLocalOnly'):
         pkg['mguLocalOnly'] = True
+    # app.json "autostart": MainApp starts the app by itself (provisioning "-appStartType": "autostart"; the Store
+    # and deploy/mgu-app-install.sh read this); its impl.background runs then, without screens
+    if spec.get('autostart'):
+        pkg['mguAppStartType'] = 'autostart'
     json.dump(pkg, open(os.path.join(src, 'package.json'), 'w', encoding='utf-8', newline='\n'), indent=2)
     json.dump(manifest, open(os.path.join(src, 'manifest.json'), 'w', encoding='utf-8', newline='\n'), indent=2)
     shutil.copy(os.path.join(KIT, 'platform', 'permissions.json'), os.path.join(src, 'permissions.json'))

@@ -170,13 +170,13 @@ set_acls() {
     fi
 }
 
-custom_list() {    # custom_list add|del <id>  - maintain custom_apps.json
+custom_list() {    # custom_list add|del <id> [start type]  - maintain custom_apps.json
     "$NODE" -e '
-        const fs = require("fs"), f = process.argv[1], op = process.argv[2], id = process.argv[3];
+        const fs = require("fs"), f = process.argv[1], op = process.argv[2], id = process.argv[3], st = process.argv[4] || "manually";
         let c = {}; try { c = JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) {}
-        if (op === "add") c[id] = c[id] || { "-appStartType": "manually", "-userLoginRequired": "false" };
+        if (op === "add") { c[id] = c[id] || { "-userLoginRequired": "false" }; c[id]["-appStartType"] = st; }
         else delete c[id];
-        fs.writeFileSync(f, JSON.stringify(c, null, 2) + "\n");' "$CUSTOM" "$1" "$2" || warn "could not update $CUSTOM"
+        fs.writeFileSync(f, JSON.stringify(c, null, 2) + "\n");' "$CUSTOM" "$1" "$2" "$3" || warn "could not update $CUSTOM"
     chown 12201:12201 "$CUSTOM" 2>/dev/null; chmod 660 "$CUSTOM" 2>/dev/null
 }
 
@@ -376,10 +376,15 @@ install_one() {
         echo "$u=$id" >> "$UIDS"
     fi
     # (re)write the registry entry: MainApp resets the flags to false while
-    # the provisioning hook is not active, so a reinstall repairs that too
-    printf '{"userId":%s,"provisioningCache":{"-allowed":"true","-appStartType":"manually","-enabled":"true","-userLoginRequired":"false","-updateMechanism":"PLATFORM"},"configStateQueueIndex":null,"installationSource":"PREINSTALLED"}' "$u" > "$REG/$id.json"
+    # the provisioning hook is not active, so a reinstall repairs that too.
+    # How MainApp starts it: package.json "mguAppStartType" (build.py writes "autostart" for app.json "autostart":
+    # started with the car, without its screen), else "manually" (opened from the menu); MainApp knows autostart,
+    # lum and manually.
+    stype=$("$NODE" -e 'try { const t = require(process.argv[1]).mguAppStartType; console.log(["autostart", "lum"].indexOf(t) >= 0 ? t : "manually"); } catch (e) { console.log("manually"); }' "$top/source/package.json")
+    [ -n "$stype" ] || stype=manually
+    printf '{"userId":%s,"provisioningCache":{"-allowed":"true","-appStartType":"%s","-enabled":"true","-userLoginRequired":"false","-updateMechanism":"PLATFORM"},"configStateQueueIndex":null,"installationSource":"PREINSTALLED"}' "$u" "$stype" > "$REG/$id.json"
     chown 12201:12201 "$REG/$id.json"; chmod 660 "$REG/$id.json"
-    custom_list add "$id"
+    custom_list add "$id" "$stype"
     CHANGED=1
     say "installed $id $ver -> $top"
     rm -rf "$TMP"

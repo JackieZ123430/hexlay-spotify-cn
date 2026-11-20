@@ -1,11 +1,12 @@
 # iDrive 7 custom apps
 
-Two apps for BMW iDrive 7 head units (MGU), installed through the [MGU Store](https://github.com/robertnisipeanu/mgu-store). They run on the app runtime and GPU renderer from [cauliflowermossgrape/idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps).
+Three apps for BMW iDrive 7 head units (MGU), installed through the [MGU Store](https://github.com/robertnisipeanu/mgu-store). They run on the app runtime and GPU renderer from [cauliflowermossgrape/idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps).
 
 | App | Version | Internet | Reads from the car |
 | :--- | :---: | :---: | :--- |
 | [Spotify](#spotify) | 1.0.31 | Yes | Nothing |
 | [M-Copilot](#m-copilot) | 1.0.34 | Yes | Driving signals, service list, fault memory (read-only) |
+| [Speed Limit](#speed-limit) | 1.0.0 | No | Position, speed and power state (read-only) |
 
 System Monitor has moved to its own repository, [hexlay/idrive7-system-monitor](https://github.com/hexlay/idrive7-system-monitor). To keep getting updates, add `hexlay/idrive7-system-monitor` as a source in the MGU Store.
 
@@ -56,6 +57,49 @@ An AI co-driver that answers with your car's own data: live readings, warning me
 
 The screenshots are from the browser emulator with its sample B58.
 
+## Speed Limit
+
+![Speed Limit](docs/screenshots/speed_limit.png)
+
+> [!WARNING]
+> **Not tested in a car yet.** Everything was checked on a PC only: the road matching against replayed drives
+> through Tbilisi, the head-up display and cluster output against a fake cluster-render. Never rely on it to
+> drive; the signs on the road always win.
+
+The speed limit of the road you're on, on the head-up display and on the cluster's map, worked out offline from an
+OpenStreetMap map of Georgia that ships with the app. No internet, no BMW map, and nothing is sent to the car: it only
+reads the car's position, speed and power state.
+
+- **Starts with the car** and runs in the background. Parked or locked, it stops: it drops its subscriptions and
+  gives the head-up display and cluster back, so it draws no power.
+- **Head-up display:** the round sign beside BMW's own speed. Size and position are in the settings.
+- **Cluster:** by default only while the phone map (Maps on cluster) is shown, in its top-left corner; or always; or off.
+- **Roads without a limit on the map** show the legal default with a grey ring (60 km/h in a settlement, 90 outside,
+  110 on motorways, 20 in living streets; each can be changed), or nothing.
+- **Over the limit:** the sign can turn red from +5, +10 or +15 km/h over.
+- The app's page shows the limit now and, under **Details**, where the position comes from and what was matched.
+- It needs **cluster-render** for the head-up display and the cluster; it comes with Maps on cluster from the
+  `robertnisipeanu/idrive-apps` source. Without it, the limit shows on the app's page only.
+
+How it works: the car's navigation position (`Positioning.currentLocation`, or `GPSData`) is matched twice a
+second to the nearest road within 25 m that runs the way the car is heading (one-way roads only the right way
+round), and the limit for that direction is shown. Another road takes over after two updates in a row, or at once
+at a junction. In a tunnel the last limit is kept until the position comes back.
+
+| Over the limit (+5 setting) | No limit on the map: the default |
+| :---: | :---: |
+| ![Speed Limit over the limit](docs/screenshots/speed_limit_over.png) | ![Speed Limit default limit](docs/screenshots/speed_limit_default.png) |
+| **Head-up display** (black is see-through) | **Cluster, over the phone map** |
+| ![Speed Limit on the HUD](docs/screenshots/speed_limit_hud.png) | ![Speed Limit on the cluster](docs/screenshots/speed_limit_cluster.png) |
+| **Details** | |
+| ![Speed Limit Details](docs/screenshots/speed_limit_details.png) | |
+
+The page screenshots are from the PC preview with its demo drive (the Tbilisi Bypass Road; Rustavi Highway for the
+default). The head-up display and cluster pictures are the layers the app sends to cluster-render, at their default
+places, drawn over a plain background with the HUD's visible area outlined; they are not photos from a car. Map data © OpenStreetMap
+contributors, [ODbL](https://opendatacommons.org/licenses/odbl/1-0/) (`apps/speed_limit/georgia.pack`, from
+Geofabrik's Georgia extract).
+
 ## Phone pages
 
 The pairing pages ([My cars](https://hexlay.github.io/idrive7-custom-apps/)) can be added to the home screen as an app called **iDrive Apps**: on iPhone use Safari's **Share > Add to Home Screen**, on Android Chrome's **Install app**.
@@ -81,6 +125,8 @@ If the store shows **Online** but an app doesn't, look at the `uplink:` line nea
 - `python3 kit/tools/build.py <app_id>` builds `dist/<app_id>@<version>.mgu`. It needs `oap-sdk`, extracted from your own head unit with `kit/tools/extract_sdk.js`.
 - `node kit/tools/emu.js <app_id>` runs an app in the browser emulator. Add `--car b58` or `--car n63` for a sample car.
 - The tests are in `kit/tools/test_*.js` and run in CI on Node 8.9.4 and 8.16.2, the versions on the head units.
+- Speed Limit's map: `python3 kit/tools/pack_sli.py georgia-latest.osm.pbf -o apps/speed_limit/georgia.pack` (a
+  Geofabrik extract; about a minute). `node kit/tools/test_speed_limit.js` replays drives through Tbilisi on it.
 
 For the platform itself (signals, renderer, controller input, deploying over SSH) see [idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps).
 

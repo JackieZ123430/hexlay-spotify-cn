@@ -1,31 +1,43 @@
 'use strict';
 /**
- * outputs.js - the sign on the head-up display and on the cluster's map, through cluster-render. Node 8.
+ * outputs.js - the sign on the head-up display and on the instrument cluster, through cluster-render. Node 8.
  *
  *   const out = new Outputs('speed_limit', log, settings).start();
- *   out.update({ limit, inferred, over } | null, now);   out.tick(now);   out.stop();   out.diag()
+ *   out.update({ limit, inferred, over } | { limit: null, unknown: true } | null, now);   out.tick(now);   out.stop()
  *
- * Setting "show": cluster | hud | both | off (as Maps on cluster's Show on).
- * Cluster map (1088 x 480, under the gauges): only while another app (Maps on cluster) is showing its picture on the
- * map target: cluster-render's status lists every client's layers ("layer 3 video of <app> on map, content z 0:
- * shown"); asked every 3 s while the sign is on the map, else every 10 s and at once on a map target event. The sign never makes the map target wanted by itself, so it never takes
- * the cluster's centre from the stock map.
- * HUD (800 x 480): an image layer, class overlay, where the hidden settings put it (BMW's own speed stays in its slot
- * below; transparent pixels are see-through). It gives way to BMW's pop-ups on the HUD (yield 1), unless the setting
- * "hudKeep" keeps it over them (yield 0).
- * A view { limit: null, unknown: true } shows the "---" sign (setting "noLimit"). A layer with nothing to show is hidden (visible 0); the HUD is given back after cluster-render's linger (3 s).
- * stop() drops the layers and closes the connection: cluster-render releases the surfaces at once.
+ * Setting "show": cluster | hud | both | off (as Maps on cluster's Show on). On the cluster, setting "clusterPlace":
+ *   speed  the panel target (1920 x 720, the whole cluster over its dials: transparent but for the sign), where BMW's
+ *          own speed limit shows, the LIMIT box under the speedometer. Shown whenever there is a limit. (A cluster that
+ *          refuses the panel's scene id makes cluster-render use the HUD's for it: then the panel and the HUD are never
+ *          shown at once, cluster-render README "Arbitration".)
+ *   map    the map target (1088 x 480, the centre under the dials), only while another app (Maps on cluster) shows
+ *          its picture there: cluster-render's status lists every client's layers ("layer 3 video of <app> on map,
+ *          content z 0: shown"); asked every 3 s while the sign is on the map, else every 10 s and at once on a map
+ *          target event. The sign never makes the map target wanted by itself (never takes the centre from the
+ *          stock map).
+ * HUD (800 x 480): beside BMW's own speed (transparent pixels are see-through); it gives way to BMW's pop-ups on the
+ * HUD (yield 1), unless setting "hudKeep" keeps it over them (yield 0).
+ * Each place has its size and offset settings: hudSize/X/Y, panelSize/X/Y, clusterSize/X/Y (the map). A view
+ * { limit: null, unknown: true } shows the "---" sign (setting "noLimit"). A layer with nothing to show is hidden
+ * (visible 0): the display is given back after cluster-render's linger (3 s). stop() drops the layers and closes the
+ * connection: cluster-render releases the surfaces at once.
  */
 const { ClusterRender } = require('./crclient');
 const { drawSign } = require('./sign');
 
 const TARGETS = {
-    hud: { w: 800, h: 480, cx: 175, cy: 290 },
-    map: { w: 1088, h: 480, cx: 80, cy: 80 },
+    hud: { w: 800, h: 480, cx: 175, cy: 290, size: 'hudSize', x: 'hudX', y: 'hudY', def: 88 },
+    // the LIMIT box under the speedometer, where BMW's own speed limit shows (measured on a G15's cluster)
+    panel: { w: 1920, h: 720, cx: 536, cy: 604, size: 'panelSize', x: 'panelX', y: 'panelY', def: 80 },
+    // the top centre of the map area: its corners sit behind the dials
+    map: { w: 1088, h: 480, cx: 544, cy: 110, size: 'clusterSize', x: 'clusterX', y: 'clusterY', def: 110 },
 };
 const LAYER_RX = /^layer \d+ (\S+) of (.+) on (\w+), (\w+) z -?\d+[^:]*: (\w+)/;
 const STATUS_MS = 3000;          // while the sign is on the cluster's map: notice soon that the phone map went
 const STATUS_IDLE_MS = 10000;    // otherwise (a map target event asks at once)
+
+/** The cluster's target for the settings: 'panel' (beside the speed) or 'map' (on the phone map). */
+function clusterTarget(settings) { return settings.get('clusterPlace') === 'map' ? 'map' : 'panel'; }
 
 class Outputs {
     /** opts.cr: options for the cluster-render client ({ path, check }: tests) */
@@ -35,7 +47,7 @@ class Outputs {
         this.log = log || { info() {}, warn() {} };
         this.settings = settings;
         this.cr = null;
-        this.layers = {};           // hud | map -> { ref, size, x, y, key, visible }
+        this.layers = {};           // hud | panel | map -> { ref, size, x, y, key, visible, yld }
         this.mapBusy = false;       // another app shows a picture on the map target
         this.mapBusyBy = '';
         this.lastStatus = 0;
@@ -74,8 +86,8 @@ class Outputs {
 
     _where(t) {
         const s = this.settings, T = TARGETS[t];
-        const size = Number(s.get(t === 'hud' ? 'hudSize' : 'clusterSize')) || (t === 'hud' ? 88 : 110);
-        const dx = Number(s.get(t === 'hud' ? 'hudX' : 'clusterX')) || 0, dy = Number(s.get(t === 'hud' ? 'hudY' : 'clusterY')) || 0;
+        const size = Number(s.get(T.size)) || T.def;
+        const dx = Number(s.get(T.x)) || 0, dy = Number(s.get(T.y)) || 0;
         const x = Math.max(0, Math.min(T.w - size, Math.round(T.cx + dx - size / 2)));
         const y = Math.max(0, Math.min(T.h - size, Math.round(T.cy + dy - size / 2)));
         return { size, x, y };
@@ -83,7 +95,9 @@ class Outputs {
 
     _wanted(t) {
         const show = this.settings.get('show');
-        return t === 'hud' ? show === 'hud' || show === 'both' : (show === 'cluster' || show === 'both') && this.mapBusy;
+        if (t === 'hud') return show === 'hud' || show === 'both';
+        if (!(show === 'cluster' || show === 'both') || clusterTarget(this.settings) !== t) return false;
+        return t === 'panel' || this.mapBusy;
     }
 
     /** Show this (or nothing). */
@@ -95,7 +109,7 @@ class Outputs {
     _apply() {
         const cr = this.cr;
         if (!cr || !cr.ready) return;
-        ['hud', 'map'].forEach((t) => {
+        ['hud', 'panel', 'map'].forEach((t) => {
             let L = this.layers[t];
             const show = !!(this.view && (this.view.limit || this.view.unknown) && this._wanted(t));
             if (!show) {
@@ -120,13 +134,13 @@ class Outputs {
         });
     }
 
-    /** Now and then: ask cluster-render who draws on the map target (only while there is a limit to show, or the sign
-     * is on the map: nothing to ask otherwise). */
+    /** Now and then: ask cluster-render who draws on the map target (only with the sign meant for the map, and while
+     * there is a limit to show or the sign is on it: nothing to ask otherwise). */
     tick(now) {
         if (!this.view && !this.mapBusy) return;
         const cr = this.cr;
         const show = this.settings.get('show');
-        if (!cr || !cr.ready || (show !== 'cluster' && show !== 'both')) return;
+        if (!cr || !cr.ready || (show !== 'cluster' && show !== 'both') || clusterTarget(this.settings) !== 'map') return;
         if (now - this.lastStatus < (this.mapBusy ? STATUS_MS : STATUS_IDLE_MS)) return;
         this.lastStatus = now;
         cr.status();
@@ -153,9 +167,10 @@ class Outputs {
         const st = (t) => (L[t] ? (L[t].visible ? this.layerStates[L[t].ref] || 'sent' : 'hidden') : 'none');
         return {
             connected: !!(cr && cr.ready), unsupported: cr ? cr.unsupported : '', targetsOffered: cr ? cr.targets : '',
-            hud: st('hud'), map: st('map'), mapBusy: this.mapBusy, mapBusyBy: this.mapBusyBy, targets: this.targets, refused: this.refused,
+            hud: st('hud'), panel: st('panel'), map: st('map'), cluster: st(clusterTarget(this.settings)),
+            clusterTarget: clusterTarget(this.settings), mapBusy: this.mapBusy, mapBusyBy: this.mapBusyBy, targets: this.targets, refused: this.refused,
         };
     }
 }
 
-module.exports = { Outputs, LAYER_RX, TARGETS };
+module.exports = { Outputs, LAYER_RX, TARGETS, clusterTarget };

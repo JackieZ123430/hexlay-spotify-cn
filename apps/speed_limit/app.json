@@ -2,7 +2,7 @@
   "id": "speed_limit",
   "title": "Speed Limit",
   "description": "The speed limit of the road you're on, on the cluster's map and the head-up display, from an offline OpenStreetMap map of Georgia. Read-only.",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "vendor": "custom",
   "loggingId": "OASL",
   "iconGlyph": "60",
@@ -80,9 +80,59 @@
           "Speed limit: -"
         ],
         [
+          "header",
+          "SL_HEAD_CL",
+          "Cluster"
+        ],
+        [
+          "dropdown",
+          "SL_CL_PLACE",
+          "Place",
+          [
+            "Beside the speed",
+            "On the phone map"
+          ]
+        ],
+        [
           "text",
-          "SL_CLUSTER",
+          "SL_CL",
           "Cluster sign: -"
+        ],
+        [
+          "slider",
+          "SL_CL_SIZE",
+          "Size: -",
+          10
+        ],
+        [
+          "text",
+          "SL_CL_POS",
+          "Position: -"
+        ],
+        [
+          "button",
+          "SL_CL_LEFT",
+          "Move left"
+        ],
+        [
+          "button",
+          "SL_CL_RIGHT",
+          "Move right"
+        ],
+        [
+          "button",
+          "SL_CL_UP",
+          "Move up"
+        ],
+        [
+          "button",
+          "SL_CL_DOWN",
+          "Move down"
+        ],
+        [
+          "button",
+          "SL_CL_DEFAULT",
+          "Default position"
         ],
         [
           "header",
@@ -262,18 +312,77 @@
       "hidden": true
     },
     {
+      "key": "clusterPlace",
+      "label": "Place on the cluster",
+      "type": "choice",
+      "default": "speed",
+      "options": [
+        [
+          "speed",
+          "Beside the speed"
+        ],
+        [
+          "map",
+          "On the phone map"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "panelSize",
+      "label": "Cluster sign size (beside the speed)",
+      "type": "number",
+      "unit": "px",
+      "default": 80,
+      "steps": [
+        56,
+        64,
+        72,
+        80,
+        88,
+        96,
+        104,
+        112,
+        120,
+        136,
+        152
+      ],
+      "hidden": true
+    },
+    {
+      "key": "panelX",
+      "label": "Cluster sign left / right (beside the speed)",
+      "type": "number",
+      "unit": "px",
+      "default": 0,
+      "hidden": true
+    },
+    {
+      "key": "panelY",
+      "label": "Cluster sign up / down (beside the speed)",
+      "type": "number",
+      "unit": "px",
+      "default": 0,
+      "hidden": true
+    },
+    {
       "key": "clusterSize",
       "label": "Cluster sign size",
       "type": "number",
       "unit": "px",
       "default": 110,
       "steps": [
+        70,
         80,
-        96,
+        90,
+        100,
         110,
-        128,
-        144,
-        160
+        120,
+        130,
+        140,
+        150,
+        160,
+        180
       ],
       "hidden": true
     },
@@ -283,18 +392,6 @@
       "type": "number",
       "unit": "px",
       "default": 0,
-      "steps": [
-        0,
-        40,
-        80,
-        160,
-        240,
-        320,
-        480,
-        640,
-        800,
-        920
-      ],
       "hidden": true
     },
     {
@@ -303,15 +400,6 @@
       "type": "number",
       "unit": "px",
       "default": 0,
-      "steps": [
-        0,
-        40,
-        80,
-        120,
-        200,
-        280,
-        320
-      ],
       "hidden": true
     },
     {

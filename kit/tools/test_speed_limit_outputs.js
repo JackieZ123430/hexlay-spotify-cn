@@ -60,7 +60,7 @@ function send(s, obj) {
     s.write(Buffer.concat([h, j]));
 }
 
-const settings = { v: { show: 'both', hudSize: 88, hudX: 0, hudY: 0, clusterSize: 110, clusterX: 0, clusterY: 0 }, get(k) { return this.v[k]; } };
+const settings = { v: { show: 'both', clusterPlace: 'map', hudSize: 88, hudX: 0, hudY: 0, clusterSize: 110, clusterX: 0, clusterY: 0, panelSize: 80, panelX: 0, panelY: 0 }, get(k) { return this.v[k]; } };
 const log = { info() {}, warn() {}, error() {} };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 let fails = 0;
@@ -127,6 +127,18 @@ const ops = (op) => got.filter((g) => g.t === 'J' && g.m.op === op).map((g) => g
     out.update({ limit: 90, inferred: true, over: false }, Date.now());
     await wait(100);
     check(ops('set').filter((m) => m.ref === hx.ref && m.visible === 0).length === hiddenBefore + 1, '"Cluster": HUD sign hidden');
+
+    // the cluster sign beside the speed (the panel target, BMW's LIMIT box): shown at once, no phone map needed
+    settings.v.clusterPlace = 'speed';
+    out.update({ limit: 70, inferred: false, over: false }, Date.now());
+    await wait(150);
+    const pan = ops('layer').filter((m) => m.target === 'panel');
+    check(pan.length === 1 && pan[0].w === 80 && pan[0].x === 536 - 40 && pan[0].y === 604 - 40, 'beside the speed: an 80 px sign on the panel at the LIMIT box (' + (pan[0] ? pan[0].x + ',' + pan[0].y : '-') + ')');
+    check(got.some((g) => g.t === 'F' && pan[0] && g.ref === pan[0].ref && g.bytes === 80 * 80 * 4), 'beside the speed: its pixels sent');
+    const statusBefore = ops('status').length;
+    out.tick(Date.now() + 60000);
+    await wait(100);
+    check(ops('status').length === statusBefore, 'beside the speed: cluster-render\'s status not asked (no phone map to watch)');
 
     // "Show ---" (no limit known): the dash sign on the HUD again
     settings.v.show = 'both';

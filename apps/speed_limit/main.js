@@ -21,7 +21,7 @@ const Car = require('./kit/car');
 const { LimitPack } = require('./limitpack');
 const { Matcher } = require('./matcher');
 const { Position, DemoDrive } = require('./position');
-const { Outputs, TARGETS } = require('./outputs');
+const { Outputs, TARGETS, clusterTarget } = require('./outputs');
 
 const APP_ID = 'speed_limit';
 const PACK = path.join(__dirname, 'georgia.pack');
@@ -172,15 +172,28 @@ async function background(bg) {
 
 /* ---------- the page: the HMI's own list, laid out as Maps on cluster's (app.json screen "menu") ----------
  * General: Show on (Cluster, HUD, Cluster and HUD, Off), Red sign over the limit, When there's no limit (nothing, or
- * "---" as BMW's own), Speed limit, Cluster sign.
- * HUD: HUD sign, Keep HUD sign over BMW's pop-ups, Size (a slider), Position with Move left / right / up / down and
- * Default position, greyed while the HUD is not chosen. Map: the data's date and licence. Info rows read
- * "Name: Value"; a row is written only when it changes, and only while the page shows. ASCII only. */
+ * "---" as BMW's own), Speed limit.
+ * Cluster: Place (beside the speed: BMW's LIMIT box, the panel target; or on the phone map), Cluster sign, Size (a
+ * slider), Position with Move left / right / up / down and Default position (each place keeps its own).
+ * HUD: HUD sign, Keep HUD sign over BMW's pop-ups, Size, Position, the moves and Default position.
+ * A section's controls are greyed while Show on leaves its display out. Map: the data's date and licence. Info rows
+ * read "Name: Value"; a row is written only when it changes, and only while the page shows. ASCII only. */
 const SHOW = ['cluster', 'hud', 'both', 'off'];
 const OVER = ['0', '5', '10', '15', '20'];
 const NOLIMIT = ['nothing', 'dashes'];
-const SIZES = [64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144];     // the slider's positions 0..10
-const MOVE_PX = 10;
+const PLACE = ['speed', 'map'];
+// the slider's sizes (positions 0..10) and the move step on each target
+const SIZES = {
+    hud: [64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144],
+    panel: [56, 64, 72, 80, 88, 96, 104, 112, 120, 136, 152],
+    map: [70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 180],
+};
+const STEP = { hud: 10, panel: 10, map: 20 };
+/** A section's place now: the HUD's, or the cluster's (the panel or the map, setting "clusterPlace"). */
+function placeOf(k, s) {
+    const target = k === 'hud' ? 'hud' : clusterTarget(s), T = TARGETS[target];
+    return { target, show: k, size: T.size, x: T.x, y: T.y, def: T.def, sizes: SIZES[target], step: STEP[target], row: k === 'hud' ? 'SL_HUD' : 'SL_CL' };
+}
 
 function limitText(e) {
     const r = e.res, v = e.view;
@@ -197,14 +210,15 @@ function signState(e, t) {
     if (show !== t && show !== 'both') return 'Off';
     if (!e.active) return e.enabled() ? 'Car off' : 'Off';
     if (!o.connected) return 'Unavailable (no cluster-render)';
-    if (t === 'cluster' && !o.mapBusy) return 'Waiting for the phone map';
+    if (t === 'cluster' && o.clusterTarget === 'map' && !o.mapBusy) return 'Waiting for the phone map';
     if (!e.view) return 'No limit to show';
-    return /^shown/.test(o[t === 'cluster' ? 'map' : 'hud']) ? 'Shown' : 'Waiting';
+    const st = o[t === 'cluster' ? 'cluster' : 'hud'];
+    return /^shown/.test(st) ? 'Shown' : /^waiting|^parked/.test(st) ? 'Waiting (' + st + ')' : 'Waiting';
 }
 
-/** How far the HUD sign may move from its default place and stay on the HUD (outputs.js TARGETS.hud). */
-function hudRoom(s) {
-    const T = TARGETS.hud, z = Number(s.get('hudSize')) || 88;
+/** How far a sign may move from its default place and stay on its display (outputs.js TARGETS). */
+function room(P, s) {
+    const T = TARGETS[P.target], z = Number(s.get(P.size)) || P.def;
     return { x0: z / 2 - T.cx, x1: T.w - T.cx - z / 2, y0: z / 2 - T.cy, y1: T.h - T.cy - z / 2 };
 }
 
@@ -225,48 +239,71 @@ mgu.run({
         const engine = ctx.background || await background(ctx);
         const done = {};
         const once = (key, value, fn) => { if (done[key] === value) return; done[key] = value; Promise.resolve().then(fn).catch(() => {}); };
-        const hudOn = () => s.get('show') === 'hud' || s.get('show') === 'both';
-        const size = ui.comp('SL_HUD_SIZE');
+        const on = (P) => s.get('show') === P.show || s.get('show') === 'both';
+        const sliders = { hud: ui.comp('SL_HUD_SIZE'), cluster: ui.comp('SL_CL_SIZE') };
+
+        /** A display's section: its status row, size slider, position row and buttons (greyed while it is not chosen). */
+        function renderPlace(k) {
+            const P = placeOf(k, s), R = P.row, slider = sliders[k], live = on(P);
+            const x = Number(s.get(P.x)) || 0, y = Number(s.get(P.y)) || 0;
+            // the slider at the size nearest the setting; its text says the size itself (keyed by the place too: two
+            // places can share a slider position with different sizes)
+            const size = Number(s.get(P.size)) || P.def;
+            let step = 0;
+            P.sizes.forEach((v, i) => { if (Math.abs(v - size) < Math.abs(P.sizes[step] - size)) step = i; });
+            const st = (k === 'hud' ? 'HUD' : 'Cluster') + ' sign: ' + signState(engine, k);
+            once(R, st, () => ui.text(R, st));
+            once(R + ':sizeText', P.target + ':' + size, () => ui.cells(R + '_SIZE', 0, { TextDescription: 'Size: ' + size + ' px' }));
+            once(R + ':sizeStep', step, () => (slider && slider.setStepValue ? slider.setStepValue(step) : ui.cells(R + '_SIZE', 0, { Value: step })));
+            once(R + ':pos', P.target + ':' + x + ',' + y, () => ui.text(R + '_POS', posText(x, y)));
+            ['_SIZE', '_LEFT', '_RIGHT', '_UP', '_DOWN'].concat(k === 'hud' ? ['_KEEP'] : []).forEach((n) => once('en:' + R + n, live, () => ui.enabled(R + n, live)));
+            const back = live && (x !== 0 || y !== 0);
+            once('en:' + R + '_DEFAULT', back, () => ui.enabled(R + '_DEFAULT', back));
+            if (k === 'cluster') {
+                const place = Math.max(0, PLACE.indexOf(s.get('clusterPlace')));
+                once('place', place, () => ui.selected('SL_CL_PLACE', place));
+                once('en:SL_CL_PLACE', live, () => ui.enabled('SL_CL_PLACE', live));
+            }
+        }
+
         function render() {
             if (!ui.isVisible('MAIN')) return;
-            const x = Number(s.get('hudX')) || 0, y = Number(s.get('hudY')) || 0, hud = hudOn();
             const show = Math.max(0, SHOW.indexOf(s.get('show'))), over = Math.max(0, OVER.indexOf(String(s.get('overspeed'))));
-            const step = Math.max(0, SIZES.indexOf(Number(s.get('hudSize'))));
             const nolim = Math.max(0, NOLIMIT.indexOf(s.get('noLimit')));
-            const lim = limitText(engine), cl = 'Cluster sign: ' + signState(engine, 'cluster'), hs = 'HUD sign: ' + signState(engine, 'hud');
+            const lim = limitText(engine);
             once('show', show, () => ui.selected('SL_SHOW', show));
             once('over', over, () => ui.selected('SL_OVER', over));
             once('nolim', nolim, () => ui.selected('SL_NOLIMIT', nolim));
             once('limit', lim, () => ui.text('SL_LIMIT', lim));
-            once('cluster', cl, () => ui.text('SL_CLUSTER', cl));
-            once('hud', hs, () => ui.text('SL_HUD', hs));
             once('keep', !!s.get('hudKeep'), () => ui.checked('SL_HUD_KEEP', !!s.get('hudKeep')));
-            once('sizeText', step, () => ui.cells('SL_HUD_SIZE', 0, { TextDescription: 'Size: ' + SIZES[step] + ' px' }));
-            once('sizeStep', step, () => (size && size.setStepValue ? size.setStepValue(step) : ui.cells('SL_HUD_SIZE', 0, { Value: step })));
-            once('pos', x + ',' + y, () => ui.text('SL_HUD_POS', posText(x, y)));
             once('map', mapText(engine), () => ui.text('SL_MAP', mapText(engine)));
-            ['SL_HUD_KEEP', 'SL_HUD_SIZE', 'SL_HUD_LEFT', 'SL_HUD_RIGHT', 'SL_HUD_UP', 'SL_HUD_DOWN'].forEach((n) => once('en:' + n, hud, () => ui.enabled(n, hud)));
-            const back = hud && (x !== 0 || y !== 0);
-            once('en:SL_HUD_DEFAULT', back, () => ui.enabled('SL_HUD_DEFAULT', back));
+            renderPlace('cluster');
+            renderPlace('hud');
         }
+
         // the HMI moves a drop-down's choice and the slider itself: only the setting follows
         ui.onClick('SL_SHOW', (ev) => { const v = SHOW[ev.row]; if (v) { done.show = ev.row; s.set('show', v); } });
         ui.onClick('SL_OVER', (ev) => { const v = OVER[ev.row]; if (v != null) { done.over = ev.row; s.set('overspeed', v); } });
         ui.onClick('SL_NOLIMIT', (ev) => { const v = NOLIMIT[ev.row]; if (v) { done.nolim = ev.row; s.set('noLimit', v); } });
-        ui.onClick('SL_HUD_KEEP', () => { if (hudOn()) s.set('hudKeep', !s.get('hudKeep')); });
-        if (size && size.on) size.on('changed', (step) => { const v = SIZES[step]; if (v && hudOn()) { done.sizeStep = step; s.set('hudSize', v); } });
-        const move = (dx, dy) => () => {
-            if (!hudOn()) return;
-            const R = hudRoom(s), x = Number(s.get('hudX')) || 0, y = Number(s.get('hudY')) || 0;
-            const nx = Math.round(Math.max(R.x0, Math.min(R.x1, x + dx))), ny = Math.round(Math.max(R.y0, Math.min(R.y1, y + dy)));
-            if (nx !== x) s.set('hudX', nx);
-            if (ny !== y) s.set('hudY', ny);
-        };
-        ui.onClick('SL_HUD_LEFT', move(-MOVE_PX, 0));
-        ui.onClick('SL_HUD_RIGHT', move(MOVE_PX, 0));
-        ui.onClick('SL_HUD_UP', move(0, -MOVE_PX));
-        ui.onClick('SL_HUD_DOWN', move(0, MOVE_PX));
-        ui.onClick('SL_HUD_DEFAULT', () => { if (s.get('hudX')) s.set('hudX', 0); if (s.get('hudY')) s.set('hudY', 0); });
+        ui.onClick('SL_HUD_KEEP', () => { if (on(placeOf('hud', s))) s.set('hudKeep', !s.get('hudKeep')); });
+        ui.onClick('SL_CL_PLACE', (ev) => { const v = PLACE[ev.row]; if (v) { done.place = ev.row; s.set('clusterPlace', v); } });
+        ['hud', 'cluster'].forEach((k) => {
+            const R = k === 'hud' ? 'SL_HUD' : 'SL_CL', slider = sliders[k];
+            if (slider && slider.on) slider.on('changed', (step) => { const P = placeOf(k, s), v = P.sizes[step]; if (v && on(P)) { done[R + ':sizeStep'] = step; s.set(P.size, v); } });
+            const move = (dx, dy) => () => {
+                const P = placeOf(k, s);
+                if (!on(P)) return;
+                const B = room(P, s), x = Number(s.get(P.x)) || 0, y = Number(s.get(P.y)) || 0;
+                const nx = Math.round(Math.max(B.x0, Math.min(B.x1, x + dx * P.step))), ny = Math.round(Math.max(B.y0, Math.min(B.y1, y + dy * P.step)));
+                if (nx !== x) s.set(P.x, nx);
+                if (ny !== y) s.set(P.y, ny);
+            };
+            ui.onClick(R + '_LEFT', move(-1, 0));
+            ui.onClick(R + '_RIGHT', move(1, 0));
+            ui.onClick(R + '_UP', move(0, -1));
+            ui.onClick(R + '_DOWN', move(0, 1));
+            ui.onClick(R + '_DEFAULT', () => { const P = placeOf(k, s); if (s.get(P.x)) s.set(P.x, 0); if (s.get(P.y)) s.set(P.y, 0); });
+        });
         s.onChange(render);
         // the status rows: at most once a second, and only while the page is open
         let timer = null;

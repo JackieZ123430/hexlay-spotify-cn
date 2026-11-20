@@ -61,8 +61,10 @@ The screenshots are from the browser emulator with its sample B58.
 
 > [!NOTE]
 > **Georgia only.** The app ships with an offline OpenStreetMap map of Georgia and Georgia's default limits.
-> Tested in the car (G15, HU_MGU_01 030_016_002) and it works. The limits come from OpenStreetMap and can be out of
-> date: follow the signs on the road.
+> Tested in the car (G15, HU_MGU_01 030_016_002) and it works.
+
+> [!CAUTION]
+> ### The limits come from OpenStreetMap and some are wrong or out of date. Always follow the signs on the road.
 
 The speed limit of the road you're on, on the head-up display and on the cluster's phone map, worked out offline.
 No internet, no BMW map, and nothing is sent to the car: it only reads the car's position, speed and power state.

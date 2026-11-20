@@ -11,7 +11,8 @@
  *
  * live: true (emu.js): as on the car. Screens open and close as the HMI's stack would, ctx.loop is
  * mgu.js's (paced by the renderer's ticks on MGU_RENDERD_SOCKET), bar buttons are components the kit
- * presses (ui.rhmi.getByName), the settings sheet is wired as mgu.js wires it, settings persist in
+ * presses (ui.rhmi.getByName), the settings are wired as mgu.js wires them (the HMI's own SETTINGS
+ * screen is on the stack and the emulator's page draws it; its rows come back as clicks), settings persist in
  * dataDir, and the signals stub takes raw values from the emulator (hu.feed). Run as a script it is
  * emu.js's app process:  node kit/tools/hu-stub.js <dist/id> <dataDir>  (IPC messages: runLive below).
  */
@@ -145,21 +146,53 @@ function liveUi(hu, displayOf, softImage) {
         visH.forEach((fn) => { try { fn(n, on); } catch (e) { log.error(e); } });
     };
     const changed = () => hu.emit('screens', stack.slice());
+    /*
+     * What the app sets on its native screens' components (text, cells, visibility, checkmarks, pictures), as the
+     * HMI would keep it: hu.nui = { name: { cells: { cell: value }, vis, chk, sel, img: { cell: base64 PNG } } }, and
+     * each change goes to the emulator's page ('nui', batched) to draw them (kit/emu/web/emu-app.js).
+     */
+    const nui = hu.nui = Object.create(null);
+    let patch = null;
+    const note = (n, f) => {
+        const c = nui[n] || (nui[n] = { cells: {}, img: {} });
+        if (!patch) { patch = Object.create(null); setTimeout(() => { const p = patch; patch = null; hu.emit('nui', p); }, 30); }
+        const pc = patch[n] || (patch[n] = { cells: {}, img: {} });
+        f(c); f(pc);
+    };
+    // the drawn screens' own image components (a canvas screen's graphic) go the display's way
+    const canvasGfx = new Set((hu.spec.screens || []).filter((s) => s.kind === 'canvas').map((s) => s.graphic || s.name + '_GFX'));
     const ui = {
         rhmi: { getByName: comp },
         comp,
-        image: (name, img) => displayOf().present(name, img, softImage),
+        image: (name, img, cell) => {
+            if (canvasGfx.has(name)) return displayOf().present(name, img, softImage);
+            try {
+                const png = (Buffer.isBuffer(img) ? img : img.png()).toString('base64');
+                note(name, (c) => { c.img[cell || 'Graphic'] = png; });
+            } catch (e) { log.warn('image ' + name + ': ' + e); }
+            return Promise.resolve();
+        },
         // the slim bar mirrors a bar button's text (as mgu.js Ui.text)
-        text: async (n, t, row, cell) => { if (!row && (!cell || cell === 'Text')) displayOf().label(n, t); },
-        cells: async () => {}, rows: async () => {}, selected: async () => {},
-        visible: async () => {}, enabled: async () => {}, checked: async () => {},
+        text: async (n, t, row, cell) => {
+            if (!row && (!cell || cell === 'Text')) displayOf().label(n, t);
+            if (!row) note(n, (c) => { c.cells[cell || 'Text'] = String(t); });
+        },
+        cells: async (n, row, obj) => { if (!row) note(n, (c) => { Object.keys(obj).forEach((k) => { c.cells[k] = String(obj[k]); }); }); },
+        rows: async () => {},
+        selected: async (n, row) => note(n, (c) => { c.sel = row; }),
+        visible: async (n, on) => note(n, (c) => { c.vis = !!on; }),
+        enabled: async () => {},
+        checked: async (n, on, row) => { if (!row) note(n, (c) => { c.chk = !!on; }); },
         onClick: (n, fn) => comp(n).on('action', (ev) => {
             log.info('click ' + n);
             Promise.resolve().then(() => fn(ev || {})).catch((e) => log.error('click ' + n, e));
         }),
-        // the HMI's own settings screen is not drawn here: the emulator's panel has the settings
+        // the HMI's own settings screen (build.py adds it for an app with settings) is a screen of the stack too: the
+        // emulator's page draws it as the HMI does (kit/emu/web/emu-app.js, native settings), and the app's page under
+        // it is hidden, as on the car (Display._shown)
         open: async (n) => {
-            if (n === 'SETTINGS' || !(hu.spec.screens || []).some((s) => s.name === n)) { log.info('open ' + n + ': an HMI screen the emulator does not draw'); hu.emit('hmiscreen', n); return; }
+            const known = (hu.spec.screens || []).some((s) => s.name === n) || (n === 'SETTINGS' && (hu.spec.settings || []).some((s) => !s.hidden));
+            if (!known) { log.info('open ' + n + ': an HMI screen the emulator does not draw'); hu.emit('hmiscreen', n); return; }
             const top = stack[stack.length - 1];
             if (top === n) return;
             if (stack.indexOf(n) >= 0) stack.splice(stack.indexOf(n), 1);
@@ -245,7 +278,8 @@ function liveLoop(hu) {
 
 /**
  * ctx.signals: watch() keeps the handlers; hu.feed(iface, field, value) calls them as a SOME/IP
- * notification would (the provider then counts as available). Methods (UDS, setters) fail.
+ * notification would (the provider then counts as available). Methods (UDS, setters) fail, unless
+ * MGU_EMU_CAR names a sample car (emu-car.js): it feeds the signals and its units answer over TASU.
  */
 function liveSignals(hu) {
     const subs = hu.subs = {};
@@ -255,13 +289,14 @@ function liveSignals(hu) {
         if (avail !== false) s.res.available = true;
         try { s.h[field](value); } catch (e) { hu.log.warn(iface + '.' + field + ': ' + e); }
     });
+    const car = process.env.MGU_EMU_CAR ? require('./emu-car').start(hu, process.env.MGU_EMU_CAR) : null;
     return {
         watch: async (iface, inst, handlers) => {
             const res = { iface, available: false, proxy: null, error: null, shutdown: () => Promise.resolve() };
             (subs[iface] = subs[iface] || []).push({ h: handlers || {}, res });
             return res;
         },
-        proxy: no, call: no, set: no, on: no, onAvailable: () => Promise.resolve(), hasNative: () => false,
+        proxy: car ? car.proxy : no, call: car ? car.call : no, set: no, on: car ? car.on : no, onAvailable: car ? car.onAvailable : () => Promise.resolve(), hasNative: () => false,
         loadConfig: () => { throw new Error('emulator: no SOME/IP configs'); },
     };
 }
@@ -279,7 +314,8 @@ const DEFL = { 0: 'MITTELSTELLUNG', 1: 'NORD_KURZ_GEDRUECKT', 4: 'OST_KURZ_GEDRU
 
 /**
  * IPC with emu.js. To it: {t:'log', l, s}, {t:'spec', spec, values}, {t:'settings', values},
- * {t:'screens', stack}, {t:'focus', id} (the HMI's focus, controller not grabbed), {t:'soft', name, png}
+ * {t:'screens', stack}, {t:'focus', id} (the HMI's focus, controller not grabbed), {t:'soft', name, png},
+ * {t:'nui', comps} (what the app set on its native screens' components since the last one: liveUi's hu.nui)
  * (a frame for the HMI's own image: the software path), {t:'loaded'} (the app's modules are read). From it: {t:'tap', x, y}
  * (a tap the HMI got: its bar buttons), {t:'reconnect'} (the renderer's caps changed), {t:'set', k, v}, {t:'sig', mode, v},
  * {t:'ccu', ev, grabbed}, {t:'click', id}, {t:'hmi', a: 'back'|'home'|'open', screen}.
@@ -290,7 +326,8 @@ function runLive(stage, dataDir) {
     const log = {};
     ['error', 'warn', 'info', 'debug'].forEach((l) => { log[l] = (...a) => { if (l !== 'debug' || process.env.MGU_DEBUG) send({ t: 'log', l, s: fmt(a) }); }; });
     console.log = log.info; console.info = log.info; console.warn = log.warn; console.error = log.error;
-    fs.mkdirSync(dataDir, { recursive: true });
+    // (no recursive option on Node 8: made one level at a time)
+    (function mkdirp(dir) { if (fs.existsSync(dir)) return; mkdirp(path.dirname(dir)); fs.mkdirSync(dir); })(dataDir);
     // software path frames (renderer setting "software", or before the renderer is up): a few a second
     let softCv = null, softTimer = null, softT = 0;
     const flushSoft = () => {
@@ -306,7 +343,8 @@ function runLive(stage, dataDir) {
     const values = () => Object.assign({}, settings.values);
     settings.onChange(() => send({ t: 'settings', values: values() }));
     hu.on('screens', (stack) => { send({ t: 'screens', stack }); focus(null); });
-    hu.on('hmiscreen', (n) => send({ t: 'note', s: n === 'SETTINGS' ? 'The HMI\'s own settings screen opens here on the car: the panel has the settings.' : 'The HMI screen ' + n + ' is not drawn here.' }));
+    hu.on('nui', (p) => send({ t: 'nui', comps: p }));
+    hu.on('hmiscreen', (n) => send({ t: 'note', s: 'The HMI screen ' + n + ' is not drawn here.' }));
     send({ t: 'spec', spec: { id: spec.id, title: spec.title, version: spec.version, settings: spec.settings || [], screens: spec.screens || [] }, values: values() });
 
     // the HMI's focus over the shown screen's buttons, for the controller while the app does not hold it
@@ -374,7 +412,7 @@ function runLive(stage, dataDir) {
 
     process.on('message', (m) => {
         if (m.t === 'set') settings.set(m.k, m.v);
-        else if (m.t === 'sig') {
+        else if (m.t === 'sig' && !hu.sampleCar) {
             manual = m.mode === 'manual' ? m.v : null;
             const want = m.mode === 'manual' ? 'auto' : 'on';
             if (settings.get('demo') !== want) settings.set('demo', want);
@@ -386,7 +424,7 @@ function runLive(stage, dataDir) {
                 frontRotaryEncoderPushButton: PUSH[e.pb] || 'KEINE_BETAETIGUNG', frontRotaryEncoderDeflection: DEFL[e.df] || 'MITTELSTELLUNG',
             }, false);
             if (!m.grabbed) hmiCcu({ frontRotaryEncoderOperation: e.knob, pb: e.pb, df: e.df });
-        } else if (m.t === 'click') ui.comp(m.id).emit('action', {});
+        } else if (m.t === 'click') ui.comp(m.id).emit('action', m.row != null && isFinite(Number(m.row)) ? { row: Number(m.row) } : {});
         else if (m.t === 'tap') hmiTap(Number(m.x), Number(m.y));
         else if (m.t === 'reconnect') reconnect();
         else if (m.t === 'hmi') {

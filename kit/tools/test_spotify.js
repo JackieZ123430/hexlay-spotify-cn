@@ -11,6 +11,13 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const Module = require('module');
+// runs on the head unit's Node too (8.9.4 / 8.16.2): no assert.match or fs.rmSync there
+const match = (s, re) => assert.ok(re.test(String(s)), JSON.stringify(String(s)) + ' does not match ' + re);
+function rmrf(p) {
+    let st;
+    try { st = fs.lstatSync(p); } catch (e) { return; }
+    if (st.isDirectory()) { fs.readdirSync(p).forEach((f) => rmrf(path.join(p, f))); fs.rmdirSync(p); } else fs.unlinkSync(p);
+}
 // in a package the kit is at ./kit next to the app's files (build.py); here it is kit/runtime
 const KIT = path.resolve(__dirname, '..', 'runtime'), APPS = path.resolve(__dirname, '..', '..', 'apps');
 const origResolve = Module._resolveFilename;
@@ -109,7 +116,7 @@ test('no device at all: the driver is told to open Spotify, nothing shown as pla
     });
     s.likedSongs = [{ id: 'a', uri: 'spotify:track:a' }];
     await s.playLikedSong(0);
-    assert.match(s.notice.text, /open Spotify on your phone/);
+    match(s.notice.text, /open Spotify on your phone/);
     assert.strictEqual(s.isPlaying, false);
 });
 
@@ -134,20 +141,20 @@ test('seek goes to the position, never past the song', async () => {
 test('errors are explained in plain words', () => {
     const s = client(() => null);
     const said = (e) => s._explain('Skip', e);
-    assert.match(said(apiError(403, 'PREMIUM_REQUIRED', 'Premium required')), /Premium is needed/);
-    assert.match(said(apiError(403, 'UNKNOWN', 'Restriction violated')), /Skip is not possible here/);
-    assert.match(said(apiError(404, 'NO_ACTIVE_DEVICE', 'No active device found')), /open Spotify on your phone/);
-    assert.match(said(apiError(429, '', 'rate limited')), /busy/);
-    assert.match(said(apiError(502, '', 'bad gateway')), /Spotify had a problem/);
-    assert.match(said(new Error('Timeout')), /No connection to Spotify/);
-    assert.match(said(Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' })), /No connection/);
-    assert.match(said(new Error('Spotify session expired. Please re-authenticate.')), /pair again/);
+    match(said(apiError(403, 'PREMIUM_REQUIRED', 'Premium required')), /Premium is needed/);
+    match(said(apiError(403, 'UNKNOWN', 'Restriction violated')), /Skip is not possible here/);
+    match(said(apiError(404, 'NO_ACTIVE_DEVICE', 'No active device found')), /open Spotify on your phone/);
+    match(said(apiError(429, '', 'rate limited')), /busy/);
+    match(said(apiError(502, '', 'bad gateway')), /Spotify had a problem/);
+    match(said(new Error('Timeout')), /No connection to Spotify/);
+    match(said(Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' })), /No connection/);
+    match(said(new Error('Spotify session expired. Please re-authenticate.')), /pair again/);
 });
 
 test('a refused skip is shown', async () => {
     const s = client(() => { throw apiError(403, 'UNKNOWN', 'Player command failed: Restriction violated'); });
     await s.nextTrack();
-    assert.match(s.notice.text, /Skip is not possible here/);
+    match(s.notice.text, /Skip is not possible here/);
 });
 
 test('a refused like puts the heart back and says why', async () => {
@@ -156,7 +163,7 @@ test('a refused like puts the heart back and says why', async () => {
     s.isCurrentLiked = false;
     await s.toggleLikeCurrent();
     assert.strictEqual(s.isCurrentLiked, false);
-    assert.match(s.notice.text, /Spotify had a problem/);
+    match(s.notice.text, /Spotify had a problem/);
 });
 
 test('the heart is read from the library by URI', async () => {
@@ -256,7 +263,7 @@ test('the cache shows the library at start, holds no tokens, goes with logout', 
         b.logout();
         assert.ok(!fs.existsSync(path.join(dir, 'spotify_cache.json')));
     } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
+        rmrf(dir);
     }
 });
 

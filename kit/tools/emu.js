@@ -3,7 +3,8 @@
  * emu.js - live emulator: a built app running with the real runtime, drawn in the browser by the car's
  * GPU draw engine (kit/renderd/src/gfx.c as WebAssembly, kit/emu/web/gfx/).
  *
- *   node kit/tools/emu.js redline [--port 8077] [--bg screenshot.png] [--no-touch]   ->  http://localhost:8077 (this computer only)
+ *   node kit/tools/emu.js redline [--port 8077] [--bg screenshot.png] [--no-touch] [--no-controller] [--car b58|n63]   ->  http://localhost:8077 (this computer only)
+ *   --car: a sample car (kit/tools/emu-car.js) sends the signals and answers over the diagnostic link
  *
  * Three parts in this process:
  *   app       python3 kit/tools/build.py <id>, then dist/<id> in a child node (hu-stub.js: a stubbed head
@@ -26,6 +27,8 @@
  *   {t:'screens', stack, closed}          the app's screen stack; closed: the user left it (the page shows the HMI's app picker)
  *   {t:'focus', id}                       the bar button the HMI's focus is on (controller not grabbed)
  *   {t:'soft', png}                       the HMI's own image of the app's screen (software path), base64 PNG
+ *   {t:'nui', comps, all}                 what the app set on its native screens' components (text, cells, vis, chk,
+ *                                         pictures); all: the whole of it (a page that connects)
  *   {t:'stats', msgs, bytes, ticks}       per second
  *   {t:'note', s}                         a short message for the user (the app opened an HMI screen not drawn here)
  * page -> server: JSON
@@ -33,9 +36,10 @@
  *   {t:'fps', n}                          cap (0: none)        {t:'gstats', fps, avgMs, maxMs}  the renderer's, for STATS
  *   {t:'touch', phase: 1|2|3, x, y}       screen px
  *   {t:'ccu', turn: n} | {t:'ccu', press: bool} | {t:'ccu', tilt: 'N'|'E'|'S'|'W'|null}
- *   {t:'hmi', a: 'back'|'home'|'open', screen}   {t:'click', id}  (an HMI button)
+ *   {t:'hmi', a: 'back'|'home'|'open', screen}   {t:'click', id, row}  (an HMI button; row: a drop-down's chosen value)
  *   {t:'set', k, v}  {t:'sig', mode: 'demo'|'manual', v: {rpm, speed, coolant, oil, gear, gLong, gLat, torque}}
  *   {t:'app', id}  {t:'restart'}
+ *   {t:'shot', name, i, n, part}          a screenshot (window.emuShot), saved to preview/emu/shots/<name>.png
  *   {t:'drop', why}                       the page's renderer dropped the client: the connection is closed
  *   {t:'rerror', s}                       an error the renderer would send the app (ERROR)
  *   {t:'replay'}                          a new renderer on the page: the connection so far again
@@ -53,9 +57,15 @@ const { spawn, fork } = require('child_process');
 const ROOT = path.resolve(__dirname, '..', '..');
 const WEB = path.join(ROOT, 'kit', 'emu', 'web');
 const args = process.argv.slice(2);
+// --no-controller: X_READY says the controller gate is not ours (another renderer holds its event socket, as after
+// the Store's renderer restarted: idrive7-apps#81); the app should ask for it anyway
+const NO_CONTROLLER = args.indexOf('--no-controller') >= 0;
 const opt = (k, d) => { const i = args.indexOf(k); if (i < 0) return d; const v = args[i + 1]; args.splice(i, 2); return v; };
 const PORT = Number(opt('--port', 8077));
 const BG = (() => { const b = opt('--bg', null); return b ? path.resolve(b) : null; })();
+// a sample car for the app (hu-stub.js reads MGU_EMU_CAR): its signals and diagnostic answers
+const CAR = opt('--car', null);
+if (CAR) process.env.MGU_EMU_CAR = CAR;
 // touch routing offered by the renderer (the Store's mgu-render: on; --no-touch or the page's switch: a renderer without
 // it, where the kit draws the slim bar over the HMI's own buttons and every tap is the HMI's)
 const Touch = { on: (() => { const i = args.indexOf('--no-touch'); if (i < 0) return true; args.splice(i, 1); return false; })() };
@@ -192,6 +202,7 @@ server.on('upgrade', (req, sock, head) => {
     ws.send({ t: 'log', lines: App.log.slice(-300) });
     ws.send({ t: 'sigmode', mode: Sig.mode, v: Sig.v });
     if (App.soft) ws.send({ t: 'soft', png: App.soft });
+    ws.send({ t: 'nui', comps: App.nui, all: true });
     replay(ws);
 });
 
@@ -277,7 +288,7 @@ function handle(c, type, p, whole) {
         if (f.slice(1).indexOf('proto=mgu-render/1') >= 0) {
             c.dialect = 'native';
             // version 1, layer mode, caps: touch routing (if on) | controller gate | pixmaps; no embed; app area; pixmap side; 60 Hz
-            toApp(msg(X.READY, [1, 1, (c.touch ? 1 : 0) | 2 | 8, 0, 0, 0, 0, 108, 82, 1790, 638, 2048, 60000]));
+            toApp(msg(X.READY, [1, 1, (c.touch ? 1 : 0) | (NO_CONTROLLER ? 0 : 2) | 8, 0, 0, 0, 0, 108, 82, 1790, 638, 2048, 60000]));
         }
         toApp(msg(E.READY, [4, SCREEN.w, SCREEN.h, c.touch ? 1 : 0]));
         appLog('info', 'renderer: ' + c.app + ' connected' + (c.dialect ? ', mgu-render/1' : ''));
@@ -336,7 +347,9 @@ function handle(c, type, p, whole) {
     case M.FPS: if (c.dialect !== 'upstream') { c.fps = Math.min(1000, u(0)); C.fps = whole; connChanged(); } break;
     case M.VIDEO: if (c.dialect !== 'upstream') res('video:' + u(0), true); break;
     case M.DROP_VIDEO: res('video:' + u(0), false); break;
-    case X.GRAB: c.grab = !!u(0); C.grab = whole; connChanged(); break;
+    case X.GRAB:
+        if (c.grab !== !!u(0)) appLog('info', 'renderer: controller ' + (u(0) ? 'grabbed by ' : 'released by ') + c.app);
+        c.grab = !!u(0); C.grab = whole; connChanged(); break;
     case X.PIXMAP: {
         const w = u(1), h = u(2), f = u(3);
         // (a bad size or format is the renderer's ERROR, not a dropped client: nothing to keep then)
@@ -491,6 +504,28 @@ setInterval(() => {
 /* ---------------- the page's messages ---------------- */
 const Sig = { mode: 'demo', v: { rpm: 900, speed: 0, coolant: 90, oil: 95, gear: 'P', gLong: 0, gLat: 0, torque: 40 } };
 const SIG_KEYS = ['rpm', 'speed', 'coolant', 'oil', 'gLong', 'gLat', 'torque'];
+/*
+ * {t:'shot', name, i, n, part}: the page's screenshot (window.emuShot(name) there) as base64 PNG in n parts
+ * (a page message stays under 1 MiB); the last part writes preview/emu/shots/<name>.png.
+ */
+const shots = new Map();
+function saveShot(m) {
+    const name = String(m.name || 'shot').replace(/[^\w.-]/g, '_').slice(0, 64) || 'shot';
+    const i = Number(m.i) || 0, n = Math.min(64, Math.max(1, Number(m.n) || 1));
+    if (i === 0) shots.set(name, []);
+    const parts = shots.get(name);
+    if (!parts || parts.length !== i) { shots.delete(name); return; }
+    parts.push(String(m.part || ''));
+    if (parts.length < n) return;
+    shots.delete(name);
+    const dir = path.join(ROOT, 'preview', 'emu', 'shots'), f = path.join(dir, name + '.png');
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(f, Buffer.from(parts.join(''), 'base64'));
+        appLog('info', 'screenshot: ' + path.relative(ROOT, f));
+    } catch (e) { appLog('warn', 'screenshot: ' + e.message); }
+}
+
 function onPage(ws, m) {
     switch (m.t) {
     case 'tick': if (Tick.busy) drawn(); break;
@@ -507,7 +542,8 @@ function onPage(ws, m) {
         }
         toChild({ t: 'hmi', a: m.a, screen: m.screen && String(m.screen) });
         break;
-    case 'click': toChild({ t: 'click', id: String(m.id) }); break;
+    case 'click': toChild({ t: 'click', id: String(m.id), row: m.row != null && isFinite(Number(m.row)) ? Number(m.row) : undefined }); break;
+    case 'shot': saveShot(m); break;
     case 'set': toChild({ t: 'set', k: String(m.k), v: m.v }); break;
     case 'sig':
         Sig.mode = m.mode === 'manual' ? 'manual' : 'demo';
@@ -539,7 +575,15 @@ function onPage(ws, m) {
 }
 
 /* ---------------- the app: build, child process, live reload ---------------- */
-const App = { lock: null, waiting: null, closed: false, opened: false, openNext: false, child: null, childId: null, gen: 0, exiting: null, deferred: null, loading: false, status: { t: 'status', s: 'starting' }, log: [], spec: null, values: null, stack: [], soft: null, building: null, again: false };
+const App = { lock: null, waiting: null, closed: false, opened: false, openNext: false, child: null, childId: null, gen: 0, exiting: null, deferred: null, loading: false, status: { t: 'status', s: 'starting' }, log: [], spec: null, values: null, stack: [], soft: null, nui: {}, building: null, again: false };
+/** The app's native screens' components as the HMI keeps them ({t:'nui'} from the app, merged; a new page gets all of it). */
+function mergeNui(p) {
+    Object.keys(p || {}).forEach((n) => {
+        const c = App.nui[n] || (App.nui[n] = { cells: {}, img: {} }), q = p[n];
+        Object.assign(c.cells, q.cells || {}); Object.assign(c.img, q.img || {});
+        ['vis', 'chk', 'sel'].forEach((k) => { if (q[k] !== undefined) c[k] = q[k]; });
+    });
+}
 function appLog(l, s) {
     const lines = String(s).replace(/\s+$/, '').split('\n').map((x) => [l, x]);
     App.log.push.apply(App.log, lines);
@@ -632,7 +676,7 @@ function start(id) {
         if (App.building) { App.deferred = id; return; }
         App.deferred = null;
         setStatus('starting', '', id);
-        App.stack = []; App.soft = null;
+        App.stack = []; App.soft = null; App.nui = {};
         toPages({ t: 'soft', png: null });              // (the old app's picture in the HMI goes)
         const data = path.join(ROOT, 'preview', 'emu', id);
         fs.mkdirSync(data, { recursive: true });
@@ -666,6 +710,7 @@ function start(id) {
                 toPages({ t: 'screens', stack: m.stack, closed: App.closed });
             }
             else if (m.t === 'soft') { App.soft = m.png; toPages({ t: 'soft', png: m.png }); }
+            else if (m.t === 'nui') { mergeNui(m.comps); toPages(m); }
             else if (m.t === 'focus' || m.t === 'note') toPages(m);
         });
         ch.on('exit', (code, sig) => {

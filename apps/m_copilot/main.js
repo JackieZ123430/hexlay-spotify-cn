@@ -10,7 +10,7 @@
  *       DRIVE     ready for full power, fuel and range, weather grip, how was that drive, running hot, cool-down
  *       PERFORM   launch, track day prep, tune health, heat soak, gearbox and clutch load, mods
  *       KNOW-HOW  oil spec, gearbox care, fuel and octane, known weak points, due at this mileage, trip prep
- *     plus an on-screen keyboard for any question (follow-up questions keep the context).
+ *     plus an on-screen keyboard for any question, locked while the car moves (follow-up questions keep the context).
  *   - What the AI is told (ai.js buildVehicleContext): only what the car reported - live driving
  *     signals, temperatures, tyres, fuel, odometer, the cluster's service list, the fault memory
  *     when asked about - and who the car is (vehicle.js: make, model year and type from the VIN,
@@ -25,7 +25,6 @@ const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
 const { AiBridge } = require('./ai');
 const { CloudPairManager } = require('./cloud_pair');
-const tlsDates = require('./kit/tls_dates');
 const qrcodegen = require('./kit/qrcodegen');
 
 const W = 1600, H = 520;
@@ -166,6 +165,12 @@ mgu.run({
         let customQuery = '';
         const QUERY_MAX = 160;
         const tail = (s, n) => (s.length > n ? '…' + s.slice(-(n - 1)) : s);
+        // no typing while the car moves (telemetry.moving: over 8 km/h, until under 3): the keyboard closes and
+        // the question box won't open it; what was typed is kept for when the car stands. Topics and follow-ups
+        // are one tap and stay. Unknown speed (no car signal) doesn't lock.
+        const typingLocked = () => telemetry.moving === true;
+        const lockMsg = () => (customQuery.trim() ? 'Typing locked while driving - your question is kept for when you stop'
+            : 'Typing is locked while driving - use a topic, or stop the car');
 
         let currentPrompt = TOPIC_CATEGORIES[0].topics[0].title;
         let currentResponse = 'M-Copilot ready. Select a category & topic chip or ask a custom question.';
@@ -184,182 +189,8 @@ mgu.run({
         const Vehicle = require('./vehicle');
         const vehicle = new Vehicle({ dataDir: ctx.dataDir, log });
         telemetry.vehicle = vehicle;
-        const DRIVE_MODES = { SPORT_DYNAMIC: 'Sport', SPORT_EXPERT: 'Sport plus', ECO_PRO_EFFICIENT: 'Eco pro', 1: 'Sport', 2: 'Sport plus',
-            3: 'Sport individual', 4: 'Comfort', 5: 'Comfort plus', 6: 'Comfort individual', 7: 'Eco pro', 8: 'Eco pro plus', 9: 'Eco pro individual', 10: 'Adaptive' };
-        const OIL_LEVELS = { MOTOROELSTAND_UNTER_MINIMUM: 'below minimum', MOTOROELSTAND_AM_MINIMUM: 'at minimum', MOTOROELSTAND_1_4: '1/4', MOTOROELSTAND_2_4: '2/4',
-            MOTOROELSTAND_3_4: '3/4', MOTOROELSTAND_4_4: 'full', MOTOROELSTAND_5_4: 'above full', MOTOROELSTAND_UEBERFUELLT: 'overfilled', MOTOROELSTAND_OK: 'OK',
-            SERVICEFUNKTION_AKTIV: 'measuring now', 0: 'below minimum', 1: 'at minimum', 2: '1/4', 3: '2/4', 4: '3/4', 5: 'full', 6: 'above full', 7: 'overfilled', 13: 'OK', 14: 'measuring now' };
-        const ENGINE_STATES = { MOTOR_AUS: 'off', MOTOR_STARTET: 'starting', MOTOR_LAEUFT: 'running', 0: 'off', 1: 'starting', 2: 'running' };
-        const HANDBRAKE = { HANDBREMSE_ANGEZOGEN: 'applied', HANDBREMSE_GELOEST: 'released', 1: 'released', 2: 'applied' };
-        const MSA = { MSA_AKTIVIERT: 'on', MSA_DEAKTIVIERT: 'off', 0: 'off', 1: 'on' };
-        const AWD = { _4WD_STANDARD: '4WD', _4WD_ALTERNATIV: '4WD Sport', _2WD: '2WD (rear-wheel drive)', AWDSAND: 'Sand' };
-        const CONS_UNITS = { VERBRAUCH_IN_L_S_100KM: 'l/100 km', VERBRAUCH_IN_MPG_UK: 'mpg (UK)', VERBRAUCH_IN_MPG_US: 'mpg (US)', VERBRAUCH_IN_KM_S_L: 'km/l',
-            1: 'l/100 km', 2: 'mpg (UK)', 3: 'mpg (US)', 4: 'km/l' };
-        // service list (as idrive7-apps Service reads it): ids in English, colours as states
-        const CBS_NAMES = { 1: 'Engine oil', 2: 'Front brake pads', 3: 'Brake fluid', 6: 'Rear brake pads', 7: 'Particulate filter', 10: 'Spark plugs',
-            13: 'NOx additive (AdBlue)', 17: 'Vehicle check', 32: 'Statutory inspection', 33: 'Emissions test', 35: 'Transmission oil', 100: 'Vehicle check' };
-        const CBS_STATES = { RED: 'overdue', YELLOW: 'due soon', ORANGE: 'due soon', GREEN: 'OK', 1: 'overdue', 2: 'due soon', 4: 'due soon', 3: 'OK' };
-        const findKey = (v, key) => {
-            if (!v || typeof v !== 'object') return null;
-            if (key in v) return v;
-            for (const k of Object.keys(v)) { const r = findKey(v[k], key); if (r) return r; }
-            return null;
-        };
-        const carText = (x) => String(x === undefined || x === null ? '' : x).replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 60);
-        const UNIT_PRESS = { 1: 'BAR', 2: 'KPA', 3: 'PSI', BAR: 'BAR', KPA: 'KPA', PSI: 'PSI' }, UNIT_TEMP = { 1: 'C', 2: 'F', C: 'C', F: 'F' };
-        const SPEED_UNITS = { KM_S_H__KM: 'km/h', MPH__MLS: 'mph', 1: 'km/h', 2: 'mph' };
-        const PROGRAMMES = { S_MINUS_PROGRAMM: 'S (sport)', M_MINUS_PROGRAMM: 'M (manual)', 1: 'S (sport)', 2: 'M (manual)' };
-        const AC_ON = { 1: true, KLIMAANLAGE_EIN: true, 0: false, KLIMAANLAGE_AUS: false };
-        const pick = (v, key) => { const o = findKey(v, key); return o ? o[key] : undefined; };
-        // Check Control: active message ids (CheckControlMaster) and their texts (the cluster's lists)
-        const ccActive = new Map(), ccNames = new Map();
-        const ccWalk = (o, fn) => {
-            if (!o || typeof o !== 'object') return;
-            if (Array.isArray(o)) { o.forEach((x) => ccWalk(x, fn)); return; }
-            fn(o);
-            Object.keys(o).forEach((k) => { if (o[k] && typeof o[k] === 'object') ccWalk(o[k], fn); });
-        };
-        const ccUpdate = () => {
-            telemetry.checkControl = Array.from(ccActive.keys()).map((id) => (ccNames.get(id) || 'Check Control message ' + id));
-        };
-        const ccNamesFrom = (v) => {
-            ccWalk(v, (o) => {
-                const id = o.cCIdentifer !== undefined ? o.cCIdentifer : o.cCIdentifier, nm = o.cCShortName || o.cCName;
-                if (id !== undefined && nm) ccNames.set(id, carText(nm));
-            });
-            if (telemetry.checkControl) ccUpdate();
-        };
-        // tyre pressures come as 0.1 x the car's own unit; each unit's plausible range is apart (as M Vitals reads them)
-        let tyreFahrenheit = false;
-        const tyreBar = (raw) => {
-            if (typeof raw !== 'number' || raw >= 65532) return null;
-            const v = raw * 0.1, known = telemetry.units.press;
-            if (known === 'PSI') return v / 14.5038;
-            if (known === 'KPA') return v / 100;
-            if (known === 'BAR') return v >= 0.5 && v <= 6 ? v : null;
-            if (v >= 0.5 && v <= 6) return v;
-            if (v >= 7 && v < 60) { tyreFahrenheit = true; return v / 14.5038; }     // psi (the car then uses deg F too)
-            if (v >= 60 && v <= 600) return v / 100;                                 // kPa
-            return null;
-        };
-        const tyreC = (raw) => {
-            if (typeof raw !== 'number' || raw >= 65535) return null;
-            const v = raw - 40;
-            return tyreFahrenheit ? (v - 32) * 5 / 9 : v;
-        };
-        const corners4 = (v, keys, fn) => {
-            const o = { fl: fn(v[keys[0]]), fr: fn(v[keys[1]]), rl: fn(v[keys[2]]), rr: fn(v[keys[3]]) };
-            return [o.fl, o.fr, o.rl, o.rr].every((x) => x !== null) ? o : null;
-        };
-        // signals beyond kit/car's groups, decoded as in idrive7-apps (Live Data, M Vitals)
-        const EXTRA = {
-            'de.bmw.infotainment.vehicle.TPMS': {
-                statusTyrePressure: (v) => { telemetry.tyres = corners4(v || {}, ['actualValuePressureTyreFLH', 'actualValuePressureTyreFRH', 'actualValuePressureTyreRLH', 'actualValuePressureTyreRRH'], tyreBar); },
-                statusTargetTyrePressure: (v) => { telemetry.tyreTargets = corners4(v || {}, ['targetPressureTyreFLH', 'targetPressureTyreFRH', 'targetPressureTyreRLH', 'targetPressureTyreRRH'], tyreBar); },
-                statusTyreTemperature: (v) => { telemetry.tyreTemps = corners4(v || {}, ['actualValueTemperatureTyreFLH', 'actualValueTemperatureTyreFRH', 'actualValueTemperatureTyreRLH', 'actualValueTemperatureTyreRRH'], tyreC); },
-            },
-            'de.bmw.infrastructure.EnvironmentalInformation': {
-                ExteriorTemperature: (v) => { const r = v && v.temperatureExterior; telemetry.ambient = typeof r === 'number' && r !== 255 ? r * 0.5 - 40 : null; },
-            },
-            'de.bmw.infotainment.KombiIF': {
-                statusRangeTankStatus: (v) => {
-                    v = v || {};
-                    telemetry.fuelL = typeof v.fluidLevelFuelTank === 'number' && v.fluidLevelFuelTank < 255 ? v.fluidLevelFuelTank : null;
-                    telemetry.rangeKm = typeof v.range === 'number' && v.range < 4095 ? v.range : null;
-                    telemetry.odoKm = typeof v.mileageKilometre === 'number' && v.mileageKilometre > 0 && v.mileageKilometre < 16777215 ? v.mileageKilometre : null;
-                },
-                // trip computer 1 (scaling as Live Data reads it: 0.1 a step, in the cluster's unit)
-                statusBordcomputerAverage: (v) => {
-                    const r = v && v.consumptionAverage1BC1, unit = v && CONS_UNITS[v.statusUnitOfMeasurementConsumptionBC];
-                    telemetry.avgCons = typeof r === 'number' && r > 0 && r < 65535 && unit ? { value: r * 0.1, unit } : null;
-                    if (unit) telemetry.units.cons = unit;
-                    const sp = v && SPEED_UNITS[v.statusUnitOfMeasurementSpeedBC];
-                    if (sp) telemetry.units.speed = sp;
-                },
-            },
-            'de.bmw.infotainment.vehicle.CDS': {
-                statusBattery2: (v) => { const r = v && v.conditionBatteryChargingCondition; telemetry.batteryPct = typeof r === 'number' && r <= 100 ? r : null; },
-                statusEngineStatus: (v) => { const r = v && v.statusEngineRunDrive; telemetry.engine = (r !== undefined && ENGINE_STATES[r]) || null; },
-                statusHandBrake: (v) => { const r = v && v.statusContactHandBrake; telemetry.handbrake = (r !== undefined && HANDBRAKE[r]) || null; },
-            },
-            'de.bmw.infotainment.vehicle.CDS2': {
-                statusPushButtonMSA2: (v) => { const r = v && v.statusFunctionMSA; telemetry.msa = (r !== undefined && MSA[r]) || null; },
-            },
-            'de.bmw.infotainment.vehicle.Vehicle2': {
-                statusOilDipstick2: (v) => { const r = v && v.fluidLevelEngineOilRelative; telemetry.oilLevel = (r !== undefined && OIL_LEVELS[r]) || null; },
-                statusVehiclePartType: (v) => { const t = Vehicle.engineTypeOf(v && v.typeEngine); if (t) vehicle.engineType = t; },
-            },
-            'de.bmw.infotainment.drivingexcitement.FES': {
-                statusFESVehicleDynamicSwitchHMI: (v) => { const r = v && v.actualValueModeDrivingExperience; telemetry.mode = (r !== undefined && DRIVE_MODES[r]) || null; },
-                statusSwitchDriveDynamicSport2: (v) => { const r = v && v.displayBoostPressure; telemetry.boost = typeof r === 'number' && r !== 255 ? r * 0.01 : null; },
-                // the sport display's share of the engine's maximum power and torque
-                statusVehicleDynamicEngine: (v) => {
-                    v = v || {};
-                    telemetry.powerPct = typeof v.displaySportEnginePower === 'number' && v.displaySportEnginePower <= 100 ? v.displaySportEnginePower : null;
-                    telemetry.torquePct = typeof v.displaySportEngineTorque === 'number' && v.displaySportEngineTorque <= 100 ? v.displaySportEngineTorque : null;
-                },
-            },
-            // the car's display units (as BMW's x_call / M Vitals read them): answers use them
-            'de.bmw.infotainment.vehicle.Vehicle': {
-                statusNewCurrentUnitsStatusExt: (v) => {
-                    const pr = UNIT_PRESS[v && v.unitOfMeasurementAirPressure], tp = UNIT_TEMP[v && v.unitOfMeasurementTemperature];
-                    if (pr) telemetry.units.press = pr;
-                    if (tp) { telemetry.units.temp = tp; tyreFahrenheit = tp === 'F'; }
-                },
-            },
-            // M xDrive setting (M models only); the S / M programme the cluster shows next to the gear (M Vitals)
-            'de.bmw.infotainment.misc.MDrive': {
-                statusMSystem: (v) => { const r = v && v.statusAllWheelSetup; telemetry.awd = (r !== undefined && AWD[r]) || null; },
-                dataDisplayGearbox: (v) => { const r = v && v.displayProgramGearbox; telemetry.programme = (r !== undefined && PROGRAMMES[r]) || null; },
-            },
-            // climate and the high-voltage battery, as eDrive reads them
-            'de.bmw.infotainment.climate.Climate2': {
-                statusACFront: (v) => { const r = pick(v, 'statusAircon'); telemetry.ac = r === undefined ? null : AC_ON[r] === undefined ? null : AC_ON[r]; },
-            },
-            'de.bmw.infotainment.drivingexcitement.Efficiencytainment2': {
-                statusBatteryTemperature: (v) => {
-                    const r = pick(v, 'actualValueTemperatureHighVoltageStorage');
-                    telemetry.hvTemp = typeof r === 'number' && r !== 255 && r - 50 > -30 && r - 50 < 70 ? r - 50 : null;
-                },
-            },
-            'de.bmw.infotainment.lsc.LSCDataSink': {
-                statusHighVoltageStorage: (v) => {
-                    const x = pick(v, 'actualValueVoltageHighVoltageStorage'), volts = typeof x === 'number' ? (x > 1500 ? x / 10 : x) : null;
-                    telemetry.hvVolt = volts !== null && volts > 150 && volts < 500 ? volts : null;
-                },
-            },
-            // Check Control: the warning messages active in the cluster now (as idrive7-apps Fault Scanner reads them)
-            'de.bmw.infotainment.checkcontrol.CheckControlMaster': {
-                basicList: (v) => {
-                    ccWalk(v, (o) => {
-                        if (o.ccmId === undefined) return;
-                        if (o.activeState === 'AKTIV' || o.activeState === 0) ccActive.set(o.ccmId, true); else ccActive.delete(o.ccmId);
-                    });
-                    ccUpdate();
-                },
-            },
-            // the cluster's service list: what the iDrive's Service requirements page shows
-            'de.bmw.infotainment.KombiInterface_2': {
-                ccList: (v) => ccNamesFrom(v),
-                // the summary: the next service the car asks for (as idrive7-apps Service reads it)
-                cbsDataSBA: (v) => {
-                    const c = findKey(v, 'cBSDataSBAText') || {};
-                    const text = carText(c.cBSDataSBAText);
-                    telemetry.serviceNext = text ? { text, way: carText(c.cBSDataSBADistance), date: carText(c.cBSDataSBADate) } : null;
-                },
-                newCCMessage: (v) => ccNamesFrom(v),
-                cbsDataServiceList: (v) => {
-                    const arr = Array.isArray(v) ? v : (v && (v.cbsDataServiceList || v.value)) || [];
-                    const items = arr.map((e) => {
-                        const c = findKey(e, 'cBSIdentifier') || {};
-                        const carName = carText(c.cBSServcieName || c.cBSServiceName);
-                        return { name: CBS_NAMES[c.cBSIdentifier] || carName, way: carText(c.cBSServiceWay), date: carText(c.cBSServiceDate),
-                            state: CBS_STATES[c.cBSColor] || null };
-                    }).filter((i) => i.name);
-                    telemetry.service = items.length ? items : null;
-                },
-            },
-        };
+        // the car's own fields beyond kit/car's groups, decoded as in idrive7-apps (car_signals.js)
+        const carSignals = require('./car_signals')(telemetry, { vehicle, Vehicle, log });
 
         // Real car driving signals, subscribed only while the screen is shown (startCar / stopCar)
         let car = null;
@@ -370,7 +201,7 @@ mgu.run({
             if (car) return;
             try {
                 const Car = require('./kit/car');
-                car = new Car(ctx, ['rpm', 'speed', 'accel', 'temps', 'gear', 'torque', 'condition'], EXTRA);
+                car = new Car(ctx, ['rpm', 'speed', 'accel', 'temps', 'gear', 'torque', 'condition'], carSignals.extra, { poll: carSignals.poll });
                 car.onSample(onCarSample);
             } catch (e) {
                 car = null;
@@ -381,6 +212,14 @@ mgu.run({
             // kit/car feeds a simulator while no car answers: that must never reach the AI as the car's state
             if (data.demo) return;
             driveFeed(data);
+            takeCar(data);
+        }
+        /**
+         * kit/car's latest values into telemetry. Only rpm, speed and acceleration make a sample, so values that
+         * came on their own (temperatures, gear, vehicle state on a parked car) are taken from car.data() too.
+         */
+        function takeCar(data) {
+            if (!data || data.demo) return;
             // moving or parked (with a gap, so stop-and-go doesn't flicker): answer length and text size follow it
             if (typeof data.speed === 'number') {
                 telemetry.moving = data.speed > 8 ? true : data.speed < 3 ? false : telemetry.moving;
@@ -409,14 +248,15 @@ mgu.run({
         /**
          * Coming back on screen: values that are only sent on change may be old, so they are cleared,
          * Check Control and the service list too: each subscription sends the current value again
-         * (its getter), and the warnings come as changes to the list kept here (ccActive).
+         * (its getter), and the warnings come as changes to the list kept in car_signals.js. The outside
+         * temperature has no getter and changes slowly: it is kept until the car sends a new one.
          */
         let standingSince = 0, engineOnSince = 0, engineStartSeen = false, engineOffSeen = false;
         function clearLive() {
             standingSince = 0; engineOnSince = 0; engineStartSeen = false; engineOffSeen = false;
-            ccActive.clear();
+            carSignals.reset();
             ['checkControl', 'service', 'serviceNext'].forEach((k) => { telemetry[k] = null; });
-            ['speed', 'rpm', 'gear', 'stage', 'torque', 'boost', 'mode', 'oilTemp', 'coolantTemp', 'ambient', 'gLat', 'gLong', 'tyres', 'tyreTargets', 'tyreTemps',
+            ['speed', 'rpm', 'gear', 'stage', 'torque', 'boost', 'mode', 'oilTemp', 'coolantTemp', 'gLat', 'gLong', 'tyres', 'tyreTargets', 'tyreTemps',
                 'fuelL', 'rangeKm', 'batteryPct', 'engine', 'msa', 'handbrake', 'powerPct', 'torquePct', 'awd', 'condition', 'programme', 'ac', 'hvTemp', 'hvVolt',
                 'moving'].forEach((k) => { telemetry[k] = null; });
         }
@@ -425,7 +265,7 @@ mgu.run({
         // 'awake' (ignition on or drive-ready), null (the car doesn't say)
         const carAwake = () => {
             // the latest state from the car itself: the state alone sends no sample
-            if (car) { const d = car.data(); if (!d.demo && d.condition !== undefined) telemetry.condition = d.condition; }
+            if (car) takeCar(car.data());
             return telemetry.condition === null || telemetry.condition === undefined ? null : telemetry.condition <= 5 ? 'asleep' : 'awake';
         };
         // the engine: 'on', 'off' or null (not known)
@@ -493,7 +333,7 @@ mgu.run({
                 try {
                     const d = await diagLink();
                     if (!d.available) return;
-                    if (!snapshot) { const EngineSnapshot = require('./engine_snapshot'); snapshot = new EngineSnapshot(d, ctx.spec && ctx.spec.config, log); }
+                    if (!snapshot) { const EngineSnapshot = require('./engine_snapshot'); snapshot = new EngineSnapshot(d, ctx.spec && ctx.spec.config, log, () => vehicle.engineKind()); }
                     const x = await snapshot.sample({ budgetMs: 900, steady });
                     if (!x || !drive) return;
                     drive.loadSamples++;
@@ -608,7 +448,7 @@ mgu.run({
          */
         function steady() {
             // the car's latest state, not the last tick's (the state alone sends no tick)
-            if (car) onCarSample(car.data());
+            if (car) takeCar(car.data());
             if (telemetry.condition === 8 || telemetry.condition === 12) return false;
             if (telemetry.engine === 'starting') return false;
             if (typeof telemetry.rpm === 'number' && telemetry.rpm > 0 && telemetry.rpm < 450) return false;   // cranking
@@ -629,7 +469,9 @@ mgu.run({
             if (diagMaking) return diagMaking;
             const { Diag } = require('./kit/diag');
             diagAt = Date.now();
-            diagMaking = new Diag(signals, log).init().then((d) => { diag = d; diagMaking = null; return d; }, (e) => { diagMaking = null; throw e; });
+            const link = new Diag(signals, log);
+            link.quiet = true;                  // not every request in the log: the Data check page reads all the time (as M Vitals)
+            diagMaking = link.init().then((d) => { diag = d; diagMaking = null; return d; }, (e) => { diagMaking = null; throw e; });
             return diagMaking;
         }
 
@@ -665,7 +507,7 @@ mgu.run({
                 } catch (e) { break; }
             }
             if (todo.length) {
-                try { require('fs').writeFileSync(IDS_FILE, JSON.stringify({ vin: vehicle.vin, ids: unitIds })); } catch (e) { /* next time */ }
+                try { require('./kit/write_whole').writeWhole(IDS_FILE, JSON.stringify({ vin: vehicle.vin, ids: unitIds })); } catch (e) { /* next time */ }
             }
             return unitIds;
         }
@@ -676,15 +518,16 @@ mgu.run({
          * gearbox oil, 12 V. Only while steady, within a time budget; kept 20 s.
          */
         let snapshot = null;
+        // a plug-in hybrid: the car says so (engine type), or its high-voltage battery sends values
+        const hybridCar = () => /hybrid|electric/.test(vehicle.engineType || '') || telemetry.hvVolt !== null || telemetry.hvTemp !== null;
         async function engineSnapshot() {
             try {
                 // parked without ignition the engine unit sleeps: nothing to read (and its silence is not a failure)
                 if (carAwake() === 'asleep') { telemetry.engineSnap = null; return; }
                 const d = await diagLink();
                 if (!d.available || !steady()) return;
-                if (!snapshot) { const EngineSnapshot = require('./engine_snapshot'); snapshot = new EngineSnapshot(d, ctx.spec && ctx.spec.config, log); }
-                const hybrid = /hybrid|electric/.test(vehicle.engineType || '') || telemetry.hvVolt !== null || telemetry.hvTemp !== null;
-                const r = await snapshot.read({ budgetMs: 3500, steady, hybrid, needOil: telemetry.oilTemp === null, engine: engineState() });
+                if (!snapshot) { const EngineSnapshot = require('./engine_snapshot'); snapshot = new EngineSnapshot(d, ctx.spec && ctx.spec.config, log, () => vehicle.engineKind()); }
+                const r = await snapshot.read({ budgetMs: 3500, steady, hybrid: hybridCar(), needOil: telemetry.oilTemp === null, engine: engineState() });
                 if (r) telemetry.engineSnap = r;
             } catch (e) {
                 log.warn('M-Copilot: engine snapshot skipped: ' + (e.message || e));
@@ -692,10 +535,57 @@ mgu.run({
         }
 
         /**
+         * The Data check page live, as M Vitals and Live Data read the engine unit while their page is on screen:
+         * a round of the engine computer's values, 400 ms rest, the next round (misfires and the HV battery every
+         * 4th). Read-only, one request at a time, and only while this page is on screen; never while the car is
+         * asleep or the engine is starting or stopping (the round waits a second and looks again). Answers come
+         * from these rounds too while they are fresh.
+         */
+        let liveTimer = null, liveRunning = false, liveRound = 0;
+        const liveWanted = () => page === 1 && onScreen();
+        // one loop only: a round still reading when the page is left and opened again carries on as the loop
+        function engineLive(on) {
+            if (!on) { if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; } return; }
+            if (!liveTimer && !liveRunning) liveTimer = setTimeout(liveTick, 0);
+        }
+        const liveOn = () => !!(liveTimer || liveRunning);
+        async function liveTick() {
+            liveTimer = null;
+            if (!liveWanted()) return;
+            liveRunning = true;
+            let rest = 1000;
+            try {
+                if (carAwake() !== 'asleep' && steady() && !checking) {
+                    const d = await diagLink();
+                    if (d.available && liveWanted()) {
+                        await identifyCar();
+                        if (!snapshot) { const EngineSnapshot = require('./engine_snapshot'); snapshot = new EngineSnapshot(d, ctx.spec && ctx.spec.config, log, () => vehicle.engineKind()); }
+                        const every4 = liveRound++ % 4 === 0;
+                        const r = await snapshot.read({ live: true, budgetMs: 2500, steady, hybrid: hybridCar(), needOil: telemetry.oilTemp === null,
+                            engine: engineState(), misfire: every4, hv: every4 });
+                        if (r) telemetry.engineSnap = r;
+                        rest = 400;
+                    }
+                }
+            } catch (e) {
+                log.warn('M-Copilot: live engine read: ' + (e.message || e));
+                rest = 3000;                    // the link not ready: try again in a moment
+            }
+            liveRunning = false;
+            if (liveWanted() && !liveTimer) liveTimer = setTimeout(liveTick, rest);
+        }
+
+        /**
          * Read the fault memory of every control unit (UDS 0x19 02 0C over TASU, read-only) so the AI
          * talks about real stored faults. Kept for 5 minutes.
          */
-        async function scanFaults() {
+        // one fault memory read at a time: a question asked while one runs (after a Cancel) waits for it
+        let faultScan = null;
+        function scanFaults() {
+            if (!faultScan) { const done = () => { faultScan = null; }; faultScan = readFaults(); faultScan.then(done, done); }
+            return faultScan;
+        }
+        async function readFaults() {
             const ccNow = JSON.stringify(telemetry.checkControl || []);
             if (telemetry.dtcScan && !telemetry.dtcScan.error && !telemetry.dtcScan.partial && telemetry.dtcScan.cc === ccNow
                 && Date.now() - telemetry.dtcScan.at < 5 * 60 * 1000) return;
@@ -749,8 +639,23 @@ mgu.run({
             { title: 'Safe to keep driving?', query: 'Is it safe to keep driving the car normally as it is now? Say what to watch for.' },
             { title: 'Explain more', query: 'Explain that in more detail for my car.' },
         ];
+        /**
+         * Cancel (the button under a pending answer): the answer is dropped, the request to the AI closed,
+         * and what was still being read for it (fault memory, engine computer) stops after its current step.
+         * A new question can be asked at once.
+         */
+        function cancelAnswer() {
+            if (!isThinking) return;
+            askSeq++;
+            ai.cancel();
+            setThinking(false);
+            canFollowUp = false;
+            currentResponse = 'Cancelled. Choose a topic or ask your own question.';
+            notify('Answer cancelled.');
+            render(true).catch(() => {});
+        }
         async function askCopilot(queryText, title, opts) {
-            if (isThinking) { notify('M-Copilot is still answering...'); return; }
+            if (isThinking) { notify('M-Copilot is still answering: Cancel stops it.'); return; }
             if (!ai.hasInternet) {
                 notify('No Internet: Please verify phone hotspot or cellular uplink.');
                 return;
@@ -767,12 +672,16 @@ mgu.run({
             const seq = ++askSeq;
             setThinking(true);
             currentResponse = 'Asking M-Copilot with your car\'s live data...';
+            const gone = () => seq !== askSeq;          // cancelled (or a newer question): stop here
             try {
                 // who the car is (once per car), then the fault memory for the topics and questions about it
                 await identifyCar();
+                if (gone()) return;
                 if ((opts && opts.faults) || /\b(fault|dtc|error code|check engine|warning light|engine light)/i.test(queryText)) await scanFaults();
+                if (gone()) return;
                 // the engine unit's own values at the moment of asking (a few hundred ms once known)
                 await engineSnapshot();
+                if (gone()) return;
                 // the latest live values at the moment of asking (not demo data: onCarSample drops those)
                 if (car) onCarSample(car.data());
                 // demo switched on by hand (emulator, bench): the simulator's readings, labelled as such.
@@ -786,7 +695,7 @@ mgu.run({
                 const t = d && d.demo && settings.get('demo') === 'on' ? simulated(d) : telemetry;
                 ai.lastOk = false;
                 const answer = await ai.ask(queryText, t, { fresh: !!(opts && opts.fresh) });
-                if (seq === askSeq) { currentResponse = answer; canFollowUp = !!ai.lastOk; }
+                if (seq === askSeq && answer !== null) { currentResponse = answer; canFollowUp = !!ai.lastOk; }
             } catch (e) {
                 if (seq === askSeq) currentResponse = 'Error: ' + e.message;
             } finally {
@@ -923,7 +832,7 @@ mgu.run({
             if (!qr) return;
             const n = qr.size, px = Math.floor(size / n), real = px * n, ox = x + Math.floor((size - real) / 2), oy = y + Math.floor((size - real) / 2);
             cv.roundRect(ox - 10, oy - 10, real + 20, real + 20, 10, '#ffffff');
-            for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.getModule(c, r)) cv.fillRect(ox + c * px, oy + r * px, px, px, '#000000');
+            G.qrCode(cv, qr, url, ox, oy, px);       // drawn once as a layer, not a rectangle per module every frame
         }
         const LANG_NAMES = { ka: 'Georgian', de: 'German', fr: 'French', es: 'Spanish', it: 'Italian', nl: 'Dutch', pt: 'Portuguese', tr: 'Turkish', pl: 'Polish' };
         function drawConnect(cv, t) {
@@ -1059,7 +968,7 @@ mgu.run({
                 cv.strokeRoundRect(px, presetY, pw, presetH, presetH / 2, 1, '#1e324c');
                 cv.text(pr, px + pw / 2, presetY + presetH / 2 + pSize * 0.36, pSize, '#cbd5e1', { align: 'center' });
                 cv.target(px, presetY, pw, presetH, () => {
-                    customQuery = pr;
+                    if (!typingLocked()) customQuery = pr;
                     render(true);
                 }, 'kb_preset_' + pIdx, presetH / 2);
                 px += pw + 10;
@@ -1090,7 +999,7 @@ mgu.run({
                     cv.text(k, kxPos + keyW / 2, ry + keyH / 2 + kSize * 0.36, kSize, '#ffffff', { align: 'center', font: 'bold' });
 
                     cv.target(kxPos, ry, keyW, keyH, () => {
-                        if (customQuery.length < QUERY_MAX) customQuery += k;
+                        if (customQuery.length < QUERY_MAX && !typingLocked()) customQuery += k;
                         render(true);
                     }, 'kb_k_' + rIdx + '_' + cIdx, 6);
                 });
@@ -1116,7 +1025,7 @@ mgu.run({
             cv.strokeRoundRect(spX, aY, spW, aH, 8, 1, '#1e2d42');
             cv.text('SPACEBAR', spX + spW / 2, aBase, aSize, '#cbd5e1', { align: 'center', font: 'bold' });
             cv.target(spX, aY, spW, aH, () => {
-                if (customQuery.length < QUERY_MAX) customQuery += ' ';
+                if (customQuery.length < QUERY_MAX && !typingLocked()) customQuery += ' ';
                 render(true);
             }, 'kb_act_space', 8);
 
@@ -1189,16 +1098,31 @@ mgu.run({
                 }, 'chip_' + idx, 8);
             });
 
-            cv.roundRect(inputX, inputY, inputW, inputH, 10, showKeyboard ? withAlpha('#00a3e0', 0.25) : '#0b111a');
-            cv.strokeRoundRect(inputX, inputY, inputW, inputH, 10, showKeyboard ? 1.5 : 1, showKeyboard ? '#00f0ff' : '#1e2d42');
-            const hasCustom = !!customQuery.trim();
-            const inSize = sz(cv, 13.5), inOpt = { font: (hasCustom || showKeyboard) ? 'bold' : 'normal' };
-            const inputLabel = hasCustom ? (fitTail(cv, customQuery, inputW - 44, inSize, inOpt) + (showKeyboard ? '_' : '')) : (showKeyboard ? 'Typing custom question..._' : 'Ask Custom Question...');
-            cv.text(inputLabel, inputX + 18, inputY + inputH / 2 + inSize * 0.36, inSize, hasCustom ? '#ffffff' : (showKeyboard ? '#00f0ff' : '#94a3b8'), inOpt);
-            cv.target(inputX, inputY, inputW, inputH, () => {
-                showKeyboard = !showKeyboard;
-                render(true);
-            }, 'btn_custom_input', 10);
+            const locked = typingLocked();
+            if (locked) {
+                // driving: the box says so, dimmed, with the end of a question typed before (kept), and a tap only explains
+                const lSize = sz(cv, 12.5), lOpt = { font: 'bold' }, lHead = customQuery.trim() ? 'Locked while driving: ' : 'Typing locked while driving';
+                cv.roundRect(inputX, inputY, inputW, inputH, 10, '#0b111a');
+                cv.strokeRoundRect(inputX, inputY, inputW, inputH, 10, 1, '#1e2d42');
+                const lRoom = inputW - 36 - (customQuery.trim() ? cv.textWidth(lHead, lSize, lOpt) : 0);
+                cv.text(customQuery.trim() ? lHead + fitTail(cv, customQuery.trim(), lRoom, lSize, lOpt) : fitText(cv, lHead, inputW - 36, lSize, lOpt),
+                    inputX + 18, inputY + inputH / 2 + lSize * 0.36, lSize, '#64748b', lOpt);
+                cv.target(inputX, inputY, inputW, inputH, () => {
+                    notify(lockMsg());
+                    render(true);
+                }, 'btn_custom_input', 10);
+            } else {
+                cv.roundRect(inputX, inputY, inputW, inputH, 10, showKeyboard ? withAlpha('#00a3e0', 0.25) : '#0b111a');
+                cv.strokeRoundRect(inputX, inputY, inputW, inputH, 10, showKeyboard ? 1.5 : 1, showKeyboard ? '#00f0ff' : '#1e2d42');
+                const hasCustom = !!customQuery.trim();
+                const inSize = sz(cv, 13.5), inOpt = { font: (hasCustom || showKeyboard) ? 'bold' : 'normal' };
+                const inputLabel = hasCustom ? (fitTail(cv, customQuery, inputW - 44, inSize, inOpt) + (showKeyboard ? '_' : '')) : (showKeyboard ? 'Typing custom question..._' : 'Ask Custom Question...');
+                cv.text(inputLabel, inputX + 18, inputY + inputH / 2 + inSize * 0.36, inSize, hasCustom ? '#ffffff' : (showKeyboard ? '#00f0ff' : '#94a3b8'), inOpt);
+                cv.target(inputX, inputY, inputW, inputH, () => {
+                    showKeyboard = !showKeyboard;
+                    render(true);
+                }, 'btn_custom_input', 10);
+            }
 
             // Panel 2 (Right): Interactive Touch Keyboard OR Dialogue Stream
             if (showKeyboard) {
@@ -1222,6 +1146,14 @@ mgu.run({
 
             // follow-up chips along the bottom of the card after a real answer
             const chips = canFollowUp && !isThinking, chipH = sz(cv, 32), chipY = ry + rh - chipH - 12, chipSize = sz(cv, 12.5);
+            // while it answers: Cancel, where the follow-ups go (touch or the controller's focus)
+            if (isThinking) {
+                const w = cv.textWidth('CANCEL', chipSize, { font: 'bold' }) + sz(cv, 30), cx = rx + 24;
+                cv.roundRect(cx, chipY, w, chipH, 8, '#141f2e');
+                cv.strokeRoundRect(cx, chipY, w, chipH, 8, 1, '#94a3b8');
+                cv.text('CANCEL', cx + w / 2, chipY + chipH / 2 + chipSize * 0.36, chipSize, '#e2e8f0', { align: 'center', font: 'bold' });
+                cv.target(cx, chipY, w, chipH, cancelAnswer, 'cancel_answer', 8);
+            }
             if (chips) {
                 let cx = rx + 24;
                 FOLLOW_UPS.forEach((f, i) => {
@@ -1241,7 +1173,8 @@ mgu.run({
             const shown = isThinking ? currentResponse + '  ' + Math.floor((Date.now() - thinkStart) / 1000) + ' s' : currentResponse;
             // (about 0.42 em a character in the label font: the card's width, a little to spare)
             const lines = wrapLines(shown, Math.floor((rw - 64) / (size * 0.42)));
-            const maxVisibleLines = Math.floor((rh - 24 - (chips ? chipH + 18 : 0)) / lineH);
+            const bar = chips || isThinking;        // a row of buttons under the text
+            const maxVisibleLines = Math.floor((rh - 24 - (bar ? chipH + 18 : 0)) / lineH);
             dialogueRows = { count: lines.length, visible: maxVisibleLines };
             cv.scroll = true;
             const maxScroll = Math.max(0, lines.length - maxVisibleLines);
@@ -1265,7 +1198,7 @@ mgu.run({
 
             // Scrollbar & Page indicator when content exceeds card
             if (lines.length > maxVisibleLines) {
-                const sbX = rx + rw - 14, sbY = ry + 20, sbH = (chips ? chipY - ry - 6 : rh) - 40;
+                const sbX = rx + rw - 14, sbY = ry + 20, sbH = (bar ? chipY - ry - 6 : rh) - 40;
                 cv.roundRect(sbX, sbY, 4, sbH, 2, withAlpha(t.panelEdge, 0.4));
                 const thumbH = Math.max(24, Math.floor((maxVisibleLines / lines.length) * sbH));
                 const thumbY = sbY + Math.floor((dialogueScroll / maxScroll) * (sbH - thumbH));
@@ -1274,7 +1207,7 @@ mgu.run({
                 // Page badge
                 const curPage = Math.floor(dialogueScroll / maxVisibleLines) + 1;
                 const totPages = Math.ceil(lines.length / maxVisibleLines);
-                const textH = chips ? chipY - ry - 6 : rh;
+                const textH = bar ? chipY - ry - 6 : rh;
                 cv.text(`PAGE ${curPage}/${totPages}`, rx + rw - 24, ry + textH - 12, 12, t.dim, { align: 'right', font: 'num' });
 
                 // Touch targets to scroll
@@ -1302,7 +1235,8 @@ mgu.run({
             vi: 'de.bmw.infrastructure.VehicleInformation', tpms: 'de.bmw.infotainment.vehicle.TPMS', env: 'de.bmw.infrastructure.EnvironmentalInformation', kombi: 'de.bmw.infotainment.KombiIF',
             cond: 'de.bmw.infrastructure.VehicleCondition', veh: 'de.bmw.infotainment.vehicle.Vehicle', cc: 'de.bmw.infotainment.checkcontrol.CheckControlMaster', k2: 'de.bmw.infotainment.KombiInterface_2',
             tasu: 'com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu' };
-        const fix = (v, d) => (typeof v === 'number' && isFinite(v) ? v.toFixed(d || 0) : null);
+        // a number with d decimals; a value that rounds to zero has no minus sign (boost a hair under the outside air: "0.00", not "-0.00")
+        const fix = (v, d) => { if (typeof v !== 'number' || !isFinite(v)) return null; const s = v.toFixed(d || 0); return /^-0(\.0+)?$/.test(s) ? s.slice(1) : s; };
         let checking = null;                // 'engine' / 'faults' while a button's read runs
         /** a signal row: green with the value, or why there is none */
         function sigState(value, iface, field) {
@@ -1315,6 +1249,93 @@ mgu.run({
             if (sub && sub.error) return { c: 'red', v: 'error: ' + String(sub.error).slice(0, 24) };
             if (sub && !sub.available) return { c: 'amber', v: 'waiting for the car' };
             return { c: 'amber', v: 'no data yet' };
+        }
+        /**
+         * What Data check shows, source by source: { car, live, engine }, each [[label, { c, v }]] - c the state
+         * (green: there, amber: waiting, red: failed, grey: not on this car), v the value or why there is none.
+         * drawDataCheck draws it.
+         */
+        function dataCheckData() {
+            // the car's latest values: temperatures, gear and vehicle state come without a sample on a parked car
+            if (car) takeCar(car.data());
+            const g = (v) => (v === null || v === undefined || v === '' ? null : v);
+            const ok = (v, why) => (g(v) !== null ? { c: 'green', v: String(v) } : { c: why && why.c ? why.c : 'amber', v: (why && why.v) || 'not known yet' });
+
+            // 1. the car and the links
+            const d = vehicle.vin ? Vehicle.decodeVin(vehicle.vin) : null, u = vehicle.unitTypes();
+            const CONDS = { 1: 'parked', 2: 'parked', 3: 'parked, driver away', 5: 'parked, no ignition', 7: 'ignition on', 8: 'getting ready', 10: 'drive-ready', 12: 'switching off' };
+            const dtc = telemetry.dtcScan, units = telemetry.units || {};
+            const miss = Object.keys(missingList());
+            const link = diag ? (diag.available ? { c: 'green', v: 'ready' } : diag.error ? { c: 'red', v: 'not available' } : { c: 'amber', v: 'waiting' }) : { c: 'amber', v: 'not opened yet' };
+            const carRows = [
+                ['VIN (type part)', ok(d && d.descriptor + (vehicle.vinFrom ? ' · ' + vehicle.vinFrom : ''), { c: 'amber', v: 'not received' })],
+                ['Make, model year', ok(d && [d.brand, d.year].filter(Boolean).join(', '))],
+                ['Engine type', sigState(vehicle.engineType, IF.v2, 'statusVehiclePartType')],
+                ['Engine unit', ok(Vehicle.engineUnitName(u), { c: vehicle.tried ? 'grey' : 'amber', v: vehicle.tried ? 'not in the table' : 'not read yet' })],
+                ['Gearbox unit', ok(u[0x18], { c: vehicle.tried ? 'grey' : 'amber', v: vehicle.tried ? 'not in the table' : 'not read yet' })],
+                ['Vehicle state', sigState(CONDS[telemetry.condition], IF.cond, 'VehicleCondition')],
+                ['Engine', ok(engineState(), { v: 'not known' })],
+                ['Units', sigState(units.press || units.temp ? [units.press, units.temp, units.speed].filter(Boolean).join(' / ') : null, IF.veh, 'statusNewCurrentUnitsStatusExt')],
+                ['Diagnostic link', link],
+                ['Fault memory', dtc ? (dtc.error ? { c: 'red', v: dtc.error.slice(0, 34) } : { c: dtc.partial ? 'amber' : 'green', v: dtc.answered + ' units, ' + dtc.total + ' faults' + (dtc.partial ? ', partial' : '') }) : { c: 'amber', v: 'not read yet' }],
+                ['Check Control', sigState(Array.isArray(telemetry.checkControl) ? (telemetry.checkControl.length ? telemetry.checkControl.length + ' active' : 'none active') : null, IF.cc, 'basicList')],
+                ['Service list', sigState(Array.isArray(telemetry.service) ? (telemetry.service.length ? telemetry.service.length + ' items' : 'nothing listed') : null, IF.k2, 'cbsDataServiceList')],
+                ['AI', ai.isConfigured() ? { c: 'green', v: providerName() + (ai.modelLabel() ? ' · ' + ai.modelLabel() : '') } : { c: 'amber', v: 'not paired' }],
+                ['Internet', ai.hasInternet ? { c: 'green', v: 'online' } : { c: 'red', v: 'offline' }],
+                ['Left out at install', miss.length ? { c: 'grey', v: miss.length + ': ' + miss.map((k) => k.split('.').pop()).join(', ') } : { c: 'green', v: 'nothing' }],
+            ];
+
+            // 2. live signals
+            const tt = telemetry, c4 = (o, f) => (o ? ['fl', 'fr', 'rl', 'rr'].map((k) => fix(o[k], f)).join(' ') : null);
+            const both = (a, b) => (a === null && b === null ? null : [a === null ? '--' : a, b === null ? '--' : b].join(' / '));
+            // the selector and the gear, as Live Data shows them: P, R, N, D3; without the selector the gear alone
+            const gearText = tt.stage ? tt.stage + (tt.stage === 'D' && tt.gear > 0 ? tt.gear : '')
+                : typeof tt.gear === 'number' ? (tt.gear > 0 ? 'gear ' + tt.gear : tt.gear < 0 ? 'R' : 'N or P') : null;
+            const live = [
+                ['Speed', sigState(tt.speed !== null ? tt.speed + ' km/h' : null, IF.v2, 'statusCarSpeed2')],
+                ['Engine speed', sigState(tt.rpm !== null ? tt.rpm + ' rpm' : null, IF.cds, 'statusEngineSpeed2')],
+                ['Gear', sigState(gearText, IF.vi)],
+                ['Engine torque', sigState(tt.torque !== null ? tt.torque + ' Nm' : null, IF.fes, 'statusActualValueTorque2')],
+                ['Sport display (power, boost)', sigState(tt.powerPct !== null || tt.boost !== null ? [tt.powerPct !== null ? tt.powerPct + ' %' : '', tt.boost !== null ? fix(tt.boost, 2) + ' bar' : ''].filter(Boolean).join(', ') : null, IF.fes, 'statusVehicleDynamicEngine')],
+                ['Driving mode', sigState(tt.mode, IF.fes, 'statusFESVehicleDynamicSwitchHMI')],
+                ['Oil / coolant temperature', sigState(both(tt.oilTemp, tt.coolantTemp) && both(tt.oilTemp, tt.coolantTemp) + ' °C', IF.cds, 'statusEngineTemperature')],
+                ['Oil level', sigState(tt.oilLevel, IF.v2, 'statusOilDipstick2')],
+                ['Outside temperature', sigState(tt.ambient !== null ? fix(tt.ambient, 1) + ' °C' : null, IF.env, 'ExteriorTemperature')],
+                ['Tyre pressures (bar)', sigState(c4(tt.tyres, 1), IF.tpms, 'statusTyrePressure')],
+                ['Tyre temperatures (°C)', sigState(c4(tt.tyreTemps, 0), IF.tpms, 'statusTyreTemperature')],
+                ['Fuel / range', sigState(both(tt.fuelL !== null ? tt.fuelL + ' l' : null, tt.rangeKm !== null ? tt.rangeKm + ' km' : null), IF.kombi, 'statusRangeTankStatus')],
+                ['Odometer', sigState(tt.odoKm !== null ? tt.odoKm + ' km' : null, IF.kombi, 'statusRangeTankStatus')],
+                ['Trip average', sigState(tt.avgCons ? fix(tt.avgCons.value, 1) + ' ' + tt.avgCons.unit : null, IF.kombi, 'statusBordcomputerAverage')],
+                ['12 V battery charge', sigState(tt.batteryPct !== null ? tt.batteryPct + ' %' : null, IF.cds, 'statusBattery2')],
+                ['Start-stop / parking brake', sigState(tt.msa || tt.handbrake ? [tt.msa ? 'start-stop ' + tt.msa : '', tt.handbrake ? 'brake ' + tt.handbrake : ''].filter(Boolean).join(', ') : null, IF.cds2, 'statusPushButtonMSA2')],
+                ['Engine state signal', sigState(tt.engine, IF.cds, 'statusEngineStatus')],
+            ];
+
+            // 3. the engine computer (engine_snapshot.js)
+            const NAMES = { boostActual: 'Boost actual', boostTarget: 'Boost target', baro: 'Outside air pressure', iat: 'Intake air', loadActual: 'Load actual', loadTarget: 'Load target',
+                timing: 'Ignition timing', hpfp: 'High-pressure fuel', lpfp: 'Low-pressure fuel', gearboxOil: 'Gearbox oil', oil: 'Engine oil (unit)', v12: '12 V voltage', misfire: 'Misfires',
+                hvSoc: 'HV battery charge', hvSoh: 'HV battery health' };
+            const FMT = { boostActual: (v) => fix(v, 2) + ' bar', boostTarget: (v) => fix(v, 2) + ' bar', baro: (v) => fix(v) + ' kPa', iat: (v) => fix(v) + ' °C', loadActual: (v) => fix(v) + ' %',
+                loadTarget: (v) => fix(v) + ' %', timing: (v) => fix(v, 1) + '°', hpfp: (v) => fix(v) + ' bar', lpfp: (v) => fix(v, 1) + ' bar', gearboxOil: (v) => fix(v) + ' °C', oil: (v) => fix(v) + ' °C',
+                v12: (v) => fix(v, 2) + ' V', misfire: (v) => v.map((n) => (n === null ? '?' : n)).join(' ') + (telemetry.engineSnap && telemetry.engineSnap.values.misfirePartial ? ' (bank 1)' : ''), hvSoc: (v) => fix(v) + ' %', hvSoh: (v) => fix(v) + ' %' };
+            const RUN_ONLY = ['boostActual', 'boostTarget', 'loadActual', 'loadTarget', 'timing', 'misfire'];
+            const snapOff = telemetry.engineSnap && telemetry.engineSnap.engine === 'off';
+            const rep = snapshot ? snapshot.report() : Object.keys(NAMES).map((name) => ({ name }));
+            const engine = rep.map((r) => {
+                let st;
+                if (r.na) st = { c: 'grey', v: r.na };
+                else if (r.value !== undefined && r.value !== null) st = { c: 'green', v: FMT[r.name](r.value) + (r.via ? ' · ' + r.via : '') };
+                // the engine unit's oil temperature is only asked when the car's own signal has none
+                else if (r.name === 'oil' && telemetry.oilTemp !== null) st = { c: 'grey', v: 'not needed: car signal has it' };
+                else if (carAwake() === 'asleep') st = { c: 'grey', v: 'car asleep (ignition off)' };
+                else if (!diag || !diag.available) st = { c: diag && diag.error ? 'red' : 'amber', v: 'no diagnostic link' + (diag && diag.error ? '' : ' yet') };
+                else if (snapOff && RUN_ONLY.indexOf(r.name) >= 0) st = { c: 'grey', v: 'engine off: not read' };
+                else if ((r.name === 'hvSoc' || r.name === 'hvSoh') && snapshot && (snapshot.hvMissing || (telemetry.engineSnap && !hybridCar()))) st = { c: 'grey', v: 'no HV battery' };
+                else if (r.why) st = { c: r.fails >= 3 ? 'red' : 'amber', v: r.why + (r.fails ? ' (' + r.fails + 'x)' : '') };
+                else st = { c: 'amber', v: 'not read yet' };
+                return [NAMES[r.name], st];
+            });
+            return { car: carRows, live, engine };
         }
         function drawDataCheck(cv, t) {
             const ex = cv.extra || 0;
@@ -1329,82 +1350,14 @@ mgu.run({
                 cv.text(v, x + w, y, 13, st.c === 'grey' ? t.dim : '#e2e8f0', { align: 'right' });
             };
             const head = (x, label) => cv.text(label, x, top - 26, 14, '#00a3e0', { font: 'bold', spacing: 1 });
-            const g = (v) => (v === null || v === undefined || v === '' ? null : v);
-            const ok = (v, why) => (g(v) !== null ? { c: 'green', v: String(v) } : { c: why && why.c ? why.c : 'amber', v: (why && why.v) || 'not known yet' });
-
-            // 1. the car and the links
-            const x1 = 60, w1 = 460;
+            const D = dataCheckData();
+            const x1 = 60, w1 = 460, x2 = 560, w2 = 460, x3 = 1060, w3 = 470;
             head(x1, 'CAR & LINKS');
-            const d = vehicle.vin ? Vehicle.decodeVin(vehicle.vin) : null, u = vehicle.unitTypes();
-            const CONDS = { 1: 'parked', 2: 'parked', 3: 'parked, driver away', 5: 'parked, no ignition', 7: 'ignition on', 8: 'getting ready', 10: 'drive-ready', 12: 'switching off' };
-            const dtc = telemetry.dtcScan, units = telemetry.units || {};
-            const miss = Object.keys(missingList());
-            const link = diag ? (diag.available ? { c: 'green', v: 'ready' } : diag.error ? { c: 'red', v: 'not available' } : { c: 'amber', v: 'waiting' }) : { c: 'amber', v: 'not opened yet' };
-            [
-                ['VIN (type part)', ok(d && d.descriptor + (vehicle.vinFrom ? ' · ' + vehicle.vinFrom : ''), { c: 'amber', v: 'not received' })],
-                ['Make, model year', ok(d && [d.brand, d.year].filter(Boolean).join(', '))],
-                ['Engine type', sigState(vehicle.engineType, IF.v2, 'statusVehiclePartType')],
-                ['Engine unit', ok(u[0x12], { c: vehicle.tried ? 'grey' : 'amber', v: vehicle.tried ? 'not in the table' : 'not read yet' })],
-                ['Gearbox unit', ok(u[0x18], { c: vehicle.tried ? 'grey' : 'amber', v: vehicle.tried ? 'not in the table' : 'not read yet' })],
-                ['Vehicle state', sigState(CONDS[telemetry.condition], IF.cond, 'VehicleCondition')],
-                ['Engine', ok(engineState(), { v: 'not known' })],
-                ['Units', sigState(units.press || units.temp ? [units.press, units.temp, units.speed].filter(Boolean).join(' / ') : null, IF.veh, 'statusNewCurrentUnitsStatusExt')],
-                ['Diagnostic link', link],
-                ['Fault memory', dtc ? (dtc.error ? { c: 'red', v: dtc.error.slice(0, 34) } : { c: dtc.partial ? 'amber' : 'green', v: dtc.answered + ' units, ' + dtc.total + ' faults' + (dtc.partial ? ', partial' : '') }) : { c: 'amber', v: 'not read yet' }],
-                ['Check Control', sigState(Array.isArray(telemetry.checkControl) ? (telemetry.checkControl.length ? telemetry.checkControl.length + ' active' : 'none active') : null, IF.cc, 'basicList')],
-                ['Service list', sigState(Array.isArray(telemetry.service) ? telemetry.service.length + ' items' : null, IF.k2, 'cbsDataServiceList')],
-                ['AI', ai.isConfigured() ? { c: 'green', v: providerName() + (ai.modelLabel() ? ' · ' + ai.modelLabel() : '') } : { c: 'amber', v: 'not paired' }],
-                ['Internet', ai.hasInternet ? { c: 'green', v: 'online' } : { c: 'red', v: 'offline' }],
-                ['Left out at install', miss.length ? { c: 'grey', v: miss.length + ': ' + miss.map((k) => k.split('.').pop()).join(', ') } : { c: 'green', v: 'nothing' }],
-            ].forEach((r, i) => row(x1, w1, i, r[0], r[1]));
-
-            // 2. live signals
-            const x2 = 560, w2 = 460;
+            D.car.forEach((r, i) => row(x1, w1, i, r[0], r[1]));
             head(x2, 'LIVE SIGNALS');
-            const tt = telemetry, c4 = (o, f) => (o ? ['fl', 'fr', 'rl', 'rr'].map((k) => fix(o[k], f)).join(' ') : null);
-            [
-                ['Speed', sigState(tt.speed !== null ? tt.speed + ' km/h' : null, IF.v2, 'statusCarSpeed2')],
-                ['Engine speed', sigState(tt.rpm !== null ? tt.rpm + ' rpm' : null, IF.cds, 'statusEngineSpeed2')],
-                ['Gear', sigState(tt.stage || (tt.gear !== null ? String(tt.gear) : null), IF.vi)],
-                ['Engine torque', sigState(tt.torque !== null ? tt.torque + ' Nm' : null, IF.fes, 'statusActualValueTorque2')],
-                ['Sport display (power, boost)', sigState(tt.powerPct !== null || tt.boost !== null ? [tt.powerPct !== null ? tt.powerPct + ' %' : '', tt.boost !== null ? fix(tt.boost, 2) + ' bar' : ''].filter(Boolean).join(', ') : null, IF.fes, 'statusVehicleDynamicEngine')],
-                ['Driving mode', sigState(tt.mode, IF.fes, 'statusFESVehicleDynamicSwitchHMI')],
-                ['Oil / coolant temperature', sigState(tt.oilTemp !== null ? tt.oilTemp + ' / ' + tt.coolantTemp + ' °C' : null, IF.cds, 'statusEngineTemperature')],
-                ['Oil level', sigState(tt.oilLevel, IF.v2, 'statusOilDipstick2')],
-                ['Outside temperature', sigState(tt.ambient !== null ? fix(tt.ambient, 1) + ' °C' : null, IF.env, 'ExteriorTemperature')],
-                ['Tyre pressures (bar)', sigState(c4(tt.tyres, 1), IF.tpms, 'statusTyrePressure')],
-                ['Tyre temperatures (°C)', sigState(c4(tt.tyreTemps, 0), IF.tpms, 'statusTyreTemperature')],
-                ['Fuel / range', sigState(tt.fuelL !== null ? tt.fuelL + ' l / ' + tt.rangeKm + ' km' : null, IF.kombi, 'statusRangeTankStatus')],
-                ['Odometer', sigState(tt.odoKm !== null ? tt.odoKm + ' km' : null, IF.kombi, 'statusRangeTankStatus')],
-                ['Trip average', sigState(tt.avgCons ? fix(tt.avgCons.value, 1) + ' ' + tt.avgCons.unit : null, IF.kombi, 'statusBordcomputerAverage')],
-                ['12 V battery charge', sigState(tt.batteryPct !== null ? tt.batteryPct + ' %' : null, IF.cds, 'statusBattery2')],
-                ['Start-stop / parking brake', sigState(tt.msa || tt.handbrake ? [tt.msa ? 'start-stop ' + tt.msa : '', tt.handbrake ? 'brake ' + tt.handbrake : ''].filter(Boolean).join(', ') : null, IF.cds2, 'statusPushButtonMSA2')],
-                ['Engine state signal', sigState(tt.engine, IF.cds, 'statusEngineStatus')],
-            ].forEach((r, i) => row(x2, w2, i, r[0], r[1]));
-
-            // 3. the engine computer (engine_snapshot.js)
-            const x3 = 1060, w3 = 470;
-            head(x3, 'ENGINE COMPUTER');
-            const NAMES = { boostActual: 'Boost actual', boostTarget: 'Boost target', baro: 'Outside air pressure', iat: 'Intake air', loadActual: 'Load actual', loadTarget: 'Load target',
-                timing: 'Ignition timing', hpfp: 'High-pressure fuel', lpfp: 'Low-pressure fuel', gearboxOil: 'Gearbox oil', oil: 'Engine oil (unit)', v12: '12 V voltage', misfire: 'Misfires',
-                hvSoc: 'HV battery charge', hvSoh: 'HV battery health' };
-            const FMT = { boostActual: (v) => fix(v, 2) + ' bar', boostTarget: (v) => fix(v, 2) + ' bar', baro: (v) => fix(v) + ' kPa', iat: (v) => fix(v) + ' °C', loadActual: (v) => fix(v) + ' %',
-                loadTarget: (v) => fix(v) + ' %', timing: (v) => fix(v, 1) + '°', hpfp: (v) => fix(v) + ' bar', lpfp: (v) => fix(v, 1) + ' bar', gearboxOil: (v) => fix(v) + ' °C', oil: (v) => fix(v) + ' °C',
-                v12: (v) => fix(v, 2) + ' V', misfire: (v) => v.join(' '), hvSoc: (v) => fix(v) + ' %', hvSoh: (v) => fix(v) + ' %' };
-            const RUN_ONLY = ['boostActual', 'boostTarget', 'loadActual', 'loadTarget', 'timing', 'misfire'];
-            const snapOff = telemetry.engineSnap && telemetry.engineSnap.engine === 'off';
-            const rep = snapshot ? snapshot.report() : Object.keys(NAMES).map((name) => ({ name }));
-            rep.forEach((r, i) => {
-                let st;
-                if (r.value !== undefined && r.value !== null) st = { c: 'green', v: FMT[r.name](r.value) + (r.via ? ' · ' + r.via : '') };
-                else if (carAwake() === 'asleep') st = { c: 'grey', v: 'car asleep (ignition off)' };
-                else if (!diag || !diag.available) st = { c: diag && diag.error ? 'red' : 'amber', v: 'no diagnostic link' + (diag && diag.error ? '' : ' yet') };
-                else if (snapOff && RUN_ONLY.indexOf(r.name) >= 0) st = { c: 'grey', v: 'engine off: not read' };
-                else if ((r.name === 'hvSoc' || r.name === 'hvSoh') && snapshot && snapshot.hvMissing) st = { c: 'grey', v: 'no HV battery' };
-                else if (r.why) st = { c: r.fails >= 3 ? 'red' : 'amber', v: r.why + (r.fails ? ' (' + r.fails + 'x)' : '') };
-                else st = { c: 'amber', v: 'not read yet' };
-                row(x3, w3, i, NAMES[r.name], st);
-            });
+            D.live.forEach((r, i) => row(x2, w2, i, r[0], r[1]));
+            head(x3, liveOn() && diag && diag.available ? 'ENGINE COMPUTER · LIVE' : 'ENGINE COMPUTER');
+            D.engine.forEach((r, i) => row(x3, w3, i, r[0], r[1]));
 
             // buttons: read now (the same safety rules: steady car, never while asleep)
             const by = top + 15 * step + 6, bw = 225, bh = Math.min(52, sz(cv, 32));
@@ -1453,6 +1406,12 @@ mgu.run({
         async function render(force = false) {
             const now = Date.now();
             if (!force && now - lastRenderTime < 250) return;
+            // the car started moving with the keyboard open, typing or not: it closes at the next frame (within
+            // 250 ms of the speed crossing 8 km/h) and what was typed is kept for when the car stands
+            if (showKeyboard && typingLocked()) {
+                showKeyboard = false;
+                notify(lockMsg());
+            }
             const cv = ctx.canvas(W, H);
             // what the frame shows: unchanged, the frame isn't drawn again (a safety redraw every 2 s)
             const sig = [ai.hasInternet, ai.isConfigured(), showPhoneQr, showKeyboard, customQuery, activeCategory, selectedTopicIdx, currentPrompt, currentResponse,
@@ -1478,13 +1437,8 @@ mgu.run({
                 drawMainCopilot(cv, t, now);
             }
 
-            // G-Series Live Cockpit frame tabs along the top: clean single title + live status badges
-            const ml = ai.modelLabel();
-            const provName = providerName().toUpperCase() + (ml ? ' · ' + ml : '');
-            G.frame(cv, t, PAGES, page, [
-                { text: 'READ-ONLY SAFE', color: '#2af575' },
-                { text: ai.isConfigured() ? `${provName} ONLINE` : 'SETUP REQUIRED', color: ai.isConfigured() ? '#00a3e0' : '#ffb703' }
-            ]);
+            // the page tabs along the top, no status chips: the pages show their own state
+            G.frame(cv, t, PAGES, page);
 
             // Global Notification banner
             if (statusMsg && (now - statusTime < 3500)) {
@@ -1525,6 +1479,7 @@ mgu.run({
         ctx.onTab((i) => {
             page = i === 1 || i === 2 ? i : 0;
             showKeyboard = false;
+            engineLive(page === 1);
             return render(true);
         });
 
@@ -1532,6 +1487,9 @@ mgu.run({
         // ---- lifecycle: nothing runs while M-Copilot is not on screen; everything stops on exit
         function foreground() {
             clearLive();
+            // back on screen the speed is unknown until the car sends it again: a keyboard left open would take
+            // keys meanwhile, perhaps while driving, so it comes back closed (the typed text is kept)
+            showKeyboard = false;
             startCar();
             loadSampling(true);
             cloudPair.startPolling();
@@ -1539,9 +1497,11 @@ mgu.run({
             // phone page opened while the car is off; at most every 6 hours
             if (ai.isConfigured() && Date.now() - lastHello > 6 * 3600 * 1000) hello();
             ai.checkInternetConnection().catch(() => {});
+            engineLive(page === 1);
             render(true).catch(() => {});
         }
         function background() {
+            engineLive(false);
             stopCar();
             loadSampling(false);
             cloudPair.stopPolling();

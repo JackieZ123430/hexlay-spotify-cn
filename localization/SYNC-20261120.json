@@ -1,0 +1,11 @@
+{
+  "previousOwnerHead": "7ce882dad7c3f5ff944560fd73aaf2d96b852d70",
+  "currentLocalizedUpstream": "6a7bc2d8693cd3abec3484b08b347d35fba6965d",
+  "conflictPolicy": "Current upstream behavior and refreshed localization retained for conflicts; clean owner changes preserved.",
+  "resolvedToCurrentSource": [
+    "README.md",
+    "apps/spotify/main.js",
+    "kit/tools/locale-revisions.json",
+    "kit/tools/localize.py"
+  ]
+}

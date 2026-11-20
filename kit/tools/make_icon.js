@@ -123,6 +123,14 @@ if (glyph === 'gauge') {
     c.arc(70, 80, 36, 42, -50, 50, W, { round: true });
     c.arc(70, 86, 26, 31, -48, 48, W, { round: true });
     c.arc(70, 92, 16, 20, -45, 45, W, { round: true });
+} else if (glyph === 'memory') {
+    // a memory module: board, chips, contact pins, one red bar (memory in use)
+    c.strokeRoundRect(10, 34, 120, 62, 6, 5, W);
+    for (let i = 0; i < 4; i++) c.roundRect(22 + i * 25, 46, 18, 24, 2, W);
+    c.fillRect(22, 78, 96, 8, '#3a3d48');
+    c.fillRect(22, 78, 62, 8, A);
+    for (let i = 0; i < 10; i++) c.fillRect(18 + i * 11, 100, 6, 12, W);
+    c.fillRect(66, 96, 8, 6, '#000000');     // the notch
 } else if (glyph === 'doom') {
     // horned demon skull, red eyes
     c.convex([[30, 52], [14, 14], [46, 38]], W);            // horns

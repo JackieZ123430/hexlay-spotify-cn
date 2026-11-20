@@ -41,15 +41,6 @@ const THEMES = {
         glow: '#ff9d0050', stripes: ['#ff9d00'], oil: '#ff9d00', bar: '#ff9d00', sel: '#ff9d00', marker: '#ffe2b0', ramp: ['#8a4b00', '#ff9d00', '#ffd27a'],
         hotRamp: ['#8a4b00', '#ff9d00', '#ff9d00', '#ff6a1f', '#ff3b1f'],
     },
-    spotify: {
-        name: 'Spotify Green',
-        bg: '#050708', panelTop: '#0e1614', panelBottom: '#070c0a', panelEdge: '#1a2e24',
-        tab: '#ffffff', track: '#14201a', tick: '#385547', text: '#ffffff', dim: '#8da89b',
-        accent: '#1db954', accent2: '#1ed760', ok: '#1db954', warn: '#ffb31a', crit: '#ff3b30', cold: '#3d8bff',
-        glow: '#1db95444', stripes: ['#1db954', '#1ed760'], oil: '#1db954', bar: '#1db954', sel: '#1db954', marker: '#ffffff',
-        ramp: ['#0d4220', '#1db954', '#2af575'],
-        hotRamp: ['#0d4220', '#16803b', '#1db954', '#1ed760', '#55ff88'],
-    },
 };
 
 function theme(id) { return THEMES[id] || THEMES.m_tricolour; }

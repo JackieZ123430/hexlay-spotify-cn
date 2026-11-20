@@ -487,13 +487,6 @@ class SpotifyClient {
         }
     }
 
-    reloadAuth() {
-        this._loadAuth();
-        if (this.isAuthenticated()) {
-            this.initialFetch();
-        }
-    }
-
     logout() {
         this.token = null;
         this.refreshToken = null;

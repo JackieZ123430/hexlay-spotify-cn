@@ -75,7 +75,12 @@ async function watch(iface, instance, handlers, log, opts) {
             }
         }
         if (p.isAvailable && p.isAvailable()) { res.available = true; fetchAll(); }
-        if (opts && opts.pollMs) setInterval(() => { if (res.available) setImmediate(fetchAll); }, opts.pollMs);
+        if (opts && opts.pollMs) {
+            // ended with the subscription: an app that subscribes again on each visit leaves no timer behind
+            let ended = false;
+            const poll = setInterval(() => { if (res.available) setImmediate(() => { if (!ended) fetchAll(); }); }, opts.pollMs);
+            res.shutdown = () => { ended = true; clearInterval(poll); return Promise.resolve().then(() => p.shutdown && p.shutdown()).catch(() => {}); };
+        }
     } catch (e) {
         res.error = String(e);
         if (log) log.warn('signals ' + iface + ': ' + e);

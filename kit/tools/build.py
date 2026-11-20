@@ -244,6 +244,9 @@ def build_ui(spec, language='en'):
                 label = it[2] if len(it) > 2 else ''
                 if kindi == 'twocol':
                     rows = [{'Text1stCol': {'value': label, 'type': 'Text'}, 'Text2ndCol': {'value': '', 'type': 'Text'}}]
+                elif kindi == 'tworow':
+                    # (as the settings' two-row buttons: the app fills both rows at run time)
+                    rows = [{'Text1stRow': {'value': label, 'type': 'Text'}, 'Text2ndRow': {'value': '', 'type': 'Text'}}]
                 elif kindi in ('graphic',):
                     rows = [{'Graphic': {'value': '', 'type': 'Text'}}]
                 elif kindi == 'laptimer':
@@ -527,7 +530,7 @@ def build(app_id, language='en'):
             body = file.read()
         with open(entry, 'wb') as file:
             file.write(credit.encode('utf-8') + body)
-    rt_spec = {k: spec.get(k) for k in ('id', 'title', 'version', 'screens', 'settings', 'config', 'startWidget')}
+    rt_spec = {k: spec.get(k) for k in ('id', 'title', 'version', 'screens', 'settings', 'config', 'startWidget', 'nativeSettings')}
     rt_spec['mguInternet'] = bool(spec.get('mguInternet') or spec.get('internet'))
     rt_spec['stateIds'] = state_ids
     json.dump(rt_spec, open(os.path.join(src, 'javascript', 'kit', 'app-spec.json'), 'w', encoding='utf-8', newline='\n'), indent=1)

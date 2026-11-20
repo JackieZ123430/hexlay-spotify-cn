@@ -77,6 +77,43 @@ body[data-dock="bottom"] #log { flex: 1 1 0px; min-height: 260px; max-height: no
 .pk-tile.busy { opacity: .55; }
 .pk-bar { position: absolute; right: calc(var(--u) * 40); top: calc(var(--u) * 100); bottom: calc(var(--u) * 30); width: calc(var(--u) * 4); pointer-events: none; }
 .pk-thumb { position: absolute; left: 0; width: 100%; background: #d9d9d9; border-radius: calc(var(--u) * 2); }
+/* the HMI's own settings screen (an RHMI LT_State_Wide list: build.py settings_items): the app's surface is hidden under it,
+   as on the car; its title in the strip, rows of 86 px from the back column to the screen's edge, a hairline between them,
+   the controller's focus a blue bar with a light edge, a drop-down's values as their own list with the chosen one marked */
+#stage.ns #screen, #stage.ns #soft { visibility: hidden; }
+#hmiset { inset: 0; pointer-events: none; color: #fff; }
+.ns-title { position: absolute; left: calc(var(--u) * 108); top: 0; height: calc(var(--u) * 78); line-height: calc(var(--u) * 80); font-size: calc(var(--u) * 33); font-weight: 300; white-space: nowrap; }
+.ns-body { position: absolute; left: calc(var(--u) * 84); top: calc(var(--u) * 80); right: 0; bottom: 0; overflow: hidden; pointer-events: auto;
+  background: linear-gradient(#0b1724, #000 45%); }
+.ns-list { padding: calc(var(--u) * 10) calc(var(--u) * 64) calc(var(--u) * 10) calc(var(--u) * 40); will-change: transform; }
+.ns-row { position: relative; display: flex; align-items: center; gap: calc(var(--u) * 24); height: calc(var(--u) * 86); padding: 0 calc(var(--u) * 26); box-sizing: border-box;
+  border-bottom: calc(var(--u) * 1) solid #ffffff24; cursor: pointer; }
+.ns-row.focus { background: linear-gradient(#1d64c49e, #1d64c461); box-shadow: inset 0 0 0 calc(var(--u) * 2) #5fa8ff; border-radius: calc(var(--u) * 3); border-bottom-color: transparent; }
+.ns-row.info { cursor: default; }
+.ns-text { flex: 1; min-width: 0; }
+.ns-label, .ns-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3; }
+.ns-label { font-size: calc(var(--u) * 30); }
+.ns-sub { font-size: calc(var(--u) * 22); color: #8e9aa7; margin-top: calc(var(--u) * 1); }
+.ns-value { font-size: calc(var(--u) * 26); color: #8e9aa7; white-space: nowrap; }
+.ns-chev { width: calc(var(--u) * 12); height: calc(var(--u) * 12); border: solid #8e9aa7; border-width: calc(var(--u) * 2) calc(var(--u) * 2) 0 0; transform: rotate(45deg); margin-right: calc(var(--u) * 6); flex: none; }
+.ns-radio, .ns-check { flex: none; width: calc(var(--u) * 30); height: calc(var(--u) * 30); box-sizing: border-box; border: calc(var(--u) * 2) solid #c9d1da; position: relative; }
+.ns-radio { border-radius: 50%; }
+.ns-check { border-radius: calc(var(--u) * 3); }
+.ns-radio.on { border-color: #5fa8ff; }
+.ns-radio.on::after { content: ''; position: absolute; inset: calc(var(--u) * 6); border-radius: 50%; background: #3f8ef0; }
+.ns-check.on { border-color: #5fa8ff; background: #3f8ef0; }
+.ns-check.on::after { content: ''; position: absolute; left: calc(var(--u) * 8); top: calc(var(--u) * 2); width: calc(var(--u) * 8); height: calc(var(--u) * 15); border: solid #fff; border-width: 0 calc(var(--u) * 3) calc(var(--u) * 3) 0; transform: rotate(45deg); }
+.ns-bar { position: absolute; right: calc(var(--u) * 28); top: calc(var(--u) * 100); bottom: calc(var(--u) * 24); width: calc(var(--u) * 4); }
+.ns-bar::before { content: ''; position: absolute; left: calc(var(--u) * 1.5); width: calc(var(--u) * 1); top: 0; bottom: 0; background: #ffffff24; }
+.ns-thumb { position: absolute; left: 0; width: 100%; background: #ffffffc7; border-radius: calc(var(--u) * 2); }
+/* labels (text, text3): not focusable, wrapped; a header: a section's title; a scroll label: its whole text */
+.ns-row.k-text, .ns-row.k-text3, .ns-row.k-scroll, .ns-row.k-header { height: auto; min-height: calc(var(--u) * 70); padding-top: calc(var(--u) * 16); padding-bottom: calc(var(--u) * 16); }
+.ns-row.k-text .ns-label, .ns-row.k-text3 .ns-label, .ns-row.k-scroll .ns-label { white-space: pre-line; font-size: calc(var(--u) * 26); color: #c9d1da; }
+.ns-row.k-text3 .ns-label { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.ns-row.k-scroll .ns-label { color: #fff; font-size: calc(var(--u) * 28); line-height: 1.5; }
+.ns-row.k-header { min-height: calc(var(--u) * 60); border-bottom: calc(var(--u) * 1) solid #ffffff40; }
+.ns-row.k-header .ns-label { font-size: calc(var(--u) * 24); color: #8e9aa7; font-weight: 300; }
+.ns-pic { max-width: 100%; height: calc(var(--u) * 300); object-fit: contain; }
 #bgimg { inset: 0; width: 100%; height: 100%; object-fit: cover; }
 /* the HMI's own image component of a canvas screen (124, 82, 1600 x 520): the software path draws there */
 #soft { left: 6.458%; top: 11.389%; width: 83.333%; height: 72.222%; }

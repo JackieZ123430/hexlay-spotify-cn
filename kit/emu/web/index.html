@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MGU Emulator</title>
-<link rel="stylesheet" href="emu.css?v=mc116">
+<link rel="stylesheet" href="emu.css?v=ns5">
 </head>
 <body data-dock="right">
 <main id="main">
@@ -40,6 +40,8 @@
       <div class="pk-body"><div class="pk-grid"></div></div>
       <div class="pk-bar"><div class="pk-thumb"></div></div>
     </div>
+    <!-- the HMI's own screens (the app's native states: menus, lists, settings), drawn as the HMI draws them: emu-app.js -->
+    <div id="hmiset" role="listbox" aria-label="The app's native screen" hidden><div class="ns-title"></div><div class="ns-body"><div class="ns-list"></div></div><div class="ns-bar"><div class="ns-thumb"></div></div></div>
     <div id="overlay" hidden></div>
     <div id="toast" hidden></div>
   </div>
@@ -109,6 +111,6 @@
     <pre id="log"></pre>
   </section>
 </aside>
-<script type="module" src="emu-app.js?v=mc116"></script>
+<script type="module" src="emu-app.js?v=ns5"></script>
 </body>
 </html>

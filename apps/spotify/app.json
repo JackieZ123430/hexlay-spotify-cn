@@ -2,7 +2,7 @@
   "id": "spotify",
   "title": "Spotify",
   "description": "Spotify Connect cockpit player and library browser for BMW iDrive 7",
-  "version": "1.0.23",
+  "version": "1.0.31",
   "vendor": "custom",
   "loggingId": "OASP",
   "iconGlyph": "music",
@@ -20,8 +20,8 @@
     }
   ],
   "settings": [
-    {"key": "theme", "label": "Colour theme", "type": "choice", "default": "spotify",
-     "options": [["spotify", "Spotify Green"], ["m_tricolour", "M Tricolour"], ["m_red", "M Red"], ["ice", "Ice White"], ["amber", "Night Amber"]]},
+    {"key": "theme", "label": "Colour theme", "type": "choice", "default": "m_tricolour", "aliases": {"spotify": "m_tricolour", "idrive": "m_tricolour", "idrive_red": "m_tricolour"},
+     "options": [["m_red", "M Red"], ["m_tricolour", "M Tricolour"], ["ice", "Ice White"], ["amber", "Night Amber"]]},
     {"key": "demo", "label": "Playback mode", "type": "choice", "default": "off",
      "options": [["off", "Online Mode (Default)"], ["on", "Demo Mode (Offline)"]]},
     {"key": "screen", "label": "Screen size", "type": "choice", "default": "auto",

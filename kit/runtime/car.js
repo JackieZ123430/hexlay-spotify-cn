@@ -2,8 +2,10 @@
 /**
  * car.js - the common driving signals, scaled, with demo fallback.
  *
- *   const car = new Car(ctx, ['rpm', 'speed', 'accel', 'temps', 'gear', 'torque'], extra);
+ *   const car = new Car(ctx, ['rpm', 'speed', 'accel', 'temps', 'gear', 'torque'], extra, opts);
  *   extra (optional) = { iface: { field: fn } }, more fields on the same watches (one proxy per interface)
+ *   opts.poll (optional) = { iface: ms }, read that interface's fields again this often (fields a car may
+ *   not notify: TPMS, KombiIF ...; see signals.watch pollMs)
  *   car.setRedline(rpm) -> the demo drive revs to this rpm (default 7000)
  *   car.data()      -> { rpm, speed, gLong, gLat, coolant, oil, gear, torque, demo }
  *   car.onSample(fn)-> fn(data, tMs) on every new speed/rpm/accel sample (also in demo, 20 Hz)
@@ -65,6 +67,11 @@ const SIGNALS = {
     condition: ['de.bmw.infrastructure.VehicleCondition', 'VehicleCondition'],
 };
 
+/* No engine runs below this. A hybrid's engine stopping leaves its last value of the run-down as
+ * the signal (160 rpm seen with the engine off), so anything lower reads as stopped. */
+const ENGINE_STOPPED_RPM = 400;
+const engineRpm = (v) => (typeof v === 'number' && v < ENGINE_STOPPED_RPM ? 0 : v);
+
 /**
  * Learns the gearbox from rpm/speed ratios (one cluster per gear) so a gear
  * can be shown even when the car doesn't publish statusGearboxDrive.
@@ -84,7 +91,7 @@ class GearGuess {
 }
 
 class Car {
-    constructor(ctx, groups, extra) {
+    constructor(ctx, groups, extra, opts) {
         this.ctx = ctx; this.log = ctx.log;
         const over = (ctx.spec.config && ctx.spec.config.scaling) || {};
         // per-signal merge: an override of only `factor` keeps the default `invalid` / `invalidFrom`
@@ -108,7 +115,7 @@ class Car {
         };
         const watches = {};
         const add = (iface, field, fn) => { (watches[iface] = watches[iface] || {})[field] = fn; };
-        if (groups.includes('rpm')) add('de.bmw.infotainment.vehicle.CDS', 'statusEngineSpeed2', (v) => put('rpm', sc('rpm', v.actualValueRPMEngineCrankshaft), true));
+        if (groups.includes('rpm')) add('de.bmw.infotainment.vehicle.CDS', 'statusEngineSpeed2', (v) => put('rpm', engineRpm(sc('rpm', v.actualValueRPMEngineCrankshaft)), true));
         if (groups.includes('temps')) add('de.bmw.infotainment.vehicle.CDS', 'statusEngineTemperature', (v) => { put('coolant', sc('temp', v.temperatureEngineDrive)); put('oil', sc('temp', v.temperatureEngineOilDrive)); });
         if (groups.includes('speed')) add('de.bmw.infotainment.vehicle.Vehicle2', 'statusCarSpeed2', (v) => put('speed', sc('speed', v.speedVehicleCentreOfGravity), true));
         if (groups.includes('accel')) {
@@ -139,7 +146,8 @@ class Car {
         this.subs = [];
         this.t0 = Date.now();
         this.stopped = false;
-        Object.keys(watches).forEach((iface) => ctx.signals.watch(iface, '1', watches[iface], this.log)
+        const poll = (opts && opts.poll) || {};
+        Object.keys(watches).forEach((iface) => ctx.signals.watch(iface, '1', watches[iface], this.log, poll[iface] ? { pollMs: poll[iface] } : undefined)
             .then((s) => {
                 if (this.stopped) { s.shutdown(); return; }       // stop() came first
                 this.subs.push(s);

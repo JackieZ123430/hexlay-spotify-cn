@@ -172,6 +172,8 @@ def build_ui(spec, language='en'):
 
     def settings_items(items):
         for s in spec['settings']:
+            if s.get('hidden'):
+                continue    # kept by the app itself, never on a screen (as upstream's kit)
             name = 'SET_' + s['key'].upper()
             if s['type'] == 'bool':
                 items.append(comp('checkbox', name, rows=[text_row('SET_' + s['key'], s['label'])]))

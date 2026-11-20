@@ -8,28 +8,27 @@
  * 7 ignition, 8 starting, 10 drive-ready, 12 ending) it matches the position to a road twice a second and shows
  * the limit. Parked or locked (WOHNEN, PARKEN...), it stops: the position and speed subscriptions are dropped, the
  * cluster-render layers go (the HUD and the cluster are given back) and no timer runs; only the power state stays
- * subscribed, so it wakes with the car.
+ * subscribed, so it wakes with the car. Switched off on its page, it idles the same way whatever the car does.
  *
- * The app's page: the limit now, where it comes from, and a Details tab (sources, the matched road, the outputs).
+ * The app's page is the HMI's own list (no GPU renderer), as Maps on cluster's: what it shows now, where the
+ * position comes from and where the sign goes, the map's date, and the one switch. The rest of the settings (sign
+ * sizes and places, the over-the-limit colour, the defaults for roads without a limit) are kept hidden with their
+ * defaults (app.json "hidden").
  */
 const fs = require('fs');
 const path = require('path');
 const mgu = require('./kit/mgu');
-const G = require('./kit/gauges');
-const { withAlpha } = require('./kit/canvas');
 const Car = require('./kit/car');
 const { LimitPack, F, CLASS } = require('./limitpack');
 const { Matcher } = require('./matcher');
 const { Position, DemoDrive } = require('./position');
 const { Outputs } = require('./outputs');
-const { paintSign } = require('./sign');
 
 const APP_ID = 'speed_limit';
 const TICK_MS = 500;
 const VIEW_HOLD_MS = 8000;
 const ACTIVE = { 7: true, 8: true, 10: true, 12: true };
 const COND_NAMES = { 1: 'parked (bus off)', 2: 'parked', 3: 'stand-by', 5: 'parked, living', 7: 'ignition on', 8: 'starting', 10: 'drive-ready', 12: 'switching off' };
-const W = 1600, H = 520;
 
 /* ---------- the engine: runs with or without the app's screens ---------- */
 class Engine {
@@ -47,6 +46,7 @@ class Engine {
         this.demo = this.settings.get('demo') === 'on' && this.pack ? new DemoDrive(this.pack, { way: this.settings.get('demoWay'), speed: this.settings.get('demoSpeed') }) : null;
         this.outputs = new Outputs(APP_ID, this.log, this.settings);
         this.condition = undefined;
+        this.carOn = undefined;     // from the power state; undefined: not known (then it runs)
         this.active = false;
         this.timer = null;
         this.res = null;
@@ -60,6 +60,7 @@ class Engine {
         this.settings.onChange((k) => {
             if (/^def/.test(k) && this.matcher) this.matcher.setDefaults(this.defaults());
             if (k === 'record' && this.settings.get('record') !== 'on') this._recClose();
+            if (k === 'enabled') this._evaluate();
             this.outputs.update(this.view, Date.now());
         });
     }
@@ -75,30 +76,36 @@ class Engine {
             VehicleCondition: (v) => this._condition(Car.conditionOf(v && v.statusConditionVehicle)),
         }, this.log)).catch((e) => ({ error: String(e) }));
         this.condSub = sub;
-        if (this.demo) { this.log.info('demo drive (no car)'); this._setActive(true); return; }
-        if (sub && sub.error) this.log.warn('power state not available (' + sub.error + '): running while the app runs');
+        if (this.demo) { this.log.info('demo drive (no car)'); this.carOn = true; }
+        else if (sub && sub.error) this.log.warn('power state not available (' + sub.error + '): running while the app runs');
         // no power state yet: start; the first value stops it again if the car is parked
-        if (this.condition === undefined) this._setActive(true);
+        this._evaluate();
     }
+
+    enabled() { return this.settings.get('enabled') !== false; }
+
+    /** Run while switched on and the car is on (or its state is not known). */
+    _evaluate() { this._setActive(this.enabled() && this.carOn !== false); }
 
     _condition(c) {
         if (c === undefined || c === this.condition) return;
         this.condition = c;
         this.log.info('power state ' + c + ' (' + (COND_NAMES[c] || '?') + ')');
-        this._setActive(!!ACTIVE[c]);
+        if (!this.demo) this.carOn = !!ACTIVE[c];
+        this._evaluate();
     }
 
     _setActive(on) {
         if (on === this.active) return;
         this.active = on;
         if (on) {
-            this.log.info('car on: matching');
+            this.log.info('on: matching');
             this.position.start().catch((e) => this.log.warn('position: ' + e));
             this.outputs.start();
             if (this.matcher) this.matcher.reset();
             this.timer = setInterval(() => this._tick(), TICK_MS);
         } else {
-            this.log.info('car off: idle (subscriptions dropped, HUD and cluster given back)');
+            this.log.info((this.enabled() ? 'car off' : 'switched off') + ': idle (subscriptions dropped, HUD and cluster given back)');
             clearInterval(this.timer); this.timer = null;
             this.position.stop().catch(() => {});
             this.outputs.stop();
@@ -178,71 +185,41 @@ async function background(bg) {
     return engine;
 }
 
-/* ---------- the page ---------- */
-function fmt(v, d) { return v == null || !isFinite(v) ? '-' : Number(v).toFixed(d == null ? 0 : d); }
-function ago(ms) { return ms == null ? '-' : ms < 1000 ? 'now' : (ms / 1000).toFixed(0) + ' s ago'; }
-
-function describe(engine) {
-    const r = engine.res;
-    if (!engine.pack) return { title: 'No map', sub: engine.packError };
-    if (!engine.active) return { title: 'Car off', sub: 'Idle: nothing is read or shown until the car is switched on.' };
-    if (!r) return { title: 'Starting', sub: '' };
-    const road = r.cls >= 0 ? CLASS[r.cls].replace('_', ' ') + (r.flags & F.URBAN ? ', in a settlement' : '') + (r.flags & F.TUNNEL ? ', tunnel' : '') : '';
-    switch (r.state) {
-    case 'match': return { title: r.inferred ? 'Default for this road' : 'Signposted limit', sub: road + (r.inferred ? ': no limit on the map, the ' + (r.cls === 7 ? 'living street' : r.cls === 0 ? 'motorway' : r.flags & F.URBAN ? 'settlement' : 'outside settlements') + ' default' : '') };
-    case 'hold': return { title: 'Holding the last limit', sub: road + ': no position for a moment' };
-    case 'none': return { title: 'No road here', sub: 'No road on the map within 25 m in the direction of travel.' };
-    case 'outside': return { title: 'Outside the map', sub: 'The map covers ' + (engine.pack.meta.region || 'one region') + ' only.' };
-    default: return { title: 'Waiting for a position', sub: 'The car has not given a position yet.' };
+/* ---------- the page: the HMI's own list (app.json screen "menu") ---------- */
+// (ASCII: the HMI's list rows take the app's strings; the kit's fonts are not used here)
+function nowText(engine) {
+    const r = engine.res, v = engine.view;
+    if (!engine.pack) return 'No map: ' + engine.packError;
+    if (!engine.enabled()) return 'Off';
+    if (!engine.active) return 'Car off: nothing is read or shown';
+    if (v) {
+        const road = r && r.cls >= 0 ? ', ' + CLASS[r.cls].replace('_', ' ') + (r.flags & F.URBAN ? ' in a settlement' : '') : '';
+        return 'Now: ' + v.limit + ' km/h' + (v.inferred ? ' (default, no limit on the map)' : '') + road;
     }
+    if (!r || r.state === 'nofix') return 'Waiting for a position';
+    if (r.state === 'outside') return 'Outside the map (' + (engine.pack.meta.region || '') + ')';
+    return 'No road here';
 }
 
-function drawNow(cv, t, engine) {
-    const v = engine.view, d = describe(engine);
-    const cx = 330, cy = 250, r = 150;
-    if (v) paintSign(cv, cx, cy, r, v.limit, v);
-    else { cv.circle(cx, cy, r, withAlpha('#ffffff', 0.06)); cv.arc(cx, cy, r * 0.8, r, 0, 360, withAlpha('#ffffff', 0.18)); cv.text('--', cx, cy + 40, 110, t.dim, { literal: true, font: 'bold', align: 'center' }); }
-    const x = 620;
-    cv.text(d.title, x, 170, 44, t.text, { font: 'bold' });
-    if (d.sub) cv.text(d.sub, x, 222, 24, t.dim, { literal: true });
-    const sp = engine.speed;
-    cv.text('Speed', x, 300, 22, t.dim);
-    cv.text(sp == null ? '-' : fmt(sp) + ' km/h', x, 345, 40, v && v.over ? '#ff4d4f' : t.text, { font: 'bold', literal: true });
-    const f = engine.fix;
-    cv.text('Position', x + 360, 300, 22, t.dim);
-    cv.text(f ? ({ nav: 'Navigation', gnss: 'GPS', demo: 'Demo drive' }[f.source] || f.source) : 'none', x + 360, 345, 40, t.text, { font: 'bold', literal: true });
-    const o = engine.outputs.diag(), s = engine.settings;
-    const hud = s.get('hud') === 'off' ? 'off' : o.connected ? 'on' : 'waiting for cluster-render';
-    const map = s.get('cluster') === 'off' ? 'off' : s.get('cluster') === 'always' ? 'always' : o.mapBusy ? 'with the phone map' : 'when the phone map shows';
-    cv.text('HUD: ' + hud + '      Cluster: ' + map, x, 420, 22, t.dim, { literal: true });
-    cv.text('Map data: ' + (engine.pack ? engine.pack.describe() + ', OpenStreetMap contributors (ODbL)' : '-'), x, 456, 18, t.dim, { literal: true });
+function whereText(engine) {
+    if (!engine.enabled() || !engine.active) return '';
+    const f = engine.fix, o = engine.outputs.diag(), s = engine.settings;
+    const src = f ? ({ nav: 'navigation', gnss: 'GPS', demo: 'demo drive' }[f.source] || f.source) : 'none';
+    let out;
+    if (!o.connected) out = 'cluster-render not running (install Maps on cluster)';
+    else {
+        const parts = [];
+        if (s.get('hud') !== 'off') parts.push('HUD');
+        if (s.get('cluster') === 'always' || (s.get('cluster') === 'map' && o.mapBusy)) parts.push('cluster');
+        else if (s.get('cluster') === 'map') parts.push('cluster with the phone map');
+        out = parts.join(', ') || 'nowhere';
+    }
+    return 'Position: ' + src + '. Shown on: ' + out;
 }
 
-function drawDetails(cv, t, engine) {
-    const p = engine.position.diag(), r = engine.res || {}, f = engine.fix, o = engine.outputs.diag(), now = Date.now();
-    const rows = [
-        ['Power state', engine.condition === undefined ? 'not known' : engine.condition + ' (' + (COND_NAMES[engine.condition] || '?') + ')', engine.active ? 'active' : 'idle'],
-        ['Navigation position', p.avail.nav ? 'available' : 'not available', p.counts.nav + ' ok, ' + p.counts.navInvalid + ' invalid' + (p.errors.nav ? ' - ' + p.errors.nav : '')],
-        ['GPS (GPSData)', p.avail.gnss ? 'available' : 'not available', p.counts.gnss + ' ok, ' + p.counts.gnssInvalid + ' invalid, quality ' + (p.quality == null ? '-' : '0x' + p.quality.toString(16)) + (p.errors.gnss ? ' - ' + p.errors.gnss : '')],
-        ['Speed', engine.speed == null ? '-' : fmt(engine.speed, 1) + ' km/h', p.counts.speed + ' values' + (p.errors.speed ? ' - ' + p.errors.speed : '')],
-        ['Fix', f ? fmt(f.lat, 6) + ', ' + fmt(f.lon, 6) : '-', f ? f.source + ', ' + ago(f.age) + ', heading ' + fmt(engine.matcher && engine.matcher.heading) : ''],
-        ['Road', r.state || '-', r.way ? 'way ' + r.way + ', ' + CLASS[r.cls] + ', ' + fmt(r.dist, 1) + ' m, ' + (r.dir > 0 ? 'along' : r.dir < 0 ? 'against' : 'either way') + (r.flags & F.ONEWAY ? ', one-way' : '') : ''],
-        ['Limit', r.limit ? r.limit + ' km/h' : '-', r.limit ? (r.inferred ? 'default' + (r.variable ? ' (variable signs)' : '') : 'tagged') + ', ' + (r.candidates || 0) + ' candidates' : ''],
-        ['Matching', engine.stats.ticks + ' updates', 'avg ' + fmt(engine.stats.msSum / Math.max(1, engine.stats.ticks), 2) + ' ms, max ' + fmt(engine.stats.msMax, 2) + ' ms'],
-        ['cluster-render', o.connected ? 'connected' : o.unsupported || 'not connected', 'HUD ' + o.hud + ', map ' + o.map + (o.mapBusy ? ' (shown by ' + o.mapBusyBy + ')' : '') + (o.refused ? ', refused ' + o.refused : '')],
-    ];
-    const x0 = 60, x1 = 400, x2 = 760;
-    let y = 120;
-    rows.forEach((row, i) => {
-        if (i % 2 === 0) cv.fillRect(x0 - 20, y - 30, W - 2 * (x0 - 20), 42, withAlpha('#ffffff', 0.035));
-        cv.text(row[0], x0, y, 22, t.dim, { literal: true });
-        cv.text(String(row[1]), x1, y, 22, t.text, { literal: true, font: 'bold' });
-        cv.text(String(row[2] || ''), x2, y, 20, t.dim, { literal: true });
-        y += 42;
-    });
-    const raw = p.raw;
-    const line = 'raw: nav ' + JSON.stringify(raw.nav || null) + '   gps ' + JSON.stringify(raw.gnss || null) + ' ' + JSON.stringify(raw.gnssExt || null);
-    cv.text(line.length > 170 ? line.slice(0, 167) + '...' : line, x0, y + 10, 16, t.dim, { literal: true });
+function mapText(engine) {
+    const m = engine.pack && engine.pack.meta;
+    return m ? 'Map: ' + (m.region || '') + ', OpenStreetMap ' + (m.data || '') + ' (c) OpenStreetMap contributors, ODbL' : '';
 }
 
 mgu.run({
@@ -250,19 +227,24 @@ mgu.run({
     async start(ctx) {
         const { ui } = ctx;
         const engine = ctx.background || await background(ctx);
-        const PAGES = ['Now', 'Details'];
-        let page = 0;
-        async function render() {
-            const t = ctx.theme();
-            const cv = ctx.canvas(W, H).clear(t.bg);
-            if (page === 0) drawNow(cv, t, engine); else drawDetails(cv, t, engine);
-            G.frame(cv, t, PAGES, page);
-            await ui.image('MAIN_GFX', cv);
-        }
-        ctx.onTab((i) => { page = i; return render(); });
-        ui.onClick('BTN_PAGE', () => { page = (page + 1) % PAGES.length; return render(); });
-        ctx.loop('MAIN', 4, render, { maxFps: 4 });
-        if (ctx.onLayout) ctx.onLayout(() => { render().catch(() => {}); });
-        await render();
+        const last = {};
+        const put = (name, text) => {
+            if (last[name] === text) return null;
+            last[name] = text;
+            return ui.text(name, text);
+        };
+        let pending = null;
+        const refresh = () => {
+            if (pending) return;
+            // at most once a second, and only while the page is open
+            pending = setTimeout(() => {
+                pending = null;
+                if (!ui.isVisible('MAIN')) return;
+                Promise.all([put('SL_NOW', nowText(engine)), put('SL_WHERE', whereText(engine)), put('SL_MAP', mapText(engine))]).catch(() => {});
+            }, 1000);
+        };
+        engine.onChange(refresh);
+        ui.onVisible((name, v) => { if (name === 'MAIN' && v) { Object.keys(last).forEach((k) => delete last[k]); refresh(); } });
+        await Promise.all([put('SL_NOW', nowText(engine)), put('SL_WHERE', whereText(engine)), put('SL_MAP', mapText(engine))]);
     },
 });

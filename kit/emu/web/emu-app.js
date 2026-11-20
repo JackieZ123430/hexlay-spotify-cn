@@ -372,6 +372,8 @@ function nsScreenRows(sc) {
     if ((kind === 'text' || kind === 'text3' || kind === 'scroll' || kind === 'header') && !r.label) return;   // (an empty label shows nothing)
     rows.push(r);
   });
+  // a menu with "settings": true lists the settings after its items, as build.py puts them on the HMI's screen
+  if (sc.settings === true) return NS.drop ? nsSettingsRows() : rows.concat(nsSettingsRows());
   return rows;
 }
 function nsRows() { const sc = nsScreen(); return NS.open === 'SETTINGS' ? nsSettingsRows() : sc ? nsScreenRows(sc) : []; }

@@ -1,13 +1,15 @@
 {
   "id": "speed_limit",
   "title": "Speed Limit",
-  "description": "The speed limit of the road you're on, on the head-up display and the cluster's map, from an offline OpenStreetMap map of Georgia. Read-only.",
-  "version": "1.0.0",
+  "description": "The speed limit of the road you're on, on the head-up display and the cluster's map, from an offline OpenStreetMap map of Georgia. One switch; read-only.",
+  "version": "1.0.1",
   "vendor": "custom",
   "loggingId": "OASL",
   "iconGlyph": "60",
   "autostart": true,
-  "mguHmi": ["ID7"],
+  "mguHmi": [
+    "ID7"
+  ],
   "maxDiskUsage": 41943040,
   "signals": {
     "de.bmw.infrastructure.VehicleCondition": {
@@ -30,26 +32,312 @@
   "screens": [
     {
       "name": "MAIN",
-      "kind": "canvas",
+      "kind": "menu",
       "title": "Speed Limit",
-      "buttons": [["BTN_PAGE", "Details"], ["BTN_SETTINGS", "Settings"]]
+      "settings": true,
+      "items": [
+        [
+          "text",
+          "SL_NOW",
+          ""
+        ],
+        [
+          "text",
+          "SL_WHERE",
+          ""
+        ],
+        [
+          "text",
+          "SL_MAP",
+          ""
+        ]
+      ]
     }
   ],
   "settings": [
-    {"key": "hud", "label": "Head-up display", "type": "choice", "default": "on", "options": [["on", "Show the sign"], ["off", "Off"]]},
-    {"key": "hudSize", "label": "HUD sign size", "type": "number", "unit": "px", "default": 88, "steps": [64, 72, 80, 88, 96, 104, 112, 128], "when": {"hud": "on"}},
-    {"key": "hudX", "label": "HUD sign: left / right", "type": "number", "unit": "px", "default": 0, "steps": [-200, -160, -120, -80, -60, -40, -20, 0, 20, 40, 60, 80, 120, 160, 200, 260, 320, 380], "when": {"hud": "on"}},
-    {"key": "hudY", "label": "HUD sign: up / down", "type": "number", "unit": "px", "default": 0, "steps": [-160, -120, -80, -60, -40, -20, 0, 20, 40, 60], "when": {"hud": "on"}},
-    {"key": "cluster", "label": "Instrument cluster", "type": "choice", "default": "map", "options": [["map", "With the phone map (Maps on cluster)"], ["always", "Always (takes the cluster's centre)"], ["off", "Off"]]},
-    {"key": "clusterSize", "label": "Cluster sign size", "type": "number", "unit": "px", "default": 110, "steps": [80, 96, 110, 128, 144, 160], "when": {"cluster": ["map", "always"]}},
-    {"key": "clusterX", "label": "Cluster sign: left / right", "type": "number", "unit": "px", "default": 0, "steps": [0, 40, 80, 160, 240, 320, 480, 640, 800, 920], "when": {"cluster": ["map", "always"]}},
-    {"key": "clusterY", "label": "Cluster sign: up / down", "type": "number", "unit": "px", "default": 0, "steps": [0, 40, 80, 120, 200, 280, 320], "when": {"cluster": ["map", "always"]}},
-    {"key": "overspeed", "label": "Over the limit: red sign from", "type": "choice", "default": "0", "options": [["0", "Off"], ["5", "+5 km/h"], ["10", "+10 km/h"], ["15", "+15 km/h"]]},
-    {"key": "untagged", "label": "Roads without a limit on the map", "type": "choice", "default": "show", "options": [["show", "Show the default (grey ring)"], ["hide", "Show nothing"]]},
-    {"key": "defUrban", "label": "Default in a settlement", "type": "number", "unit": "km/h", "default": 60, "markDefault": true, "steps": [40, 50, 60, 70, 80], "when": {"untagged": "show"}},
-    {"key": "defRural", "label": "Default outside settlements", "type": "number", "unit": "km/h", "default": 90, "markDefault": true, "steps": [70, 80, 90, 100, 110], "when": {"untagged": "show"}},
-    {"key": "defMotorway", "label": "Default on motorways", "type": "number", "unit": "km/h", "default": 110, "markDefault": true, "steps": [90, 100, 110, 120, 130], "when": {"untagged": "show"}},
-    {"key": "defLiving", "label": "Default in living streets", "type": "number", "unit": "km/h", "default": 20, "markDefault": true, "steps": [10, 20, 30], "when": {"untagged": "show"}},
-    {"key": "record", "label": "Record drives (for tuning)", "type": "choice", "default": "off", "options": [["off", "Off"], ["on", "On (last 5 drives, in the app's data)"]]}
+    {
+      "key": "enabled",
+      "label": "Speed limit on the HUD and cluster",
+      "type": "bool",
+      "default": true
+    },
+    {
+      "key": "hud",
+      "label": "Head-up display",
+      "type": "choice",
+      "default": "on",
+      "options": [
+        [
+          "on",
+          "Show the sign"
+        ],
+        [
+          "off",
+          "Off"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "hudSize",
+      "label": "HUD sign size",
+      "type": "number",
+      "unit": "px",
+      "default": 88,
+      "steps": [
+        64,
+        72,
+        80,
+        88,
+        96,
+        104,
+        112,
+        128
+      ],
+      "hidden": true
+    },
+    {
+      "key": "hudX",
+      "label": "HUD sign: left / right",
+      "type": "number",
+      "unit": "px",
+      "default": 0,
+      "steps": [
+        -200,
+        -160,
+        -120,
+        -80,
+        -60,
+        -40,
+        -20,
+        0,
+        20,
+        40,
+        60,
+        80,
+        120,
+        160,
+        200,
+        260,
+        320,
+        380
+      ],
+      "hidden": true
+    },
+    {
+      "key": "hudY",
+      "label": "HUD sign: up / down",
+      "type": "number",
+      "unit": "px",
+      "default": 0,
+      "steps": [
+        -160,
+        -120,
+        -80,
+        -60,
+        -40,
+        -20,
+        0,
+        20,
+        40,
+        60
+      ],
+      "hidden": true
+    },
+    {
+      "key": "cluster",
+      "label": "Instrument cluster",
+      "type": "choice",
+      "default": "map",
+      "options": [
+        [
+          "map",
+          "With the phone map (Maps on cluster)"
+        ],
+        [
+          "always",
+          "Always (takes the cluster's centre)"
+        ],
+        [
+          "off",
+          "Off"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "clusterSize",
+      "label": "Cluster sign size",
+      "type": "number",
+      "unit": "px",
+      "default": 110,
+      "steps": [
+        80,
+        96,
+        110,
+        128,
+        144,
+        160
+      ],
+      "hidden": true
+    },
+    {
+      "key": "clusterX",
+      "label": "Cluster sign: left / right",
+      "type": "number",
+      "unit": "px",
+      "default": 0,
+      "steps": [
+        0,
+        40,
+        80,
+        160,
+        240,
+        320,
+        480,
+        640,
+        800,
+        920
+      ],
+      "hidden": true
+    },
+    {
+      "key": "clusterY",
+      "label": "Cluster sign: up / down",
+      "type": "number",
+      "unit": "px",
+      "default": 0,
+      "steps": [
+        0,
+        40,
+        80,
+        120,
+        200,
+        280,
+        320
+      ],
+      "hidden": true
+    },
+    {
+      "key": "overspeed",
+      "label": "Over the limit: red sign from",
+      "type": "choice",
+      "default": "0",
+      "options": [
+        [
+          "0",
+          "Off"
+        ],
+        [
+          "5",
+          "+5 km/h"
+        ],
+        [
+          "10",
+          "+10 km/h"
+        ],
+        [
+          "15",
+          "+15 km/h"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "untagged",
+      "label": "Roads without a limit on the map",
+      "type": "choice",
+      "default": "show",
+      "options": [
+        [
+          "show",
+          "Show the default (grey ring)"
+        ],
+        [
+          "hide",
+          "Show nothing"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "defUrban",
+      "label": "Default in a settlement",
+      "type": "number",
+      "unit": "km/h",
+      "default": 60,
+      "markDefault": true,
+      "steps": [
+        40,
+        50,
+        60,
+        70,
+        80
+      ],
+      "hidden": true
+    },
+    {
+      "key": "defRural",
+      "label": "Default outside settlements",
+      "type": "number",
+      "unit": "km/h",
+      "default": 90,
+      "markDefault": true,
+      "steps": [
+        70,
+        80,
+        90,
+        100,
+        110
+      ],
+      "hidden": true
+    },
+    {
+      "key": "defMotorway",
+      "label": "Default on motorways",
+      "type": "number",
+      "unit": "km/h",
+      "default": 110,
+      "markDefault": true,
+      "steps": [
+        90,
+        100,
+        110,
+        120,
+        130
+      ],
+      "hidden": true
+    },
+    {
+      "key": "defLiving",
+      "label": "Default in living streets",
+      "type": "number",
+      "unit": "km/h",
+      "default": 20,
+      "markDefault": true,
+      "steps": [
+        10,
+        20,
+        30
+      ],
+      "hidden": true
+    },
+    {
+      "key": "record",
+      "label": "Record drives (for tuning)",
+      "type": "choice",
+      "default": "off",
+      "options": [
+        [
+          "off",
+          "Off"
+        ],
+        [
+          "on",
+          "On (last 5 drives, in the app's data)"
+        ]
+      ],
+      "hidden": true
+    }
   ]
 }

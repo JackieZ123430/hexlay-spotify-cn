@@ -128,6 +128,17 @@ const ops = (op) => got.filter((g) => g.t === 'J' && g.m.op === op).map((g) => g
     await wait(100);
     check(ops('set').filter((m) => m.ref === hx.ref && m.visible === 0).length === hiddenBefore + 1, '"Cluster": HUD sign hidden');
 
+    // "Show ---" (no limit known): the dash sign on the HUD again
+    settings.v.show = 'both';
+    const framesNow = got.filter((g) => g.t === 'F' && g.ref === hx.ref).length;
+    out.update({ limit: null, unknown: true, inferred: false, over: false }, Date.now());
+    await wait(150);
+    check(ops('set').filter((m) => m.ref === hx.ref).slice(-1)[0].visible === 1 && got.filter((g) => g.t === 'F' && g.ref === hx.ref).length === framesNow + 1,
+        '"---" (no limit known): HUD sign shown, its pixels sent once');
+    out.update({ limit: null, unknown: true, inferred: false, over: false }, Date.now());
+    await wait(100);
+    check(got.filter((g) => g.t === 'F' && g.ref === hx.ref).length === framesNow + 1, '"---" again: nothing sent again');
+
     out.stop();
     await wait(200);
     // (cluster-render removes a client's layers with its connection: the close is what gives the HUD and map back)

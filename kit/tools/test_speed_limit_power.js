@@ -1,14 +1,14 @@
 'use strict';
 /**
  * test_speed_limit_power.js - what the Speed Limit app does to the head unit over a drive: its wake-ups (every timer
- * it schedules) and subscriptions, from start-up through parked, driving, stopped and parked again. Real time, about
- * 30 s; the built app on the PC stub (kit/tools/hu-stub.js), started as with the car (no screen open).
+ * it schedules) and subscriptions, from start-up through parked, driving, without the navigation's position, stopped
+ * and parked again. Real time, about 55 s; the built app on the PC stub (kit/tools/hu-stub.js), started as with the car (no screen open).
  *
  *   python3 kit/tools/build.py speed_limit && node kit/tools/test_speed_limit_power.js [dist/speed_limit]
  *
  * Fails when, at start-up, it runs before the power state arrives; when parked it schedules any timer; when driving
  * it wakes more than 3 times a second; when stopped more than once a second; or when parked again anything keeps
- * running.
+ * running; or when GPSData is subscribed while the navigation's position comes, or not dropped once it is back.
  */
 const fs = require('fs');
 const os = require('os');
@@ -46,10 +46,12 @@ const position = (moveM) => {
     hu.feed(NAV, 'currentLocation', { coordinatesValid: true, latitude: lat, longitude: lon, heading: 308, status: 'ON_ROAD' });
 };
 
-async function feedFor(ms, kmh) {
-    const end = Date.now() + ms;
-    while (Date.now() < end) { speed(kmh); position(kmh / 3.6 / 2); await wait(500); }
+// (moving: the position follows the speed; else it stays put, so the drive keeps to the stretch of road it is on)
+async function feedFor(ms, kmh, opts) {
+    const o = opts || {}, end = Date.now() + ms;
+    while (Date.now() < end) { speed(kmh); if (!o.noNav) position(o.moving === false ? 0 : kmh / 3.6 / 2); await wait(500); }
 }
+const GPS = 'de.bmw.infotainment.GPSData';
 
 (async () => {
     hu.start();
@@ -70,6 +72,12 @@ async function feedFor(ms, kmh) {
     await feedFor(6000, 60);
     c = take();
     check(total(c) <= 6 * 3, 'driving 60 km/h, 6 s: ' + total(c) + ' timers (' + (total(c) / 6).toFixed(1) + ' a second; want at most 3)');
+    check(subs(GPS) === 0, 'navigation position coming: GPSData not subscribed');
+
+    await feedFor(7000, 60, { noNav: true });            // the navigation's position stops (a tunnel, a fault)
+    check(subs(GPS) === 1 && said(/GPS: subscribed/), 'no navigation position for 5 s: GPSData subscribed');
+    await feedFor(16500, 60, { moving: false });
+    check(said(/GPS: dropped/), 'navigation position back for 15 s: GPSData dropped');
 
     await feedFor(1000, 0); take();
     await feedFor(8000, 0);

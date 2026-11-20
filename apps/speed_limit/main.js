@@ -146,12 +146,17 @@ class Engine {
     _decide(now) {
         const r = this.res, s = this.settings;
         const thr = Number(s.get('overspeed')) || 0;
-        const over = (lim) => thr > 0 && this.speed !== null && lim > 0 && this.speed > lim + thr;
+        // over from limit + threshold, back under 2 km/h below it: a speed right at it does not flip the sign (and
+        // send its pixels) again and again
+        const wasOver = !!(this.view && this.view.over);
+        const over = (lim) => thr > 0 && this.speed !== null && lim > 0 && this.speed > lim + thr - (wasOver ? 2 : 0);
         if (r && r.limit && !(r.inferred && s.get('untagged') === 'hide')) {
             this.view = { limit: r.limit, inferred: r.inferred, over: over(r.limit) };
             this.viewAt = now;
-        } else if (this.view && now - this.viewAt < VIEW_HOLD_MS) {
+        } else if (this.view && this.view.limit && now - this.viewAt < VIEW_HOLD_MS) {
             this.view = { limit: this.view.limit, inferred: this.view.inferred, over: over(this.view.limit) };
+        } else if (s.get('noLimit') === 'dashes') {
+            this.view = { limit: null, unknown: true, inferred: false, over: false };     // "---", as BMW's own
         } else this.view = null;
     }
 
@@ -166,12 +171,14 @@ async function background(bg) {
 }
 
 /* ---------- the page: the HMI's own list, laid out as Maps on cluster's (app.json screen "menu") ----------
- * General: Show on (Cluster, HUD, Cluster and HUD, Off), Red sign over the limit, Speed limit, Cluster sign.
+ * General: Show on (Cluster, HUD, Cluster and HUD, Off), Red sign over the limit, When there's no limit (nothing, or
+ * "---" as BMW's own), Speed limit, Cluster sign.
  * HUD: HUD sign, Keep HUD sign over BMW's pop-ups, Size (a slider), Position with Move left / right / up / down and
  * Default position, greyed while the HUD is not chosen. Map: the data's date and licence. Info rows read
  * "Name: Value"; a row is written only when it changes, and only while the page shows. ASCII only. */
 const SHOW = ['cluster', 'hud', 'both', 'off'];
 const OVER = ['0', '5', '10', '15', '20'];
+const NOLIMIT = ['nothing', 'dashes'];
 const SIZES = [64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144];     // the slider's positions 0..10
 const MOVE_PX = 10;
 
@@ -179,7 +186,7 @@ function limitText(e) {
     const r = e.res, v = e.view;
     if (e.packError) return 'Speed limit: no map';
     if (!e.active) return 'Speed limit: ' + (e.enabled() ? 'car off' : 'off');
-    if (v) return 'Speed limit: ' + v.limit + ' km/h' + (v.inferred ? ' (default for this road)' : '');
+    if (v && v.limit) return 'Speed limit: ' + v.limit + ' km/h' + (v.inferred ? ' (default for this road)' : '');
     if (!r || r.state === 'nofix') return 'Speed limit: waiting for a position';
     if (r.state === 'outside') return 'Speed limit: outside the map';
     return 'Speed limit: no road here';
@@ -225,9 +232,11 @@ mgu.run({
             const x = Number(s.get('hudX')) || 0, y = Number(s.get('hudY')) || 0, hud = hudOn();
             const show = Math.max(0, SHOW.indexOf(s.get('show'))), over = Math.max(0, OVER.indexOf(String(s.get('overspeed'))));
             const step = Math.max(0, SIZES.indexOf(Number(s.get('hudSize'))));
+            const nolim = Math.max(0, NOLIMIT.indexOf(s.get('noLimit')));
             const lim = limitText(engine), cl = 'Cluster sign: ' + signState(engine, 'cluster'), hs = 'HUD sign: ' + signState(engine, 'hud');
             once('show', show, () => ui.selected('SL_SHOW', show));
             once('over', over, () => ui.selected('SL_OVER', over));
+            once('nolim', nolim, () => ui.selected('SL_NOLIMIT', nolim));
             once('limit', lim, () => ui.text('SL_LIMIT', lim));
             once('cluster', cl, () => ui.text('SL_CLUSTER', cl));
             once('hud', hs, () => ui.text('SL_HUD', hs));
@@ -243,6 +252,7 @@ mgu.run({
         // the HMI moves a drop-down's choice and the slider itself: only the setting follows
         ui.onClick('SL_SHOW', (ev) => { const v = SHOW[ev.row]; if (v) { done.show = ev.row; s.set('show', v); } });
         ui.onClick('SL_OVER', (ev) => { const v = OVER[ev.row]; if (v != null) { done.over = ev.row; s.set('overspeed', v); } });
+        ui.onClick('SL_NOLIMIT', (ev) => { const v = NOLIMIT[ev.row]; if (v) { done.nolim = ev.row; s.set('noLimit', v); } });
         ui.onClick('SL_HUD_KEEP', () => { if (hudOn()) s.set('hudKeep', !s.get('hudKeep')); });
         if (size && size.on) size.on('changed', (step) => { const v = SIZES[step]; if (v && hudOn()) { done.sizeStep = step; s.set('hudSize', v); } });
         const move = (dx, dy) => () => {

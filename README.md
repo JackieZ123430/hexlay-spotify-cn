@@ -6,7 +6,7 @@ Three apps for BMW iDrive 7 head units (MGU), installed through the [MGU Store](
 | :--- | :---: | :---: | :--- |
 | [Spotify](#spotify) | 1.0.32 | Yes | Nothing |
 | [M-Copilot](#m-copilot) | 1.0.35 | Yes | Driving signals, service list, fault memory (read-only) |
-| [Speed Limit](#speed-limit) | 1.0.3 | No | Position, speed and power state (read-only) |
+| [Speed Limit](#speed-limit) | 1.0.4 | No | Position, speed and power state (read-only) |
 
 System Monitor has moved to its own repository, [hexlay/idrive7-system-monitor](https://github.com/hexlay/idrive7-system-monitor). To keep getting updates, add `hexlay/idrive7-system-monitor` as a source in the MGU Store.
 
@@ -72,7 +72,8 @@ reads the car's position, speed and power state.
 
 - **The page is laid out like Maps on cluster's**, as the car's own list (no GPU renderer):
   - **General:** **Show on** (Cluster, HUD, Cluster and HUD, or Off), **Red sign over the limit** (Off, +5,
-    +10, +15 or +20 km/h), and what it shows now: **Speed limit** and **Cluster sign**.
+    +10, +15 or +20 km/h), **When there's no limit** (Show nothing, or Show --- as BMW's own Speed Limit Info), and
+    what it shows now: **Speed limit** and **Cluster sign**.
   - **HUD:** **HUD sign**, **Keep HUD sign over BMW's pop-ups**, **Size** (a slider), **Position** with **Move
     left / right / up / down** and **Default position**. They are greyed while Show on leaves the HUD out.
   - **Map:** the map data's date and licence.
@@ -80,8 +81,10 @@ reads the car's position, speed and power state.
   subscriptions, closes the map and gives the head-up display and cluster back, so it draws no power.
 - **Light:** the map is read from the file in small pieces (about 1 MB in memory instead of 15 MB), each update takes
   a few microseconds, and it wakes twice a second while driving, every 2 s while standing still, and never while
-  parked or off (`kit/tools/test_speed_limit_power.js` counts it). At start-up it waits for the car's power state, so
-  a parked car's head unit starting up never opens the map or subscribes to anything.
+  parked or off (`kit/tools/test_speed_limit_power.js` counts it). It reads the speed once per update instead of
+  taking the car's 10 a second, uses GPSData only while the navigation's position is missing, and asks cluster-render
+  how the map is doing every 3 s only while its sign is on the map (else every 10 s). At start-up it waits for the
+  car's power state, so a parked car's head unit starting up never opens the map or subscribes to anything.
 - **Cluster:** the sign joins the phone map (Maps on cluster) in its top-left corner, while that map is shown.
 - **Head-up display:** the round sign beside BMW's own speed; size and place on the page.
 - **Roads without a limit on the map** show the legal default with a grey ring: 60 km/h in a settlement, 90 outside,
@@ -99,8 +102,8 @@ at a junction. In a tunnel the last limit is kept until the position comes back.
 | ![Speed Limit show on](docs/screenshots/speed_limit_show_on.png) | ![Speed Limit over the limit setting](docs/screenshots/speed_limit_overspeed.png) |
 | **HUD settings** | **Show on: Cluster** (the HUD settings greyed) |
 | ![Speed Limit HUD settings](docs/screenshots/speed_limit_hud_settings.png) | ![Speed Limit cluster only](docs/screenshots/speed_limit_cluster_only.png) |
-| **The signs** | |
-| ![Speed Limit signs](docs/screenshots/speed_limit_signs.png) | |
+| **When there's no limit** | **The signs** |
+| ![Speed Limit when there's no limit](docs/screenshots/speed_limit_nolimit.png) | ![Speed Limit signs](docs/screenshots/speed_limit_signs.png) |
 | **Head-up display** (black is see-through) | **Cluster, over the phone map** |
 | ![Speed Limit on the HUD](docs/screenshots/speed_limit_hud.png) | ![Speed Limit on the cluster](docs/screenshots/speed_limit_cluster.png) |
 

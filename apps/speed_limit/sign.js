@@ -7,7 +7,8 @@
  *
  * The European sign: a white disc, a red ring, the limit in black. A limit that is only the road's default (no
  * limit tagged on the map) has a grey ring and a grey dot under the number, so it reads as a guess. Over the limit
- * (the threshold set): the disc turns red and the number white. Outside the disc everything is transparent (on the
+ * (the threshold set): the disc turns red and the number white. No limit known (limit null): three dashes in a grey
+ * ring, as BMW's Speed Limit Info shows then. Outside the disc everything is transparent (on the
  * HUD, black and transparent are both see-through).
  */
 const { Canvas } = require('./kit/canvas');
@@ -16,6 +17,14 @@ const RED = '#d0021b', GREY = '#8a9099', WHITE = '#ffffff', BLACK = '#111111';
 
 function paintSign(c, cx, cy, r, limit, opts) {
     const o = opts || {};
+    if (!limit) {
+        // no limit known (as BMW's Speed Limit Info): the sign with three dashes, grey ring (not a sign on the road)
+        c.circle(cx, cy, r, WHITE);
+        c.arc(cx, cy, r * 0.8, r, 0, 360, GREY);
+        const w = r * 0.3, h = Math.max(2, r * 0.13), gap = r * 0.09, x0 = cx - (3 * w + 2 * gap) / 2;
+        for (let i = 0; i < 3; i++) c.fillRect(x0 + i * (w + gap), cy - h / 2, w, h, BLACK);
+        return;
+    }
     if (o.over) {
         c.circle(cx, cy, r, RED);
         c.arc(cx, cy, r * 0.8, r * 0.86, 0, 360, WHITE);

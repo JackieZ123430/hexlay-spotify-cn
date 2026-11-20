@@ -8,12 +8,12 @@
  * Setting "show": cluster | hud | both | off (as Maps on cluster's Show on).
  * Cluster map (1088 x 480, under the gauges): only while another app (Maps on cluster) is showing its picture on the
  * map target: cluster-render's status lists every client's layers ("layer 3 video of <app> on map, content z 0:
- * shown"); asked for every 3 s while active. The sign never makes the map target wanted by itself, so it never takes
+ * shown"); asked every 3 s while the sign is on the map, else every 10 s and at once on a map target event. The sign never makes the map target wanted by itself, so it never takes
  * the cluster's centre from the stock map.
  * HUD (800 x 480): an image layer, class overlay, where the hidden settings put it (BMW's own speed stays in its slot
  * below; transparent pixels are see-through). It gives way to BMW's pop-ups on the HUD (yield 1), unless the setting
  * "hudKeep" keeps it over them (yield 0).
- * A layer without a limit to show is hidden (visible 0); the HUD is given back after cluster-render's linger (3 s).
+ * A view { limit: null, unknown: true } shows the "---" sign (setting "noLimit"). A layer with nothing to show is hidden (visible 0); the HUD is given back after cluster-render's linger (3 s).
  * stop() drops the layers and closes the connection: cluster-render releases the surfaces at once.
  */
 const { ClusterRender } = require('./crclient');
@@ -24,7 +24,8 @@ const TARGETS = {
     map: { w: 1088, h: 480, cx: 80, cy: 80 },
 };
 const LAYER_RX = /^layer \d+ (\S+) of (.+) on (\w+), (\w+) z -?\d+[^:]*: (\w+)/;
-const STATUS_MS = 3000;
+const STATUS_MS = 3000;          // while the sign is on the cluster's map: notice soon that the phone map went
+const STATUS_IDLE_MS = 10000;    // otherwise (a map target event asks at once)
 
 class Outputs {
     /** opts.cr: options for the cluster-render client ({ path, check }: tests) */
@@ -51,7 +52,11 @@ class Outputs {
         cr.on('ready', () => { this.layers = {}; this._apply(Date.now()); });
         cr.on('down', () => { this.layers = {}; });
         cr.on('status', (text) => this._status(text));
-        cr.on('target', (m) => { this.targets[m.target] = { state: m.state, holder: m.holder || '', reason: m.reason || '' }; });
+        cr.on('target', (m) => {
+            const was = this.targets[m.target];
+            this.targets[m.target] = { state: m.state, holder: m.holder || '', reason: m.reason || '' };
+            if (m.target === 'map' && (!was || was.state !== m.state)) this.lastStatus = 0;     // the map changed: ask now
+        });
         cr.on('layer', (m) => { this.layerStates[m.ref] = m.state + (m.reason ? ' (' + m.reason + ')' : ''); });
         cr.on('refused', (m) => { this.refused = (m.op || '') + ': ' + (m.reason || ''); this.log.warn('cluster-render refused ' + this.refused); });
         return this;
@@ -92,7 +97,7 @@ class Outputs {
         if (!cr || !cr.ready) return;
         ['hud', 'map'].forEach((t) => {
             let L = this.layers[t];
-            const show = !!(this.view && this.view.limit && this._wanted(t));
+            const show = !!(this.view && (this.view.limit || this.view.unknown) && this._wanted(t));
             if (!show) {
                 if (L && L.visible) { cr.set(L.ref, { visible: 0 }); L.visible = false; }
                 return;
@@ -118,11 +123,11 @@ class Outputs {
     /** Now and then: ask cluster-render who draws on the map target (only while there is a limit to show, or the sign
      * is on the map: nothing to ask otherwise). */
     tick(now) {
-        if (!(this.view && this.view.limit) && !this.mapBusy) return;
+        if (!this.view && !this.mapBusy) return;
         const cr = this.cr;
         const show = this.settings.get('show');
         if (!cr || !cr.ready || (show !== 'cluster' && show !== 'both')) return;
-        if (now - this.lastStatus < STATUS_MS) return;
+        if (now - this.lastStatus < (this.mapBusy ? STATUS_MS : STATUS_IDLE_MS)) return;
         this.lastStatus = now;
         cr.status();
         // no answer for two rounds: assume the map is not shown (never hold the cluster's centre on a guess)

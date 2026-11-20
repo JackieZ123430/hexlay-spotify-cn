@@ -16,8 +16,14 @@
  * Speed: de.bmw.infotainment.vehicle.Vehicle2 (1) statusCarSpeed2: km/h = 0.015625 * speedVehicleCentreOfGravity
  * (65535 = no value).
  *
- * Only notifications are subscribed. A source that has gone quiet for 2 s is read once (its getter) at most every
- * 2 s while the app is active; nothing is ever written to the car.
+ * As few wake-ups as it takes (nothing is ever written to the car):
+ *   - the navigation's position is subscribed (it notifies when the car moves);
+ *   - the speed is read (its getter) once per tick of the app (twice a second driving, every 2 s standing still)
+ *     instead of subscribed: the car notifies it every 100 ms (vsomeip_debounce.json), 10 wake-ups a second for
+ *     nothing. Where no proxy can be built (the PC's stub), it is subscribed instead;
+ *   - GPSData is subscribed only while the navigation's position is missing (after 5 s without it), and dropped
+ *     again once that has been back for 15 s;
+ *   - a subscribed source that goes quiet for 2 s is read once (its getter), at most every 2 s.
  */
 const { merc, unmerc } = require('./limitpack');
 
@@ -25,6 +31,8 @@ const NAV = 'de.bmw.infotainment.navigation.positioning.Positioning';
 const GPS = 'de.bmw.infotainment.GPSData';
 const V2 = 'de.bmw.infotainment.vehicle.Vehicle2';
 const FRESH_MS = 2500;
+const SPEED_FRESH_MS = 3500;      // read every tick: up to 2 s apart standing still
+const GNSS_AFTER_MS = 5000, GNSS_DROP_MS = 15000;
 const RAW_INVALID = 4294967293;
 const Q_DR = 1 << 5, Q_DIFF = 1 << 6, Q_2D = 1 << 7, Q_3D = 1 << 8;
 
@@ -46,6 +54,11 @@ class Position {
         this.errors = {};
         this.lastRead = {};
         this.running = false;
+        this.speedProxy = null;     // the speed read through its getter (no subscription)
+        this.gnssSub = null;        // GPSData, only while the navigation's position is missing
+        this.gnssBusy = false;
+        this.navOkSince = 0;
+        this.navLostSince = 0;
     }
 
     async start() {
@@ -57,20 +70,50 @@ class Position {
             this.subs.push(sub);
             if (sub.error) this.errors[key] = sub.error;
         }).catch((e) => { this.errors[key] = String(e && e.message || e); });
-        await Promise.all([
-            w('nav', NAV, 'Main_Instance', { currentLocation: (v) => this._nav(v) }),
-            w('gnss', GPS, '1', { GPSPositionCAN: (v) => this._gnss(v), GPSPositionExtendedCAN: (v) => this._gnssExt(v) }),
-            w('speed', V2, '1', { statusCarSpeed2: (v) => this._speed(v) }),
-        ]);
+        this.navOkSince = 0;
+        this.navLostSince = Date.now();
+        const speed = Promise.resolve().then(() => this.signals.proxy(V2, '1')).then((p) => {
+            if (!this.running) { Promise.resolve().then(() => p.shutdown && p.shutdown()).catch(() => {}); return; }
+            this.speedProxy = p;
+            if (this.signals.onAvailable) this.signals.onAvailable(p, (a) => { this.avail.speed = a; }).catch(() => {});
+        }).catch(() => w('speed', V2, '1', { statusCarSpeed2: (v) => this._speed(v) }));     // (no proxy: subscribed)
+        await Promise.all([w('nav', NAV, 'Main_Instance', { currentLocation: (v) => this._nav(v) }), speed]);
     }
 
     async stop() {
         this.running = false;
-        const subs = this.subs;
-        this.subs = [];
-        await Promise.all(subs.map((s) => Promise.resolve(s.shutdown()).catch(() => {})));
+        const subs = this.subs, sp = this.speedProxy;
+        this.subs = []; this.speedProxy = null; this.gnssSub = null;
+        if (sp) subs.push({ shutdown: () => sp.shutdown && sp.shutdown() });
+        await Promise.all(subs.map((s) => Promise.resolve().then(() => s.shutdown()).catch(() => {})));
         this.nav = this.gnss = this.speed = null;
         this.quality = null;
+    }
+
+    /** GPSData while the navigation's position is missing; dropped once it has been back for a while. */
+    _gnssWanted(now) {
+        const navFresh = !!this.nav && now - this.nav.at < FRESH_MS;
+        // (missing since its last fix, or since the start)
+        if (navFresh) { if (!this.navOkSince) this.navOkSince = now; this.navLostSince = 0; } else { if (!this.navLostSince) this.navLostSince = this.nav ? this.nav.at : now; this.navOkSince = 0; }
+        if (!this.gnssSub && !this.gnssBusy && !navFresh && now - this.navLostSince >= GNSS_AFTER_MS) {
+            this.gnssBusy = true;
+            this.log.info('GPS: subscribed (no navigation position for ' + Math.round((now - this.navLostSince) / 1000) + ' s)');
+            Promise.resolve(this.signals.watch(GPS, '1', { GPSPositionCAN: (v) => this._gnss(v), GPSPositionExtendedCAN: (v) => this._gnssExt(v) }, this.log)).then((sub) => {
+                this.gnssBusy = false;
+                if (!this.running) { Promise.resolve().then(() => sub.shutdown()).catch(() => {}); return; }
+                sub.key = 'gnss';
+                this.gnssSub = sub;
+                this.subs.push(sub);
+                if (sub.error) this.errors.gnss = sub.error;
+            }).catch((e) => { this.gnssBusy = false; this.errors.gnss = String(e && e.message || e); });
+        } else if (this.gnssSub && navFresh && now - this.navOkSince >= GNSS_DROP_MS) {
+            const sub = this.gnssSub;
+            this.gnssSub = null;
+            this.log.info('GPS: dropped (the navigation position is back)');
+            this.subs = this.subs.filter((s) => s !== sub);
+            this.gnss = null; this.quality = null;
+            Promise.resolve().then(() => sub.shutdown()).catch(() => {});
+        }
     }
 
     _nav(v) {
@@ -116,8 +159,20 @@ class Position {
         return this.quality === null || (this.quality & (Q_2D | Q_3D | Q_DR)) !== 0;
     }
 
-    /** Read a quiet source once (its getter), at most every 2 s: a provider that does not notify. */
+    /** Once per tick: the speed (its getter), GPSData on or off, and a quiet source read once (at most every 2 s). */
     poll(now) {
+        if (!this.running) return;
+        const sp = this.speedProxy;
+        if (sp && this.avail.speed !== false) {
+            // from a fresh tick, as kit/signals.js reads (the native binding must not be entered inline)
+            setImmediate(() => {
+                if (!this.running || this.speedProxy !== sp) return;
+                let p;
+                try { p = sp.getValue('statusCarSpeed2', 1500); } catch (e) { return; }
+                Promise.resolve(p).then((v) => { if (this.running) this._speed(v); }).catch(() => {});
+            });
+        }
+        this._gnssWanted(now);
         this.subs.forEach((s) => {
             this.avail[s.key] = !!s.available;
             if (!s.available || !s.proxy) return;
@@ -139,7 +194,7 @@ class Position {
         });
     }
 
-    speedKmh(now) { return this.speed && now - this.speed.at < FRESH_MS ? this.speed.kmh : null; }
+    speedKmh(now) { return this.speed && now - this.speed.at < SPEED_FRESH_MS ? this.speed.kmh : null; }
 
     /** The best fix now, or null. */
     fix(now) {

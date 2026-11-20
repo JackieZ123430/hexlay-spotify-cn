@@ -38,7 +38,13 @@ for manifest in sorted((root / 'apps').glob('*/app.json')):
             assert len(cn) == 2
         else:
             assert not cn and not any('JackieZ123430' in v or '小白' in v for v in strings.values())
-        assert not has_settings or any('github.com/cauliflowermossgrape/idrive7-apps' in v for v in strings.values())
+        # the project credit row: with the settings, unless the app leaves it out ("credits": false: a link the car
+        # can't open, as Speed Limit's page)
+        credit = any('github.com/cauliflowermossgrape/idrive7-apps' in v for v in strings.values())
+        if original.get('credits') is False:
+            assert not credit, manifest
+        else:
+            assert not has_settings or credit, manifest
         def visit(obj):
             if isinstance(obj, dict):
                 if obj.get('type') == 'StringId': assert obj['value'] in strings, (manifest, obj)

@@ -7,6 +7,8 @@
  *   pack.piece(i)           { id, x0, y0, pt, n, cls, flags, limF, limB, src, way }
  *   pack.points(i)          [x0, y0, x1, y1, ...] in Web Mercator metres, along the piece
  *   pack.chain(ids)         a way's pieces in driving order (the pack keeps them by place, not by way)
+ *   pack.cameras            speed cameras { n, x[], y[] (Web Mercator metres), dir[] (degrees, -1 not known), ms[] } (the
+ *                           pack's CAMS section, a few KB, read whole; none in an older pack)
  *   merc(lat, lon)          [x, y] Web Mercator metres; groundScale(y): ground metres per mercator metre
  *
  * The file is not read into memory: everything is read from it in 8 KB pages, of which the last 96 (768 KB) are
@@ -87,9 +89,23 @@ class LimitPack {
         this.ptBase = this.sec.PNTS.off + 4;
         const g = this.sec.GRID.off, cells = P.u32(g);
         this.grid = Object.assign({ cells, keys: g + 4, first: g + 4 + cells * 4, ids: g + 8 + cells * 8 }, this.meta.grid);
+        this.cameras = this._cameras();
         const b = this.meta.bbox;                       // [lat0, lon0, lat1, lon1]
         const p0 = merc(b[0], b[1]), p1 = merc(b[2], b[3]);
         this.mbox = [p0[0], p0[1], p1[0], p1[1]];
+    }
+
+    _cameras() {
+        const c = this.sec.CAMS, out = { n: 0, x: [], y: [], dir: [], ms: [] };
+        if (!c || c.len < 4) return out;
+        const b = this.p.bytes(c.off, c.len), n = Math.min(b.readUInt32LE(0), Math.floor((c.len - 4) / 12));
+        for (let i = 0; i < n; i++) {
+            const o = 4 + i * 12, d = b.readUInt16LE(o + 8);
+            out.x.push(b.readInt32LE(o) / 10); out.y.push(b.readInt32LE(o + 4) / 10);
+            out.dir.push(d === 0xFFFF ? -1 : d); out.ms.push(b[o + 10]);
+        }
+        out.n = n;
+        return out;
     }
 
     close() {

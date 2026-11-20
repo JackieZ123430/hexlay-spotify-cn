@@ -14,6 +14,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..', '..');
 const { LimitPack, F, merc, unmerc, groundScale } = require(path.join(ROOT, 'apps', 'speed_limit', 'limitpack'));
 const { Matcher, limitOf, bearing, angDiff } = require(path.join(ROOT, 'apps', 'speed_limit', 'matcher'));
+const { Cameras, camText } = require(path.join(ROOT, 'apps', 'speed_limit', 'cameras'));
 
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
@@ -257,6 +258,46 @@ if (open) {
     const ok = open.at20.state === 'nofix' && open.at20.limit === null;
     console.log('  ' + (ok ? 'ok   ' : 'FAIL ') + 'open road (way ' + open.way + '): after 20 s without a position ' + open.at20.state);
     if (!ok) failures.push('an open road keeps its limit without a position');
+}
+
+/* ---------- speed cameras: warned ahead in their direction, not the other way, not beside the road ---------- */
+console.log('\nspeed cameras (' + pack.cameras.n + ' in the pack):');
+const C = pack.cameras;
+let ci = -1;
+for (let i = 0; i < C.n; i++) if (C.dir[i] >= 0) { ci = i; break; }
+function approach(dirDeg, offsetM) {
+    // drive straight at 50 km/h (2 fixes a second) from 500 m before camera ci to 50 m past it, along dirDeg
+    const cams = new Cameras(C), gs = groundScale(C.y[ci]), hr = dirDeg * Math.PI / 180;
+    const sx = Math.sin(hr), sy = Math.cos(hr), ox = Math.cos(hr) * offsetM / gs, oy = -Math.sin(hr) * offsetM / gs;
+    const seen = [];
+    for (let s = -500; s <= 50; s += 7) {
+        const x = C.x[ci] + sx * s / gs + ox, y = C.y[ci] + sy * s / gs + oy;
+        const r = cams.update({ x, y }, dirDeg, 0);
+        seen.push({ s, dist: r ? r.dist : null });
+    }
+    return seen;
+}
+if (ci < 0) failures.push('no camera with a direction in the pack');
+else {
+    const d = C.dir[ci];
+    const a = approach(d, 0), first = a.find((p) => p.dist !== null);
+    const warnAt = first ? -first.s : 0, after = a.filter((p) => p.s > 15 && p.dist !== null).length;
+    const down = a.filter((p) => p.dist !== null).every((p, i, arr) => i === 0 || p.dist <= arr[i - 1].dist + 0.01);
+    let ok = first && warnAt <= 400 && warnAt > 380 && after === 0 && down;
+    console.log('  ' + (ok ? 'ok   ' : 'FAIL ') + 'driving the way it checks (' + d + ' deg): warned from ' + warnAt + ' m, counting down, gone once passed');
+    if (!ok) failures.push('camera: not warned as it should be ahead');
+    const b = approach((d + 180) % 360, 0);
+    ok = b.every((p) => p.dist === null);
+    console.log('  ' + (ok ? 'ok   ' : 'FAIL ') + 'driving the other way: no warning');
+    if (!ok) failures.push('camera: warned for the other direction');
+    const c = approach(d, 50);
+    ok = c.every((p) => p.dist === null);
+    console.log('  ' + (ok ? 'ok   ' : 'FAIL ') + 'a road 50 m beside it: no warning');
+    if (!ok) failures.push('camera: warned for a road beside it');
+    const steps = ['430', '380', '120', '96', '4'].map((m) => camText(Number(m))).join(', ');
+    ok = steps === '450 m, 400 m, 100 m, 100 m, 0 m';
+    console.log('  ' + (ok ? 'ok   ' : 'FAIL ') + 'distance steps: ' + steps);
+    if (!ok) failures.push('camera: distance steps ' + steps);
 }
 
 if (failures.length) { console.log('\nFAIL:\n  ' + failures.join('\n  ')); process.exit(1); }

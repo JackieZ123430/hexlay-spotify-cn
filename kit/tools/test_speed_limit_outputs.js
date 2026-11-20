@@ -131,16 +131,33 @@ const ops = (op) => got.filter((g) => g.t === 'J' && g.m.op === op).map((g) => g
     // never the panel (the whole-cluster slot BMW's trip and board computer content uses)
     check(!ops('layer').some((m) => m.target === 'panel'), 'nothing on the panel target (BMW\'s trip info keeps its slot)');
 
+    // a speed camera ahead: the pill joined to the sign, a wider picture; resent only when the distance step changes
+    settings.v.show = 'both';
+    out.update({ limit: 60, inferred: false, over: false, camera: '350 m' }, Date.now());
+    await wait(150);
+    const camL = ops('layer').filter((m) => m.target === 'hud').slice(-1)[0];
+    const camF = got.filter((g) => g.t === 'F' && g.ref === camL.ref);
+    check(camL.w > camL.h && camL.iw === camL.w && camF.length === 1 && camF[0].bytes === camL.w * camL.h * 4, 'camera ahead: the sign with its pill (' + camL.w + 'x' + camL.h + ')');
+    out.update({ limit: 60, inferred: false, over: false, camera: '350 m' }, Date.now());
+    out.update({ limit: 60, inferred: false, over: false, camera: '300 m' }, Date.now());
+    await wait(150);
+    check(got.filter((g) => g.t === 'F' && g.ref === camL.ref).length === 2 && ops('layer').filter((m) => m.target === 'hud').slice(-1)[0].ref === camL.ref,
+        'the distance counts down: the same layer, pixels only for the new step');
+    out.update({ limit: 60, inferred: false, over: false }, Date.now());
+    await wait(150);
+    const back = ops('layer').filter((m) => m.target === 'hud').slice(-1)[0];
+    check(back.ref !== camL.ref && back.w === back.h, 'camera passed: the sign alone again');
+
     // "Show ---" (no limit known): the dash sign on the HUD again
     settings.v.show = 'both';
-    const framesNow = got.filter((g) => g.t === 'F' && g.ref === hx.ref).length;
+    const hl = ops('layer').filter((m) => m.target === 'hud').slice(-1)[0];      // (the HUD layer now)
+    const framesNow = got.filter((g) => g.t === 'F' && g.ref === hl.ref).length;
     out.update({ limit: null, unknown: true, inferred: false, over: false }, Date.now());
     await wait(150);
-    check(ops('set').filter((m) => m.ref === hx.ref).slice(-1)[0].visible === 1 && got.filter((g) => g.t === 'F' && g.ref === hx.ref).length === framesNow + 1,
-        '"---" (no limit known): HUD sign shown, its pixels sent once');
+    check(got.filter((g) => g.t === 'F' && g.ref === hl.ref).length === framesNow + 1, '"---" (no limit known): HUD sign shown, its pixels sent once');
     out.update({ limit: null, unknown: true, inferred: false, over: false }, Date.now());
     await wait(100);
-    check(got.filter((g) => g.t === 'F' && g.ref === hx.ref).length === framesNow + 1, '"---" again: nothing sent again');
+    check(got.filter((g) => g.t === 'F' && g.ref === hl.ref).length === framesNow + 1, '"---" again: nothing sent again');
 
     out.stop();
     await wait(200);

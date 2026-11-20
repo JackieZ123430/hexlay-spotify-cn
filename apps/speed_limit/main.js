@@ -21,6 +21,7 @@ const Car = require('./kit/car');
 const { LimitPack } = require('./limitpack');
 const { Matcher } = require('./matcher');
 const { Position, DemoDrive } = require('./position');
+const { Cameras, camText } = require('./cameras');
 const { Outputs, TARGETS } = require('./outputs');
 
 const APP_ID = 'speed_limit';
@@ -56,6 +57,8 @@ class Engine {
         this.viewAt = 0;
         this.speed = null;
         this.fix = null;
+        this.cams = null;               // speed cameras ahead (the pack's), while active
+        this.camera = null;             // { dist, ms } of the one ahead
         this.listeners = [];
         this.settings.onChange((k) => {
             if (k === 'show') this._evaluate();
@@ -106,6 +109,7 @@ class Engine {
             try {
                 this.pack = LimitPack.open(PACK);
                 this.matcher = new Matcher(this.pack, { defaults: this.defaults() });
+                this.cams = new Cameras(this.pack.cameras);
                 if (this.demoOn) this.demo = new DemoDrive(this.pack, { way: this.settings.get('demoWay'), speed: this.settings.get('demoSpeed') });
             } catch (e) { this.packError = String(e.message || e); this.log.error('map: ' + this.packError); this.active = false; return; }
             if (!this.demoOn) this.position.start().catch((e) => this.log.warn('position: ' + e));
@@ -117,7 +121,7 @@ class Engine {
             this.position.stop().catch(() => {});
             this.outputs.stop();
             if (this.pack) this.pack.close();
-            this.pack = null; this.matcher = null; this.demo = null;
+            this.pack = null; this.matcher = null; this.demo = null; this.cams = null; this.camera = null;
             this.view = null; this.res = null; this.fix = null; this.speed = null;
         }
         this._changed();
@@ -138,6 +142,8 @@ class Engine {
         this.fix = this.demo ? this.demo.fix(now) : this.position.fix(now);
         this.speed = this.demo ? this.demo.speedKmh(now) : this.position.speedKmh(now);
         if (!this._still()) this.res = this.matcher.update(this.fix, now);
+        // a speed camera ahead (setting "cameras"): a few multiplications per camera near the car
+        this.camera = this.cams && this.settings.get('cameras') !== 'off' ? this.cams.update(this.fix, this.matcher.heading, now) : null;
         this._decide(now);
         this.outputs.update(this.view, now);
         this._changed();
@@ -158,6 +164,11 @@ class Engine {
         } else if (s.get('noLimit') === 'dashes') {
             this.view = { limit: null, unknown: true, inferred: false, over: false };     // "---", as BMW's own
         } else this.view = null;
+        // the camera's distance in the pill beside the sign (with "---" when no limit is known)
+        if (this.camera) {
+            const camera = camText(this.camera.dist);
+            this.view = this.view ? Object.assign({}, this.view, { camera }) : { limit: null, unknown: true, inferred: false, over: false, camera };
+        }
     }
 
     onChange(fn) { this.listeners.push(fn); }
@@ -172,7 +183,7 @@ async function background(bg) {
 
 /* ---------- the page: the HMI's own list, laid out as Maps on cluster's (app.json screen "menu") ----------
  * General: Show on (Cluster, HUD, Cluster and HUD, Off), Red sign over the limit, When there's no limit (nothing, or
- * "---" as BMW's own), Speed limit.
+ * "---" as BMW's own), Speed cameras (Warn: a pill with the camera's distance joined to the sign; Off), Speed limit.
  * Cluster (on the phone map, Maps on cluster's): Cluster sign, Size (a slider), Position with Move left / right / up /
  * down and Default position.
  * HUD: HUD sign, Keep HUD sign over BMW's pop-ups, Size, Position, the moves and Default position.
@@ -181,6 +192,7 @@ async function background(bg) {
 const SHOW = ['cluster', 'hud', 'both', 'off'];
 const OVER = ['0', '5', '10', '15', '20'];
 const NOLIMIT = ['nothing', 'dashes'];
+const CAMS = ['warn', 'off'];
 // the slider's sizes (positions 0..10) and the move step on each target
 const SIZES = {
     hud: [64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144],
@@ -197,7 +209,9 @@ function limitText(e) {
     const r = e.res, v = e.view;
     if (e.packError) return 'Speed limit: no map';
     if (!e.active) return 'Speed limit: ' + (e.enabled() ? 'car off' : 'off');
-    if (v && v.limit) return 'Speed limit: ' + v.limit + ' km/h' + (v.inferred ? ' (default for this road)' : '');
+    const cam = v && v.camera ? ', speed camera in ' + v.camera : '';
+    if (v && v.limit) return 'Speed limit: ' + v.limit + ' km/h' + (v.inferred ? ' (default for this road)' : '') + cam;
+    if (cam) return 'Speed limit: not known' + cam;
     if (!r || r.state === 'nofix') return 'Speed limit: waiting for a position';
     if (r.state === 'outside') return 'Speed limit: outside the map';
     return 'Speed limit: no road here';
@@ -267,6 +281,8 @@ mgu.run({
             once('show', show, () => ui.selected('SL_SHOW', show));
             once('over', over, () => ui.selected('SL_OVER', over));
             once('nolim', nolim, () => ui.selected('SL_NOLIMIT', nolim));
+            const cams = Math.max(0, CAMS.indexOf(s.get('cameras')));
+            once('cams', cams, () => ui.selected('SL_CAMS', cams));
             once('limit', lim, () => ui.text('SL_LIMIT', lim));
             once('keep', !!s.get('hudKeep'), () => ui.checked('SL_HUD_KEEP', !!s.get('hudKeep')));
             once('map', mapText(engine), () => ui.text('SL_MAP', mapText(engine)));
@@ -278,6 +294,7 @@ mgu.run({
         ui.onClick('SL_SHOW', (ev) => { const v = SHOW[ev.row]; if (v) { done.show = ev.row; s.set('show', v); } });
         ui.onClick('SL_OVER', (ev) => { const v = OVER[ev.row]; if (v != null) { done.over = ev.row; s.set('overspeed', v); } });
         ui.onClick('SL_NOLIMIT', (ev) => { const v = NOLIMIT[ev.row]; if (v) { done.nolim = ev.row; s.set('noLimit', v); } });
+        ui.onClick('SL_CAMS', (ev) => { const v = CAMS[ev.row]; if (v) { done.cams = ev.row; s.set('cameras', v); } });
         ui.onClick('SL_HUD_KEEP', () => { if (on(placeOf('hud'))) s.set('hudKeep', !s.get('hudKeep')); });
         ['hud', 'cluster'].forEach((k) => {
             const R = k === 'hud' ? 'SL_HUD' : 'SL_CL', slider = sliders[k];

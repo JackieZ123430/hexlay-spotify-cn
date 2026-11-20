@@ -12,6 +12,7 @@
  * sign never makes the map target wanted by itself (never takes the centre from the stock map). (Not the panel
  * target, beside the speed: it is the slot BMW's own trip and board computer content uses, one content at a time,
  * so the sign there hid it.)
+ * A view with camera: '350 m' (a speed camera ahead) adds the camera pill to the sign's right (sign.js).
  * HUD (800 x 480): beside BMW's own speed (transparent pixels are see-through); it gives way to BMW's pop-ups on the
  * HUD (yield 1), unless setting "hudKeep" keeps it over them (yield 0).
  * Each place has its size and offset settings: hudSize/X/Y, clusterSize/X/Y (the map). A view
@@ -20,12 +21,13 @@
  * connection: cluster-render releases the surfaces at once.
  */
 const { ClusterRender } = require('./crclient');
-const { drawSign } = require('./sign');
+const { drawSign, signWidth } = require('./sign');
 
 const TARGETS = {
     hud: { w: 800, h: 480, cx: 175, cy: 290, size: 'hudSize', x: 'hudX', y: 'hudY', def: 88 },
-    // the top centre of the map area: its corners sit behind the dials
-    map: { w: 1088, h: 480, cx: 544, cy: 110, size: 'clusterSize', x: 'clusterX', y: 'clusterY', def: 110 },
+    // the bottom of the phone map, left of the car's arrow (bottom centre): the area narrows towards the bottom
+    // between the dials, and its corners sit behind them
+    map: { w: 1088, h: 480, cx: 400, cy: 405, size: 'clusterSize', x: 'clusterX', y: 'clusterY', def: 110, pillLeft: true },
 };
 const LAYER_RX = /^layer \d+ (\S+) of (.+) on (\w+), (\w+) z -?\d+[^:]*: (\w+)/;
 const STATUS_MS = 3000;          // while the sign is on the cluster's map: notice soon that the phone map went
@@ -76,13 +78,16 @@ class Outputs {
         try { cr.close(); } catch (e) { /* gone */ }
     }
 
-    _where(t) {
+    /** Where the picture goes: the sign centred on its place, a camera pill (width W) running on to its right, or on
+     * the phone map to its left (clear of the car's arrow, TARGETS pillLeft). */
+    _where(t, camera) {
         const s = this.settings, T = TARGETS[t];
-        const size = Number(s.get(T.size)) || T.def;
+        const size = Number(s.get(T.size)) || T.def, W = signWidth(size, camera);
         const dx = Number(s.get(T.x)) || 0, dy = Number(s.get(T.y)) || 0;
-        const x = Math.max(0, Math.min(T.w - size, Math.round(T.cx + dx - size / 2)));
+        const left = T.pillLeft ? W - size : 0;
+        const x = Math.max(0, Math.min(T.w - W, Math.round(T.cx + dx - size / 2 - left)));
         const y = Math.max(0, Math.min(T.h - size, Math.round(T.cy + dy - size / 2)));
-        return { size, x, y };
+        return { size, W, x, y };
     }
 
     _wanted(t) {
@@ -107,15 +112,17 @@ class Outputs {
                 if (L && L.visible) { cr.set(L.ref, { visible: 0 }); L.visible = false; }
                 return;
             }
-            const w = this._where(t);
-            // the pixels only when the sign changes (limit, size, default, over): not on every tick
-            const key = [this.view.limit, w.size, !!this.view.inferred, !!this.view.over].join(':');
-            const sign = L && L.size === w.size && L.key === key ? null : drawSign(this.view.limit, { size: w.size, inferred: this.view.inferred, over: this.view.over });
-            if (L && L.size !== w.size) { cr.drop(L.ref); L = null; }
+            const cam = this.view.camera || '', w = this._where(t, cam);
+            // the pixels only when the picture changes (limit, size, default, over, the camera's distance step): not
+            // on every tick
+            const key = [this.view.limit, w.size, !!this.view.inferred, !!this.view.over, cam].join(':');
+            const sign = L && L.size === w.size && L.W === w.W && L.key === key ? null
+                : drawSign(this.view.limit, { size: w.size, inferred: this.view.inferred, over: this.view.over, camera: cam, pillLeft: !!TARGETS[t].pillLeft });
+            if (L && (L.size !== w.size || L.W !== w.W)) { cr.drop(L.ref); L = null; }      // (a camera came or went)
             const yld = t === 'hud' && this.settings.get('hudKeep') ? 0 : 1;
             if (!L) {
-                const ref = cr.image({ target: t, class: 'overlay', z: 20, x: w.x, y: w.y, w: w.size, h: w.size, iw: w.size, ih: w.size, fps: 4, visible: 1, yield: yld });
-                L = this.layers[t] = { ref, size: w.size, x: w.x, y: w.y, key: '', visible: true, yld };
+                const ref = cr.image({ target: t, class: 'overlay', z: 20, x: w.x, y: w.y, w: w.W, h: w.size, iw: w.W, ih: w.size, fps: 4, visible: 1, yield: yld });
+                L = this.layers[t] = { ref, size: w.size, W: w.W, x: w.x, y: w.y, key: '', visible: true, yld };
             } else {
                 if (L.x !== w.x || L.y !== w.y) { cr.set(L.ref, { x: w.x, y: w.y }); L.x = w.x; L.y = w.y; }
                 if (L.yld !== yld) { cr.set(L.ref, { yield: yld }); L.yld = yld; }

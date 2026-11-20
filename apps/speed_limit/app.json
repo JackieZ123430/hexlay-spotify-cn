@@ -2,7 +2,7 @@
   "id": "speed_limit",
   "title": "Speed Limit",
   "description": "The speed limit of the road you're on, on the cluster's map and the head-up display, from an offline OpenStreetMap map of Georgia. Read-only.",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "vendor": "custom",
   "loggingId": "OASL",
   "iconGlyph": "60",
@@ -72,6 +72,15 @@
           [
             "Show nothing",
             "Show ---"
+          ]
+        ],
+        [
+          "dropdown",
+          "SL_CAMS",
+          "Speed cameras",
+          [
+            "Warn",
+            "Off"
           ]
         ],
         [
@@ -257,6 +266,23 @@
         [
           "dashes",
           "Show ---"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "cameras",
+      "label": "Speed cameras",
+      "type": "choice",
+      "default": "warn",
+      "options": [
+        [
+          "warn",
+          "Warn"
+        ],
+        [
+          "off",
+          "Off"
         ]
       ],
       "hidden": true

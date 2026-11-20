@@ -52,6 +52,13 @@ check(P.oneway_of({'highway': 'motorway'}, 0), (1, False), 'a motorway is one-wa
 check(P.oneway_of({'highway': 'motorway', 'oneway': 'no'}, 0), (0, False), 'unless oneway=no')
 check(P.oneway_of({}, 6), (0, False), 'two-way')
 
+# speed cameras: the direction of the traffic they check
+check(P.camera_direction('75'), 75, 'camera direction in degrees')
+check(P.camera_direction('370'), 10, 'degrees past 360 wrap')
+check(P.camera_direction('ne'), 45, 'a cardinal direction')
+check(P.camera_direction('forward'), 0xFFFF, 'forward: not known without the way')
+check(P.camera_direction(None), 0xFFFF, 'no direction')
+
 # classes
 check(P.road_class({'highway': 'primary'}), 2, 'primary')
 check(P.road_class({'highway': 'trunk_link'}), 1, 'a trunk ramp is trunk')

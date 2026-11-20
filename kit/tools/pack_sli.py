@@ -28,6 +28,9 @@ Layout (little endian; sections 4-byte aligned):
           u32 way             OSM way id
   PNTS  u32 n, n x { i16 dx, i16 dy }  decimetres from the piece's first point
   GRID  u32 cells, u32 key[cells] (row * cols + col, sorted), u32 first[cells + 1], u32 piece[]
+  CAMS  (optional: a reader without it ignores it) u32 n, n x 12 bytes: i32 x, i32 y (Web Mercator decimetres),
+        u16 direction of the traffic it checks (degrees from north, 0xFFFF not known), u8 maxspeed (0 not known), u8 0.
+        From highway=speed_camera nodes and the devices of enforcement=maxspeed relations.
 
 A oneway road's piece runs the way traffic goes (oneway=-1 is turned round, its limits swapped). Pieces are in the
 Z-order of the grid cell they start in, so a place's roads are close together in the file; a way's pieces are not
@@ -59,6 +62,8 @@ ROAD = {
 }
 F_ONEWAY, F_TUNNEL, F_LINK, F_ROUNDABOUT, F_URBAN, F_BRIDGE, F_MINOR = 1, 2, 4, 8, 16, 32, 64
 SRC_NONE, SRC_NUM, SRC_ZONE, SRC_VAR = 0, 1, 2, 3
+CARDINAL = {'N': 0, 'NNE': 22, 'NE': 45, 'ENE': 67, 'E': 90, 'ESE': 112, 'SE': 135, 'SSE': 157, 'S': 180, 'SSW': 202,
+            'SW': 225, 'WSW': 247, 'W': 270, 'WNW': 292, 'NW': 315, 'NNW': 337}
 ZONES = {'urban': 60, 'rural': 90, 'motorway': 110, 'living_street': 20, 'walk': 20, 'pedestrian': 20}
 URBAN_LANDUSE = ('residential', 'commercial', 'retail', 'industrial', 'garages', 'construction', 'education')
 PLACE_RADIUS = {'city': 3000, 'town': 1500, 'village': 600, 'suburb': 700, 'quarter': 400, 'neighbourhood': 300,
@@ -392,6 +397,18 @@ def limits(t):
     return f[0], f[1], b[0], b[1]
 
 
+def camera_direction(v):
+    """Degrees (0..359) of a camera's direction=* (degrees or N/NE/...), or 0xFFFF; several or forward/backward: none."""
+    v = (v or '').strip().upper()
+    if v in CARDINAL:
+        return CARDINAL[v]
+    try:
+        d = float(v)
+    except ValueError:
+        return 0xFFFF
+    return int(round(d)) % 360
+
+
 def oneway_of(t, cls):
     ow = t.get('oneway', '')
     rb = t.get('junction') in ('roundabout', 'circular')
@@ -473,10 +490,13 @@ def read(path, log):
     t0 = time.time()
     rel_areas = []          # [(member way ids outer)]
     member_ways = set()
+    devices = set()         # speed cameras of enforcement=maxspeed relations
     for kind, raw in _blocks(path):
         if kind != 'data':
             continue
         for _, rid, mm, t in _block(raw, {'rels'}):
+            if t.get('type') == 'enforcement' and t.get('enforcement') == 'maxspeed':
+                devices.update(m[1] for m in mm if m[0] == 'node' and m[2] == 'device')
             if t.get('type') in ('multipolygon', 'boundary') and is_urban_area(t):
                 outer = [m[1] for m in mm if m[0] == 'way' and m[2] in ('outer', '')]
                 rel_areas.append(outer)
@@ -506,6 +526,7 @@ def read(path, log):
     lat = array('i', bytes(4 * len(ids)))
     lon = array('i', bytes(4 * len(ids)))
     places = []
+    cameras = []            # (lat, lon, direction, maxspeed)
     k, n = 0, len(ids)
     for kind, raw in _blocks(path):
         if kind != 'data':
@@ -513,12 +534,15 @@ def read(path, log):
         for _, nid, la, lo, tags in _block(raw, {'nodes'}):
             if tags and tags.get('place') in PLACE_RADIUS:
                 places.append((la, lo, tags['place']))
+            if tags and tags.get('highway') == 'speed_camera' or nid in devices:
+                t = tags or {}
+                cameras.append((la, lo, camera_direction(t.get('direction')), parse_limit(t.get('maxspeed'))[0]))
             while k < n and ids[k] < nid:
                 k += 1
             if k < n and ids[k] == nid:
                 lat[k] = int(round(la * 1e7))
                 lon[k] = int(round(lo * 1e7))
-    log('  pass 3: %d nodes, %d places (%.0f s)' % (n, len(places), time.time() - t0))
+    log('  pass 3: %d nodes, %d places, %d speed cameras (%.0f s)' % (n, len(places), len(cameras), time.time() - t0))
 
     def coords(refs):
         out = []
@@ -531,7 +555,7 @@ def read(path, log):
     rings = [coords(a) for a in areas]
     for outer in rel_areas:
         rings += assemble_rings([coords(way_refs[w]) for w in outer if w in way_refs])
-    return roads, rings, places, coords
+    return roads, rings, places, coords, cameras
 
 
 # ---------------------------------------------------------------- compiling
@@ -671,7 +695,15 @@ def unmerc_lat(y):
     return math.degrees(2 * math.atan(math.exp(y / R_EARTH)) - math.pi / 2)
 
 
-def write(path, pieces, cells, grid, bbox, meta_extra):
+def cams_section(cameras):
+    out = bytearray(struct.pack('<I', len(cameras)))
+    for la, lo, d, ms in cameras:
+        x, y = merc(la, lo)
+        out += struct.pack('<iiHBB', int(round(x * 10)), int(round(y * 10)), d, min(255, ms), 0)
+    return bytes(out)
+
+
+def write(path, pieces, cells, grid, bbox, meta_extra, cameras=None):
     piec = bytearray(struct.pack('<I', len(pieces)))
     pnts = array('h')
     for x0, y0, d, cls, flags, lf, lb, src, wid, _ in pieces:
@@ -690,9 +722,9 @@ def write(path, pieces, cells, grid, bbox, meta_extra):
     first.append(len(ids))
     grid_b = struct.pack('<I', len(keys)) + array('I', keys).tobytes() + first.tobytes() + ids.tobytes()
     meta = dict(meta_extra, bbox=[round(v, 6) for v in bbox], grid=grid, pieces=len(pieces), points=len(pnts) // 2,
-                attribution='© OpenStreetMap contributors (ODbL)')
+                cameras=len(cameras or []), attribution='© OpenStreetMap contributors (ODbL)')
     meta_b = json.dumps(meta, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
-    secs = [(b'META', meta_b), (b'PIEC', bytes(piec)), (b'PNTS', pnts_b), (b'GRID', grid_b)]
+    secs = [(b'META', meta_b), (b'PIEC', bytes(piec)), (b'PNTS', pnts_b), (b'GRID', grid_b), (b'CAMS', cams_section(cameras or []))]
     off = 16 + 12 * len(secs)
     table, body = b'', b''
     for sid, data in secs:
@@ -717,11 +749,11 @@ def main(argv=None):
     t0 = time.time()
     log('reading ' + a.pbf)
     ts = header_timestamp(a.pbf)
-    roads, rings, places, coords = read(a.pbf, log)
+    roads, rings, places, coords, cameras = read(a.pbf, log)
     pieces, cells, grid, bbox, stats = compile_pack(roads, rings, places, coords, log)
     data_date = time.strftime('%Y-%m-%d', time.gmtime(ts)) if ts else None
     write(a.out, pieces, cells, grid, bbox, {'region': a.region, 'source': os.path.basename(a.pbf),
-                                              'data': data_date, 'built': time.strftime('%Y-%m-%d')})
+                                              'data': data_date, 'built': time.strftime('%Y-%m-%d')}, cameras)
     km = stats['km'] or 1
     log('%s: %.1f MB, %d pieces, %.0f km of road (%.0f s)' % (a.out, os.path.getsize(a.out) / 1e6, len(pieces), km,
                                                                time.time() - t0))

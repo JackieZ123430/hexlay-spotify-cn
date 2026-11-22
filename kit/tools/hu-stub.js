@@ -324,7 +324,16 @@ function runLive(stage, dataDir) {
     const send = (m) => { if (process.connected) process.send(m); };
     const fmt = (a) => a.map((x) => (x && x.stack) ? x.stack : (typeof x === 'object' ? JSON.stringify(x) : String(x))).join(' ');
     const log = {};
-    ['error', 'warn', 'info', 'debug'].forEach((l) => { log[l] = (...a) => { if (l !== 'debug' || process.env.MGU_DEBUG) send({ t: 'log', l, s: fmt(a) }); }; });
+    // as in the car (kit/mgu.js fileLog): the app's log also goes to <data>/<app id>.log, which an app may read back
+    // (Speed Limit's QR log)
+    const logFile = path.join(dataDir, path.basename(stage) + '.log');
+    const toFile = (l, s) => {
+        try {
+            if (fs.existsSync(logFile) && fs.statSync(logFile).size > 256 * 1024) fs.renameSync(logFile, logFile + '.1');
+            fs.appendFileSync(logFile, new Date().toISOString() + ' ' + l.toUpperCase() + ' ' + s + '\n');
+        } catch (e) { /* the data folder not made yet */ }
+    };
+    ['error', 'warn', 'info', 'debug'].forEach((l) => { log[l] = (...a) => { if (l !== 'debug' || process.env.MGU_DEBUG) { const s = fmt(a); send({ t: 'log', l, s }); toFile(l, s); } }; });
     console.log = log.info; console.info = log.info; console.warn = log.warn; console.error = log.error;
     // (no recursive option on Node 8: made one level at a time)
     (function mkdirp(dir) { if (fs.existsSync(dir)) return; mkdirp(path.dirname(dir)); fs.mkdirSync(dir); })(dataDir);

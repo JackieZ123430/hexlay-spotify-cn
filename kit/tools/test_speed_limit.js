@@ -15,6 +15,9 @@ const ROOT = path.join(__dirname, '..', '..');
 const { LimitPack, F, merc, unmerc, groundScale } = require(path.join(ROOT, 'apps', 'speed_limit', 'limitpack'));
 const { Matcher, limitOf, bearing, angDiff } = require(path.join(ROOT, 'apps', 'speed_limit', 'matcher'));
 const { Cameras, camText } = require(path.join(ROOT, 'apps', 'speed_limit', 'cameras'));
+const { Fixes } = require(path.join(ROOT, 'apps', 'speed_limit', 'fixes'));
+const QL = require(path.join(ROOT, 'apps', 'speed_limit', 'qrlog'));
+const QR = require(path.join(ROOT, 'apps', 'speed_limit', 'qr'));
 
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
@@ -298,6 +301,92 @@ else {
     ok = steps === '450 m, 400 m, 100 m, 100 m, 0 m';
     console.log('  ' + (ok ? 'ok   ' : 'FAIL ') + 'distance steps: ' + steps);
     if (!ok) failures.push('camera: distance steps ' + steps);
+}
+
+/* ---------- the driver's corrections: the S4 -> Tbilisi Bypass loop near Rustavi (its own way, no limit tagged) ---------- */
+console.log('\ncorrections (the S4 / Tbilisi Bypass loop near Rustavi):');
+function okIf(ok, text) { console.log('  ' + (ok ? 'ok   ' : 'FAIL ') + text); if (!ok) failures.push('corrections: ' + text); }
+const LOOP = 59594305, S4N = 426110697, AFTER = 120781228;
+if (!ways.has(LOOP) || !ways.has(S4N) || !ways.has(AFTER)) okIf(false, 'the loop and its roads are in the pack');
+else {
+    // S4 north-bound to the loop's start, the loop, the bypass after it: 2 fixes a second at 40 km/h
+    function driveLoop(m) {
+        const line = [];
+        const s4 = geom(S4N), loop = geom(LOOP), after = geom(AFTER);
+        const start = loop[0], gs = groundScale(start[1]);
+        // the last 300 m of S4 before the loop leaves it (the S4 points nearest the loop's start, and before them)
+        let k = 0;
+        s4.forEach((p, i) => { if (Math.hypot(p[0] - start[0], p[1] - start[1]) < Math.hypot(s4[k][0] - start[0], s4[k][1] - start[1])) k = i; });
+        let back = k, run = 0;
+        while (back > 0 && run < 300) { run += Math.hypot(s4[back][0] - s4[back - 1][0], s4[back][1] - s4[back - 1][1]) * gs; back--; }
+        s4.slice(back, k).concat(loop, after.slice(1)).forEach((p) => line.push(p));
+        const out = [], step = 40 / 3.6 / 2;
+        let acc = 0, t = 0;
+        for (let i = 1; i < line.length; i++) {
+            const a = line[i - 1], b = line[i], L = Math.hypot(b[0] - a[0], b[1] - a[1]) * gs;
+            while (acc <= L) {
+                const f = L ? acc / L : 0, h = bearing(b[0] - a[0], b[1] - a[1]);
+                const r = m.update({ x: a[0] + (b[0] - a[0]) * f, y: a[1] + (b[1] - a[1]) * f, heading: h, speed: 40 }, t += 500);
+                out.push(r);
+                acc += step;
+            }
+            acc -= L;
+        }
+        return out;
+    }
+    const on = (rs, way) => rs.filter((r) => r.way === way);
+    const plain = driveLoop(new Matcher(pack, {}));
+    const loopPlain = on(plain, LOOP);
+    okIf(loopPlain.length > 20 && loopPlain.every((r) => r.inferred && r.limit !== 110),
+        'untagged ramp: the settlement / rural default, not the motorway\'s 110 (' + (loopPlain[0] || {}).limit + ')');
+    const tmp = path.join(require('os').tmpdir(), 'sl_fixes_' + process.pid + '.json');
+    try { require('fs').unlinkSync(tmp); } catch (e) { /* none */ }
+    const fx = new Fixes(tmp, null);
+    fx.set(LOOP, 50, 50, { lat: 41.58993, lon: 44.94827 });
+    const fixed = driveLoop(new Matcher(pack, { fixes: fx }));
+    const loopFixed = on(fixed, LOOP), s4f = on(fixed, S4N), afterF = on(fixed, AFTER);
+    okIf(loopFixed.length > 20 && loopFixed.every((r) => r.limit === 50 && r.corrected && !r.inferred), 'corrected to 50: 50 all round the loop');
+    okIf(s4f.length > 5 && s4f.every((r) => r.limit === on(plain, S4N)[0].limit && !r.corrected) && afterF.length && afterF.every((r) => r.limit === on(plain, AFTER)[0].limit && !r.corrected),
+        'S4 before it and the bypass after it keep the map\'s ' + (s4f[0] || {}).limit + ' / ' + (afterF[0] || {}).limit);
+    const again = new Fixes(tmp, null);
+    okIf(again.count === 1 && again.get(LOOP).f === 50, 'kept in the file: read back after a restart');
+    // a correction the map has caught up with goes by itself: S4 "corrected" to the limit it already has
+    const s4lim = on(plain, S4N)[0].limit;
+    again.set(S4N, s4lim, s4lim, null);
+    driveLoop(new Matcher(pack, { fixes: again }));
+    okIf(!again.get(S4N) && again.get(LOOP), 'one the map tags the same way removes itself (the loop\'s stays)');
+    again.set(S4N, 70, 70, null);
+    okIf(again.undo() && !again.get(S4N) && again.count === 1, 'undo: the last one goes');
+    okIf(again.clear() && again.count === 0 && new Fixes(tmp, null).count === 0, 'clear all: none left, in the file too');
+    try { require('fs').unlinkSync(tmp); } catch (e) { /* none */ }
+}
+
+/* ---------- the QR log: codes that decode back into the log ---------- */
+console.log('\nQR log:');
+{
+    const zlib = require('zlib'), dict = require(path.join(ROOT, 'apps', 'speed_limit', 'qrdict'));
+    const lines = ['-- 2026-11-22 (UTC)'];
+    for (let i = 0; i < 400; i++) lines.push('12:' + String(10 + (i >> 6)).padStart(2, '0') + ':' + String(i % 60).padStart(2, '0') + ' drive: match way ' + (59594305 + i) + ' ' + (50 + i % 5 * 10) + 'd shown 60 at 41.58993,44.94827 h' + (i % 360) + ' 42km/h nav 3m off');
+    const text = lines.join('\n');
+    let ok = true, got = [];
+    ['large', 'medium', 'small'].forEach((size) => {
+        const pg = QL.pages(text, size, 'speed_limit 1.0.8');
+        pg.forEach((b, i) => {
+            QR.encode(b, { version: QL.SIZES[size].version, ecl: 'L' });     // throws when it doesn't fit
+            const nl = b.indexOf(10), head = b.slice(0, nl).toString();
+            if (head !== 'MGULOG2 d1 speed_limit 1.0.8 ' + (i + 1) + '/' + pg.length) ok = false;
+            const body = zlib.inflateRawSync(b.slice(nl + 1), { dictionary: dict }).toString();
+            if (size === 'medium') got = body.split('\n').concat(got);
+        });
+    });
+    // the newest lines are all there (relative times "+<s>" written back as they are: compare the messages)
+    const msg = (l) => l.replace(/^(\d\d:\d\d:\d\d|\+\d+) /, '');
+    const want = lines.slice(-60).map(msg), have = got.filter((l) => !/^-- /.test(l)).map(msg);
+    ok = ok && want.every((w) => have.indexOf(w) >= 0);
+    const { Canvas } = (() => { try { return require(path.join(ROOT, 'kit', 'runtime', 'canvas')); } catch (e) { return {}; } })();
+    if (Canvas) { const cv = new Canvas(1600, 520); QL.drawCode(cv, QR.encode(QL.pages(text, 'medium', 'x')[0], { version: 20, ecl: 'L' }), { page: 1, pages: 3, size: 'Medium' }); ok = ok && cv.png().length > 1000; }
+    console.log('  ' + (ok ? 'ok   ' : 'FAIL ') + 'pages fit their codes, read back with the dictionary, newest lines on page 1, drawn');
+    if (!ok) failures.push('QR log');
 }
 
 if (failures.length) { console.log('\nFAIL:\n  ' + failures.join('\n  ')); process.exit(1); }

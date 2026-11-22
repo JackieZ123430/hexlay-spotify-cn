@@ -2,7 +2,7 @@
   "id": "speed_limit",
   "title": "Speed Limit",
   "description": "The speed limit of the road you're on, on the cluster's map and the head-up display, from an offline OpenStreetMap map of Georgia. Read-only.",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "vendor": "custom",
   "loggingId": "OASL",
   "iconGlyph": "60",
@@ -87,6 +87,51 @@
           "text",
           "SL_LIMIT",
           "Speed limit: -"
+        ],
+        [
+          "header",
+          "SL_HEAD_ROAD",
+          "This road"
+        ],
+        [
+          "text",
+          "SL_ROAD",
+          "This road: -"
+        ],
+        [
+          "dropdown",
+          "SL_FIX",
+          "Correct its limit",
+          [
+            "Use the map",
+            "20 km/h",
+            "30 km/h",
+            "40 km/h",
+            "50 km/h",
+            "60 km/h",
+            "70 km/h",
+            "80 km/h",
+            "90 km/h",
+            "100 km/h",
+            "110 km/h",
+            "120 km/h",
+            "130 km/h"
+          ]
+        ],
+        [
+          "text",
+          "SL_FIXES",
+          "Corrections: none"
+        ],
+        [
+          "button",
+          "SL_FIX_UNDO",
+          "Undo the last correction"
+        ],
+        [
+          "button",
+          "SL_FIX_CLEAR",
+          "Clear all corrections"
         ],
         [
           "header",
@@ -187,6 +232,21 @@
         ],
         [
           "header",
+          "SL_HEAD_LOG",
+          "Drive log"
+        ],
+        [
+          "checkbox",
+          "SL_LOG",
+          "Keep a drive log (the roads matched)"
+        ],
+        [
+          "button",
+          "SL_QR",
+          "Show the log as QR codes"
+        ],
+        [
+          "header",
           "SL_HEAD_MAP",
           "Map"
         ],
@@ -194,6 +254,26 @@
           "text",
           "SL_MAP",
           ""
+        ]
+      ]
+    },
+    {
+      "name": "SL_QR",
+      "kind": "canvas",
+      "title": "Log",
+      "graphic": "SL_QR_GFX",
+      "buttons": [
+        [
+          "SL_QR_PREV",
+          "Previous"
+        ],
+        [
+          "SL_QR_NEXT",
+          "Next"
+        ],
+        [
+          "SL_QR_SIZE",
+          "Size: Medium"
         ]
       ]
     }
@@ -285,6 +365,13 @@
           "Off"
         ]
       ],
+      "hidden": true
+    },
+    {
+      "key": "driveLog",
+      "label": "Drive log",
+      "type": "bool",
+      "default": true,
       "hidden": true
     },
     {
@@ -443,6 +530,20 @@
         30
       ],
       "hidden": true
+    },
+    {
+      "key": "renderer",
+      "label": "Renderer",
+      "type": "choice",
+      "default": "software",
+      "options": [
+        [
+          "software",
+          "Software"
+        ]
+      ],
+      "hidden": true,
+      "comment": "the QR screen is the HMI's own picture: the kit never connects to (or waits for) the GPU renderer"
     }
   ]
 }

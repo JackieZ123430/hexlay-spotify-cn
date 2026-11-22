@@ -14,6 +14,10 @@
  *
  * The app's page is the HMI's own list (no GPU renderer), laid out as Maps on cluster's (below). Its settings are
  * app.json "hidden" ones: the page itself shows and changes them.
+ *
+ * In the car: the driver corrects the limit of the road the car is on (fixes.js, data/corrections.json, kept by app
+ * updates and new maps), and the drive log (setting "driveLog") writes a line to the app's log each time the road or
+ * the limit changes; the page's "Show the log as QR codes" puts the log on screen for a phone photo (qrlog.js).
  */
 const path = require('path');
 const mgu = require('./kit/mgu');
@@ -23,6 +27,8 @@ const { Matcher } = require('./matcher');
 const { Position, DemoDrive } = require('./position');
 const { Cameras, camText } = require('./cameras');
 const { Outputs, TARGETS } = require('./outputs');
+const { Fixes } = require('./fixes');
+const { unmerc } = require('./limitpack');
 
 const APP_ID = 'speed_limit';
 const PACK = path.join(__dirname, 'georgia.pack');
@@ -31,6 +37,7 @@ const STILL_MS = 2000;          // standing still (a light, a jam): every 2 s
 const BOOT_WAIT_MS = 5000;      // at start-up, the time the power state has to arrive before the app runs without it
 const VIEW_HOLD_MS = 8000;
 const ACTIVE = { 7: true, 8: true, 10: true, 12: true };
+const DRIVE_LOG_PER_MIN = 40;   // the drive log's most lines a minute (a road that flips back and forth)
 
 /* ---------- the engine: runs with or without the app's screens ---------- */
 class Engine {
@@ -43,6 +50,9 @@ class Engine {
         this.meta = null;               // the map's META (its date, for the page), read once
         this.packError = '';
         try { const p = LimitPack.open(PACK); this.meta = p.meta; this.log.info('map: ' + p.describe()); p.close(); } catch (e) { this.packError = String(e.message || e); this.log.error('map: ' + this.packError); }
+        this.fixes = new Fixes(path.join(bg.dataDir || '.', 'corrections.json'), this.log);
+        if (this.fixes.count) this.log.info('corrections: ' + this.fixes.count + (this.fixes.count === 1 ? ' road' : ' roads'));
+        this.drive = { key: '', minute: 0, n: 0 };   // the drive log's last line and its lines this minute
         this.position = new Position(this.signals, this.log);
         this.outputs = new Outputs(APP_ID, this.log, this.settings);
         this.demoOn = this.settings.get('demo') === 'on';   // the PC's emulator and preview; never set in a car
@@ -108,7 +118,7 @@ class Engine {
             this.log.info('on: matching');
             try {
                 this.pack = LimitPack.open(PACK);
-                this.matcher = new Matcher(this.pack, { defaults: this.defaults() });
+                this.matcher = new Matcher(this.pack, { defaults: this.defaults(), fixes: this.fixes });
                 this.cams = new Cameras(this.pack.cameras);
                 if (this.demoOn) this.demo = new DemoDrive(this.pack, { way: this.settings.get('demoWay'), speed: this.settings.get('demoSpeed') });
             } catch (e) { this.packError = String(e.message || e); this.log.error('map: ' + this.packError); this.active = false; return; }
@@ -146,6 +156,58 @@ class Engine {
         this.camera = this.cams && this.settings.get('cameras') !== 'off' ? this.cams.update(this.fix, this.matcher.heading, now) : null;
         this._decide(now);
         this.outputs.update(this.view, now);
+        if (this.settings.get('driveLog') !== false) this._driveLog(now);
+        this._changed();
+    }
+
+    /** The drive log: a line when the road, its limit or what is shown changes (a few a minute), for a report. */
+    _driveLog(now) {
+        const r = this.res, v = this.view, f = this.fix;
+        const lim = (o) => (o && o.limit ? o.limit + (o.corrected ? 'c' : o.inferred ? 'd' : '') : '-');
+        const key = (r ? r.state + ' way ' + (r.way || '-') + ' ' + lim(r) : 'none') + ' shown ' + lim(v) + (v && v.camera ? ' cam' : '');
+        if (key === this.drive.key) return;
+        const minute = Math.floor(now / 60000);
+        if (minute !== this.drive.minute) { this.drive.minute = minute; this.drive.n = 0; }
+        if (++this.drive.n > DRIVE_LOG_PER_MIN) return;
+        this.drive.key = key;
+        let at = '';
+        if (f) {
+            const ll = f.lat != null ? [f.lat, f.lon] : unmerc(f.x, f.y);
+            at = ' at ' + ll[0].toFixed(5) + ',' + ll[1].toFixed(5) + (this.matcher && this.matcher.heading != null ? ' h' + Math.round(this.matcher.heading) : '') +
+                (this.speed != null ? ' ' + Math.round(this.speed) + 'km/h' : '') + (f.source ? ' ' + f.source : '') + (r && r.dist != null ? ' ' + Math.round(r.dist) + 'm off' : '');
+        }
+        this.log.info('drive: ' + key + (r && r.corrected ? ' (map ' + (r.mapLimit || '-') + (r.mapInferred ? 'd' : '') + ')' : '') + at);
+    }
+
+    /** The road the car is on now, for a correction: { way, dir, P } or null. */
+    road() {
+        const r = this.res;
+        if (!this.active || !this.pack || !r || !r.way || r.piece < 0 || (r.state !== 'match' && r.state !== 'hold')) return null;
+        return { way: r.way, dir: r.dir, P: this.pack.piece(r.piece) };
+    }
+
+    /** Correct the limit of the road the car is on (0: back to the map's). Both directions unless the map gives the
+     * two directions different limits (then the one driven). -> true when done. */
+    correct(kmh) {
+        const rd = this.road();
+        if (!rd) return false;
+        if (!kmh) { this.fixes.remove(rd.way, 'back to the map on the page'); this._refresh(); return true; }
+        const { limitOf } = require('./matcher');
+        const d = this.defaults(), same = (rd.P.flags & 1) || rd.dir === 0 || limitOf(rd.P, 1, d).limit === limitOf(rd.P, -1, d).limit;
+        const old = this.fixes.get(rd.way) || { f: 0, b: 0 };
+        const f = same || rd.dir > 0 ? kmh : old.f, b = same || rd.dir < 0 ? kmh : old.b;
+        const ll = this.fix ? (this.fix.lat != null ? [this.fix.lat, this.fix.lon] : unmerc(this.fix.x, this.fix.y)) : null;
+        this.fixes.set(rd.way, f, b, ll ? { lat: ll[0], lon: ll[1] } : null);
+        this._refresh();
+        return true;
+    }
+    undoFix() { if (this.fixes.undo()) this._refresh(); }
+    clearFixes() { if (this.fixes.clear()) this._refresh(); }
+
+    /** The road's limit again after a correction changed (without waiting for the next tick). */
+    _refresh() {
+        if (this.active && this.matcher && this.matcher.cur && this.res) this.res = this.matcher._result(this.res.state, this.matcher.cur, { candidates: this.res.candidates });
+        if (this.active) { this._decide(Date.now()); this.outputs.update(this.view, Date.now()); }
         this._changed();
     }
 
@@ -157,10 +219,10 @@ class Engine {
         const wasOver = !!(this.view && this.view.over);
         const over = (lim) => thr > 0 && this.speed !== null && lim > 0 && this.speed > lim + thr - (wasOver ? 2 : 0);
         if (r && r.limit && !(r.inferred && s.get('untagged') === 'hide')) {
-            this.view = { limit: r.limit, inferred: r.inferred, over: over(r.limit) };
+            this.view = { limit: r.limit, inferred: r.inferred, over: over(r.limit), corrected: !!r.corrected };
             this.viewAt = now;
         } else if (this.view && this.view.limit && now - this.viewAt < VIEW_HOLD_MS) {
-            this.view = { limit: this.view.limit, inferred: this.view.inferred, over: over(this.view.limit) };
+            this.view = { limit: this.view.limit, inferred: this.view.inferred, over: over(this.view.limit), corrected: this.view.corrected };
         } else if (s.get('noLimit') === 'dashes') {
             this.view = { limit: null, unknown: true, inferred: false, over: false };     // "---", as BMW's own
         } else this.view = null;
@@ -187,12 +249,16 @@ async function background(bg) {
  * Cluster (on the phone map, Maps on cluster's): Cluster sign, Size (a slider), Position with Move left / right / up /
  * down and Default position.
  * HUD: HUD sign, Keep HUD sign over BMW's pop-ups, Size, Position, the moves and Default position.
+ * This road: what the map says of the road the car is on, Correct its limit (Use the map, 20 ... 130 km/h), how many
+ * corrections there are, Undo the last one, Clear all (pressed twice).
+ * Drive log: Keep a drive log (on), Show the log as QR codes (the SL_QR screen: Previous, Next, Size).
  * A section's controls are greyed while Show on leaves its display out. Map: the data's date and licence. Info rows
  * read "Name: Value"; a row is written only when it changes, and only while the page shows. ASCII only. */
 const SHOW = ['cluster', 'hud', 'both', 'off'];
 const OVER = ['0', '5', '10', '15', '20'];
 const NOLIMIT = ['nothing', 'dashes'];
 const CAMS = ['warn', 'off'];
+const FIXV = [0, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130];
 // the slider's sizes (positions 0..10) and the move step on each target
 const SIZES = {
     hud: [64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144],
@@ -240,6 +306,20 @@ function posText(x, y) {
     return 'Position: ' + (h && v ? h + ', ' + v : h || v);
 }
 
+function roadText(e) {
+    const rd = e.road(), r = e.res;
+    if (!rd) return 'This road: ' + (e.active ? 'not on a road' : '-');
+    const lim = (l, inf) => (l ? l + ' km/h' + (inf ? ' (default, none on the map)' : '') : 'none');
+    const id = ', OSM way ' + rd.way;
+    if (r.corrected) return 'This road: your ' + r.limit + ' km/h (map: ' + lim(r.mapLimit, r.mapInferred) + ')' + id;
+    return 'This road: map ' + lim(r.limit, r.inferred) + id;
+}
+
+function fixesText(e) {
+    const n = e.fixes.count;
+    return 'Corrections: ' + (n ? n + (n === 1 ? ' road' : ' roads') + ' (kept by updates)' : 'none');
+}
+
 function mapText(e) {
     return e.meta ? 'Map: OpenStreetMap ' + (e.meta.data || '') + ', (c) OpenStreetMap contributors, ODbL' : 'Map: -';
 }
@@ -253,6 +333,7 @@ mgu.run({
         const once = (key, value, fn) => { if (done[key] === value) return; done[key] = value; Promise.resolve().then(fn).catch(() => {}); };
         const on = (P) => s.get('show') === P.show || s.get('show') === 'both';
         const sliders = { hud: ui.comp('SL_HUD_SIZE'), cluster: ui.comp('SL_CL_SIZE') };
+        let clearArmed = 0;             // Clear all: pressed once at (ms); a second press within 6 s clears
 
         /** A display's section: its status row, size slider, position row and buttons (greyed while it is not chosen). */
         function renderPlace(k) {
@@ -286,6 +367,19 @@ mgu.run({
             once('limit', lim, () => ui.text('SL_LIMIT', lim));
             once('keep', !!s.get('hudKeep'), () => ui.checked('SL_HUD_KEEP', !!s.get('hudKeep')));
             once('map', mapText(engine), () => ui.text('SL_MAP', mapText(engine)));
+            // this road and its correction
+            const rd = engine.road(), fx = rd ? engine.fixes.get(rd.way) : null;
+            const cur = fx ? (rd.dir < 0 ? fx.b : fx.f) || fx.f || fx.b : 0, fi = Math.max(0, FIXV.indexOf(cur));
+            once('road', roadText(engine), () => ui.text('SL_ROAD', roadText(engine)));
+            once('fix', fi, () => ui.selected('SL_FIX', fi));
+            once('en:fix', !!rd, () => ui.enabled('SL_FIX', !!rd));
+            const n = engine.fixes.count, armed = n > 0 && Date.now() - clearArmed < 6000;
+            once('fixes', fixesText(engine), () => ui.text('SL_FIXES', fixesText(engine)));
+            once('en:undo', n > 0, () => ui.enabled('SL_FIX_UNDO', n > 0));
+            once('en:clear', n > 0, () => ui.enabled('SL_FIX_CLEAR', n > 0));
+            const ct = armed ? 'Press again to clear all ' + n : 'Clear all corrections';
+            once('clear', ct, () => ui.text('SL_FIX_CLEAR', ct));
+            once('log', s.get('driveLog') !== false, () => ui.checked('SL_LOG', s.get('driveLog') !== false));
             renderPlace('cluster');
             renderPlace('hud');
         }
@@ -296,6 +390,22 @@ mgu.run({
         ui.onClick('SL_NOLIMIT', (ev) => { const v = NOLIMIT[ev.row]; if (v) { done.nolim = ev.row; s.set('noLimit', v); } });
         ui.onClick('SL_CAMS', (ev) => { const v = CAMS[ev.row]; if (v) { done.cams = ev.row; s.set('cameras', v); } });
         ui.onClick('SL_HUD_KEEP', () => { if (on(placeOf('hud'))) s.set('hudKeep', !s.get('hudKeep')); });
+        // a correction of the road the car is on; off a road the drop-down goes back to what it showed
+        ui.onClick('SL_FIX', (ev) => {
+            const v = FIXV[ev.row];
+            if (v == null || !engine.correct(v)) delete done.fix; else done.fix = ev.row;
+            render();
+        });
+        ui.onClick('SL_FIX_UNDO', () => { engine.undoFix(); render(); });
+        ui.onClick('SL_FIX_CLEAR', () => {
+            if (Date.now() - clearArmed < 6000) { clearArmed = 0; engine.clearFixes(); } else {
+                clearArmed = Date.now();
+                setTimeout(render, 6100);
+            }
+            render();
+        });
+        ui.onClick('SL_LOG', () => s.set('driveLog', s.get('driveLog') === false));
+        ui.onClick('SL_QR', () => { ui.open('SL_QR'); });
         ['hud', 'cluster'].forEach((k) => {
             const R = k === 'hud' ? 'SL_HUD' : 'SL_CL', slider = sliders[k];
             if (slider && slider.on) slider.on('changed', (step) => { const P = placeOf(k), v = P.sizes[step]; if (v && on(P)) { done[R + ':sizeStep'] = step; s.set(P.size, v); } });
@@ -322,5 +432,42 @@ mgu.run({
         });
         ui.onVisible((name, v) => { if (name === 'MAIN' && v) { Object.keys(done).forEach((k) => delete done[k]); render(); } });
         render();
+        qrScreen(ctx, engine);
     },
 });
+
+/* ---------- the QR screen: the app's log as codes to photograph (qrlog.js), for a report without SSH ----------
+ * Made when it opens (the log read, compressed and cut into codes; a report line written first: version, map,
+ * corrections, settings), a code drawn when it is shown; the picture is dropped when the screen closes. */
+function qrScreen(ctx, engine) {
+    const { ui, settings: s, log } = ctx;
+    const Q = require('./qrlog'), qr = require('./qr'), { Canvas } = require('./kit/canvas');
+    const file = path.join(ctx.dataDir || '.', APP_ID + '.log');
+    const st = { size: 'medium', page: 0, list: null };
+    const load = () => {
+        st.list = Q.pages(Q.logText(file), st.size, APP_ID + ' ' + ((ctx.spec && ctx.spec.version) || ''));
+        st.page = Math.min(st.page, st.list.length - 1);
+    };
+    const show = () => {
+        if (!st.list || !ui.isVisible('SL_QR')) return;
+        const cv = new Canvas(1600, 520), q = qr.encode(st.list[st.page], { version: Q.SIZES[st.size].version, ecl: 'L' });
+        Q.drawCode(cv, q, { page: st.page + 1, pages: st.list.length, size: Q.SIZES[st.size].label });
+        ui.image('SL_QR_GFX', cv);
+        ui.text('SL_QR_TITLE', 'Log: code ' + (st.page + 1) + ' of ' + st.list.length);
+        ui.enabled('SL_QR_PREV', st.page > 0);
+        ui.enabled('SL_QR_NEXT', st.page < st.list.length - 1);
+    };
+    ui.onVisible((name, v) => {
+        if (name !== 'SL_QR') return;
+        if (!v) { st.list = null; return; }
+        const m = engine.meta || {}, keys = ['show', 'overspeed', 'noLimit', 'cameras', 'untagged', 'hudKeep', 'hudSize', 'clusterSize'];
+        log.info('report: ' + APP_ID + ' ' + ((ctx.spec && ctx.spec.version) || '') + ', map ' + (m.data || '-') + ' (' + (m.pieces || 0) + ' pieces), ' +
+            engine.fixes.count + ' corrections, ' + (engine.active ? 'on' : 'idle') + ', ' + keys.map((k) => k + '=' + s.get(k)).join(' '));
+        st.page = 0;
+        load();
+        show();
+    });
+    ui.onClick('SL_QR_PREV', () => { if (st.list && st.page > 0) { st.page--; show(); } });
+    ui.onClick('SL_QR_NEXT', () => { if (st.list && st.page < st.list.length - 1) { st.page++; show(); } });
+    ui.onClick('SL_QR_SIZE', () => { st.size = Q.ORDER[(Q.ORDER.indexOf(st.size) + 1) % Q.ORDER.length]; st.page = 0; load(); show(); ui.text('SL_QR_SIZE', 'Size: ' + Q.SIZES[st.size].label); });
+}

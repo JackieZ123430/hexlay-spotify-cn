@@ -2,7 +2,7 @@
 /**
  * matcher.js - which road the car is on, and its speed limit. Node 8.
  *
- *   const m = new Matcher(pack, { defaults: { living: 20, urban: 60, rural: 90, motorway: 110 } });
+ *   const m = new Matcher(pack, { defaults: { living: 20, urban: 60, rural: 90, motorway: 110 }, fixes });
  *   m.update({ x, y, heading, speed }, now)  -> result (below); fix null when there is no position
  *
  * Each update looks at the road pieces within `radius` ground metres (25 by default) and keeps those the car can be
@@ -13,9 +13,13 @@
  *
  * The heading is the position source's when the car moves, else the bearing of the last few metres driven.
  *
+ * fixes (fixes.js, optional): the driver's own limits for a road; they win over the map's. One the map has caught
+ * up with (a newer map tags the same limit) is removed by itself the first time the car is on that road.
+ *
  * result: { state: 'match' | 'hold' | 'none' | 'nofix' | 'outside', limit (km/h or null), inferred (no limit tagged:
  *   the class / settlement default), variable (signs that change), way, piece, cls, flags, dir (1 along the piece,
- *   -1 against, 0 unknown), dist (m), heading, candidates, ms (time spent) }
+ *   -1 against, 0 unknown), dist (m), heading, candidates, ms (time spent), corrected (the driver's own limit),
+ *   mapLimit / mapInferred (what the map alone says, while corrected) }
  */
 const { F, SRC, groundScale } = require('./limitpack');
 
@@ -42,7 +46,7 @@ function limitOf(P, dir, defaults) {
     if ((src === SRC.NUM || src === SRC.ZONE) && lim > 0) return { limit: lim, inferred: false, variable: false, src };
     let def;
     if (P.cls === 7) def = d.living;
-    else if (P.cls === 0) def = d.motorway;
+    else if (P.cls === 0 && !(P.flags & F.LINK)) def = d.motorway;     // (its ramps: the settlement / rural one)
     else if (P.flags & F.URBAN) def = d.urban;
     else def = d.rural;
     return { limit: def || null, inferred: true, variable: src === SRC.VAR, src };
@@ -58,6 +62,7 @@ class Matcher {
         this.holdMs = o.holdMs == null ? 15000 : o.holdMs;
         this.tunnelHoldMs = o.tunnelHoldMs == null ? 600000 : o.tunnelHoldMs;
         this.defaults = Object.assign({}, DEFAULTS, o.defaults || {});
+        this.fixes = o.fixes || null;
         this.reset();
     }
 
@@ -144,8 +149,21 @@ class Matcher {
         if (c) {
             const L = limitOf(c.P, c.dir, this.defaults);
             Object.assign(r, { limit: L.limit, inferred: L.inferred, variable: L.variable, way: c.P.way, piece: c.P.id, cls: c.P.cls, flags: c.P.flags, dir: c.dir, dist: c.dist });
+            const fx = this.fixes && this.fixes.get(c.P.way);
+            if (fx) this._fixed(r, c, fx, L);
         }
         return r;
+    }
+
+    /** The driver's correction of this road (fx { f, b }): its limit for the direction driven; the correction goes once
+     * the map tags the same limits itself. */
+    _fixed(r, c, fx, L) {
+        const tagged = (d) => { const M = limitOf(c.P, d, this.defaults); return M.inferred ? 0 : M.limit; };
+        const oneway = (c.P.flags & F.ONEWAY) !== 0;      // (driven only along its pieces: the other way is no road)
+        if ((!fx.f || fx.f === tagged(1)) && (oneway || !fx.b || fx.b === tagged(-1))) { this.fixes.remove(c.P.way, 'the map has it now'); return; }
+        const v = c.dir > 0 ? fx.f : c.dir < 0 ? fx.b : fx.f === fx.b ? fx.f : 0;
+        if (!v) return;
+        Object.assign(r, { limit: v, inferred: false, variable: false, corrected: true, mapLimit: L.limit, mapInferred: L.inferred });
     }
 
     _update(fix, at) {

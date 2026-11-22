@@ -6,7 +6,7 @@ Three apps for BMW iDrive 7 head units (MGU), installed through the [MGU Store](
 | :--- | :---: | :---: | :--- |
 | [Spotify](#spotify) | 1.0.32 | Yes | Nothing |
 | [M-Copilot](#m-copilot) | 1.0.35 | Yes | Driving signals, service list, fault memory (read-only) |
-| [Speed Limit](#speed-limit) | 1.0.7 | No | Position, speed and power state (read-only) |
+| [Speed Limit](#speed-limit) | 1.0.8 | No | Position, speed and power state (read-only) |
 
 ## Install
 
@@ -73,7 +73,13 @@ No internet, no BMW map, and nothing is sent to the car: it only reads the car's
   km/h), what to show when there's no limit (nothing or ---), speed cameras, and size and position for each sign.
 - **Speed cameras:** a camera ahead on your road within 400 m adds a pill with the distance to the sign.
 - **Roads without a limit** show Georgia's legal default with a grey ring: 60 in a settlement, 90 outside, 110 on
-  motorways, 20 in living streets.
+  motorways (not their ramps), 20 in living streets.
+- **Correct a wrong limit in the car:** on the road, pick its real limit under **This road > Correct its limit**. It
+  covers that OpenStreetMap road (both directions, unless the map gives them different limits) and nothing past it,
+  is kept by app updates and new maps, and goes by itself once OpenStreetMap has the same limit. **Undo** and
+  **Clear all** are there too.
+- **Report a problem without SSH:** the drive log (on by default) notes each road and limit change with its place.
+  **Show the log as QR codes** puts it on screen: photograph the codes and send them with a GitHub issue.
 - **Starts with the car and draws no power parked:** stopped, locked or Off, it drops its subscriptions, closes the
   map and gives the displays back. About 1 MB of memory; wakes twice a second while driving, never while parked.
 - Needs **cluster-render** (comes with Maps on cluster from `robertnisipeanu/idrive-apps`) for the HUD and cluster.
@@ -89,6 +95,8 @@ No internet, no BMW map, and nothing is sent to the car: it only reads the car's
 | ![Speed Limit speed cameras](docs/screenshots/speed_limit_cameras.png) | |
 | **When there's no limit** | **The signs** |
 | ![Speed Limit when there's no limit](docs/screenshots/speed_limit_nolimit.png) | ![Speed Limit signs](docs/screenshots/speed_limit_signs.png) |
+| **This road** (corrected to 50 km/h) | **The log as QR codes** |
+| ![Speed Limit this road](docs/screenshots/speed_limit_road.png) | ![Speed Limit QR log](docs/screenshots/speed_limit_qr.png) |
 | **Head-up display** (black is see-through) | **Cluster, over the phone map** |
 | ![Speed Limit on the HUD](docs/screenshots/speed_limit_hud.png) | ![Speed Limit on the cluster](docs/screenshots/speed_limit_cluster.png) |
 
@@ -122,7 +130,10 @@ If the store shows **Online** but an app doesn't, look at the `uplink:` line nea
 - `node kit/tools/emu.js <app_id>` runs an app in the browser emulator. Add `--car b58` or `--car n63` for a sample car.
 - The tests are in `kit/tools/test_*.js` and run in CI on Node 8.9.4 and 8.16.2, the versions on the head units.
 - Speed Limit's map: `python3 kit/tools/pack_sli.py georgia-latest.osm.pbf -o apps/speed_limit/georgia.pack` (a
-  Geofabrik extract; about a minute). `node kit/tools/test_speed_limit.js` replays drives through Tbilisi on it;
+  Geofabrik extract, `https://download.geofabrik.de/europe/georgia-latest.osm.pbf`; about a minute). Wrong limits
+  are fixed in OpenStreetMap and come in with the next map, never by editing the pack.
+- Speed Limit's QR log: `pip install zxing-cpp pillow`, then `python3 kit/tools/qrlog_decode.py photos/` prints the
+  log from the photos (the format of idrive7-apps' QR log). `node kit/tools/test_speed_limit.js` replays drives through Tbilisi on it;
   after a build, `node kit/tools/test_speed_limit_power.js` checks its wake-ups from start-up to parked.
 
 For the platform itself (signals, renderer, controller input, deploying over SSH) see [idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps).

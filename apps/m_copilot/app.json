@@ -2,7 +2,7 @@
   "id": "m_copilot",
   "title": "M-Copilot",
   "description": "AI co-driver that answers with your car's own data: live readings, service list, fault memory, model and engine from the car, plus your tune and mods. Read-only.",
-  "version": "1.0.34",
+  "version": "1.0.36",
   "vendor": "custom",
   "loggingId": "OAMC",
   "iconGlyph": "copilot",
@@ -10,6 +10,7 @@
   "mguHmi": [
     "ID7"
   ],
+  "requires": { "idrive7-renderd": "2.1.7", "mgu-inputgate": "1.0.0" },
   "signals": {
     "de.bmw.infotainment.vehicle.CDS": {
       "statusEngineSpeed2": "rs",

@@ -27,7 +27,7 @@
  *   {t:'screens', stack, closed}          the app's screen stack; closed: the user left it (the page shows the HMI's app picker)
  *   {t:'focus', id}                       the bar button the HMI's focus is on (controller not grabbed)
  *   {t:'soft', png}                       the HMI's own image of the app's screen (software path), base64 PNG
- *   {t:'nui', comps, all}                 what the app set on its native screens' components (text, cells, vis, chk,
+ *   {t:'nui', comps, all}                 what the app set on its native screens' components (text, cells, vis, chk, en,
  *                                         pictures); all: the whole of it (a page that connects)
  *   {t:'stats', msgs, bytes, ticks}       per second
  *   {t:'note', s}                         a short message for the user (the app opened an HMI screen not drawn here)
@@ -37,6 +37,7 @@
  *   {t:'touch', phase: 1|2|3, x, y}       screen px
  *   {t:'ccu', turn: n} | {t:'ccu', press: bool} | {t:'ccu', tilt: 'N'|'E'|'S'|'W'|null}
  *   {t:'hmi', a: 'back'|'home'|'open', screen}   {t:'click', id, row}  (an HMI button; row: a drop-down's chosen value)
+ *   {t:'slide', id, value}                a slider moved to step value
  *   {t:'set', k, v}  {t:'sig', mode: 'demo'|'manual', v: {rpm, speed, coolant, oil, gear, gLong, gLat, torque}}
  *   {t:'app', id}  {t:'restart'}
  *   {t:'shot', name, i, n, part}          a screenshot (window.emuShot), saved to preview/emu/shots/<name>.png
@@ -543,6 +544,7 @@ function onPage(ws, m) {
         toChild({ t: 'hmi', a: m.a, screen: m.screen && String(m.screen) });
         break;
     case 'click': toChild({ t: 'click', id: String(m.id), row: m.row != null && isFinite(Number(m.row)) ? Number(m.row) : undefined }); break;
+    case 'slide': if (isFinite(Number(m.value))) toChild({ t: 'slide', id: String(m.id), value: Number(m.value) }); break;
     case 'shot': saveShot(m); break;
     case 'set': toChild({ t: 'set', k: String(m.k), v: m.v }); break;
     case 'sig':
@@ -581,7 +583,7 @@ function mergeNui(p) {
     Object.keys(p || {}).forEach((n) => {
         const c = App.nui[n] || (App.nui[n] = { cells: {}, img: {} }), q = p[n];
         Object.assign(c.cells, q.cells || {}); Object.assign(c.img, q.img || {});
-        ['vis', 'chk', 'sel'].forEach((k) => { if (q[k] !== undefined) c[k] = q[k]; });
+        ['vis', 'chk', 'sel', 'en'].forEach((k) => { if (q[k] !== undefined) c[k] = q[k]; });
     });
 }
 function appLog(l, s) {

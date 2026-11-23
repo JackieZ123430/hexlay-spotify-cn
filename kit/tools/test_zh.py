@@ -3,6 +3,7 @@
 import copy
 import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import build
 from localize import unicode_resources, localize_spec, languages, load_locale
 
@@ -38,7 +39,13 @@ for manifest in sorted((root / 'apps').glob('*/app.json')):
             assert len(cn) == 2
         else:
             assert not cn and not any('JackieZ123430' in v or '小白' in v for v in strings.values())
-        assert not has_settings or any('github.com/cauliflowermossgrape/idrive7-apps' in v for v in strings.values())
+        # the project credit row: with the settings, unless the app leaves it out ("credits": false: a link the car
+        # can't open, as Speed Limit's page)
+        credit = any('github.com/cauliflowermossgrape/idrive7-apps' in v for v in strings.values())
+        if original.get('credits') is False:
+            assert not credit, manifest
+        else:
+            assert not has_settings or credit, manifest
         def visit(obj):
             if isinstance(obj, dict):
                 if obj.get('type') == 'StringId': assert obj['value'] in strings, (manifest, obj)
@@ -50,6 +57,27 @@ for manifest in sorted((root / 'apps').glob('*/app.json')):
         keys.append(set(strings))
         count += 1
     assert keys[1] - keys[0] == {k for k in keys[1] if '_CN_CREDITS_' in k} and keys[0] <= keys[1]
+# Exercise the optional widget on a fixture: the current app manifests do not declare one.
+widget_spec = {'id': 'widget_fixture', 'title': 'Spotify', 'version': '1.0.0', 'startWidget': {
+    'name': 'Settings', 'layout': 'LT_Table_OnlineApps_DriveRecorderWidget', 'image': 4,
+}}
+widget_layouts = {}
+with TemporaryDirectory() as temp:
+    for language, name in (('en', 'Settings'), ('zh-CN', '设置')):
+        out = Path(temp) / language
+        spec = localize_spec(widget_spec, language)
+        icon = root / 'apps/spotify/icon.png'
+        build.build_start_widget(spec, spec['id'], icon, out)
+        for lang in build.LANGS:
+            strings = json.loads((out / 'strings' / (lang + '.json')).read_text(encoding='utf-8'))
+            assert strings == {build.sid(spec['id'], 'WIDGET_NAME'): name}
+        widget_layouts[language] = [(out / f).read_bytes() for f in (
+            'application.json', 'uiDescription/uiDescription.json', 'uiDescription/application.xml',
+        )]
+        assert spec['startWidget'] == dict(widget_spec['startWidget'], name=name)
+    assert widget_layouts['en'] == widget_layouts['zh-CN']
+    assert widget_spec['startWidget']['name'] == 'Settings'
+
 try:
     unicode_resources({}, {'SID_TEST_%d' % n: '' for n in range(769)})
 except ValueError:

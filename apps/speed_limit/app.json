@@ -1,0 +1,549 @@
+{
+  "id": "speed_limit",
+  "title": "Speed Limit",
+  "description": "The speed limit of the road you're on, on the cluster's map and the head-up display, from an offline OpenStreetMap map of Georgia. Read-only.",
+  "version": "1.0.9",
+  "vendor": "custom",
+  "loggingId": "OASL",
+  "iconGlyph": "60",
+  "autostart": true,
+  "credits": false,
+  "mguHmi": [
+    "ID7"
+  ],
+  "maxDiskUsage": 41943040,
+  "signals": {
+    "de.bmw.infrastructure.VehicleCondition": {
+      "VehicleCondition": "s"
+    },
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "statusCarSpeed2": "rs"
+    },
+    "de.bmw.infotainment.navigation.positioning.Positioning": {
+      "_optional": "the navigation's position (GNSS with the car's dead reckoning); without it the GPS position alone",
+      "_instances": "Main_Instance",
+      "currentLocation": "rs"
+    },
+    "de.bmw.infotainment.GPSData": {
+      "_optional": "the GPS position; without it the navigation's position alone",
+      "GPSPositionCAN": "rs",
+      "GPSPositionExtendedCAN": "rs"
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "menu",
+      "title": "Speed Limit",
+      "settings": true,
+      "items": [
+        [
+          "header",
+          "SL_HEAD_GENERAL",
+          "General"
+        ],
+        [
+          "dropdown",
+          "SL_SHOW",
+          "Show on",
+          [
+            "Cluster",
+            "HUD",
+            "Cluster and HUD",
+            "Off"
+          ]
+        ],
+        [
+          "dropdown",
+          "SL_OVER",
+          "Red sign over the limit",
+          [
+            "Off",
+            "+5 km/h",
+            "+10 km/h",
+            "+15 km/h",
+            "+20 km/h"
+          ]
+        ],
+        [
+          "dropdown",
+          "SL_NOLIMIT",
+          "When there's no limit",
+          [
+            "Show nothing",
+            "Show ---"
+          ]
+        ],
+        [
+          "dropdown",
+          "SL_CAMS",
+          "Speed cameras",
+          [
+            "Warn",
+            "Off"
+          ]
+        ],
+        [
+          "text",
+          "SL_LIMIT",
+          "Speed limit: -"
+        ],
+        [
+          "header",
+          "SL_HEAD_ROAD",
+          "This road"
+        ],
+        [
+          "text",
+          "SL_ROAD",
+          "This road: -"
+        ],
+        [
+          "dropdown",
+          "SL_FIX",
+          "Correct its limit",
+          [
+            "Use the map",
+            "20 km/h",
+            "30 km/h",
+            "40 km/h",
+            "50 km/h",
+            "60 km/h",
+            "70 km/h",
+            "80 km/h",
+            "90 km/h",
+            "100 km/h",
+            "110 km/h",
+            "120 km/h",
+            "130 km/h"
+          ]
+        ],
+        [
+          "text",
+          "SL_FIXES",
+          "Corrections: none"
+        ],
+        [
+          "button",
+          "SL_FIX_UNDO",
+          "Undo the last correction"
+        ],
+        [
+          "button",
+          "SL_FIX_CLEAR",
+          "Clear all corrections"
+        ],
+        [
+          "header",
+          "SL_HEAD_CL",
+          "Cluster"
+        ],
+        [
+          "text",
+          "SL_CL",
+          "Cluster sign: -"
+        ],
+        [
+          "slider",
+          "SL_CL_SIZE",
+          "Size: -",
+          10
+        ],
+        [
+          "text",
+          "SL_CL_POS",
+          "Position: -"
+        ],
+        [
+          "button",
+          "SL_CL_LEFT",
+          "Move left"
+        ],
+        [
+          "button",
+          "SL_CL_RIGHT",
+          "Move right"
+        ],
+        [
+          "button",
+          "SL_CL_UP",
+          "Move up"
+        ],
+        [
+          "button",
+          "SL_CL_DOWN",
+          "Move down"
+        ],
+        [
+          "button",
+          "SL_CL_DEFAULT",
+          "Default position"
+        ],
+        [
+          "header",
+          "SL_HEAD_HUD",
+          "HUD"
+        ],
+        [
+          "text",
+          "SL_HUD",
+          "HUD sign: -"
+        ],
+        [
+          "checkbox",
+          "SL_HUD_KEEP",
+          "Keep HUD sign over BMW's pop-ups"
+        ],
+        [
+          "slider",
+          "SL_HUD_SIZE",
+          "Size: -",
+          10
+        ],
+        [
+          "text",
+          "SL_HUD_POS",
+          "Position: -"
+        ],
+        [
+          "button",
+          "SL_HUD_LEFT",
+          "Move left"
+        ],
+        [
+          "button",
+          "SL_HUD_RIGHT",
+          "Move right"
+        ],
+        [
+          "button",
+          "SL_HUD_UP",
+          "Move up"
+        ],
+        [
+          "button",
+          "SL_HUD_DOWN",
+          "Move down"
+        ],
+        [
+          "button",
+          "SL_HUD_DEFAULT",
+          "Default position"
+        ],
+        [
+          "header",
+          "SL_HEAD_LOG",
+          "Drive log"
+        ],
+        [
+          "checkbox",
+          "SL_LOG",
+          "Keep a drive log (the roads matched)"
+        ],
+        [
+          "button",
+          "SL_QR",
+          "Show the log as QR codes"
+        ],
+        [
+          "header",
+          "SL_HEAD_MAP",
+          "Map"
+        ],
+        [
+          "text",
+          "SL_MAP",
+          ""
+        ]
+      ]
+    },
+    {
+      "name": "SL_QR",
+      "kind": "canvas",
+      "title": "Log",
+      "graphic": "SL_QR_GFX",
+      "buttons": [
+        [
+          "SL_QR_PREV",
+          "Previous"
+        ],
+        [
+          "SL_QR_NEXT",
+          "Next"
+        ],
+        [
+          "SL_QR_SIZE",
+          "Size: Medium"
+        ]
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "key": "show",
+      "label": "Show on",
+      "type": "choice",
+      "default": "both",
+      "options": [
+        [
+          "cluster",
+          "Cluster"
+        ],
+        [
+          "hud",
+          "HUD"
+        ],
+        [
+          "both",
+          "Cluster and HUD"
+        ],
+        [
+          "off",
+          "Off"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "overspeed",
+      "label": "Red sign over the limit",
+      "type": "choice",
+      "default": "10",
+      "options": [
+        [
+          "0",
+          "Off"
+        ],
+        [
+          "5",
+          "+5 km/h"
+        ],
+        [
+          "10",
+          "+10 km/h"
+        ],
+        [
+          "15",
+          "+15 km/h"
+        ],
+        [
+          "20",
+          "+20 km/h"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "noLimit",
+      "label": "When there's no limit",
+      "type": "choice",
+      "default": "nothing",
+      "options": [
+        [
+          "nothing",
+          "Show nothing"
+        ],
+        [
+          "dashes",
+          "Show ---"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "cameras",
+      "label": "Speed cameras",
+      "type": "choice",
+      "default": "warn",
+      "options": [
+        [
+          "warn",
+          "Warn"
+        ],
+        [
+          "off",
+          "Off"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "driveLog",
+      "label": "Drive log",
+      "type": "bool",
+      "default": true,
+      "hidden": true
+    },
+    {
+      "key": "hudKeep",
+      "label": "Keep HUD sign over BMW's pop-ups",
+      "type": "bool",
+      "default": false,
+      "hidden": true
+    },
+    {
+      "key": "hudSize",
+      "label": "HUD sign size",
+      "type": "number",
+      "unit": "px",
+      "default": 88,
+      "steps": [
+        64,
+        72,
+        80,
+        88,
+        96,
+        104,
+        112,
+        128
+      ],
+      "hidden": true
+    },
+    {
+      "key": "hudX",
+      "label": "HUD sign: left / right",
+      "type": "number",
+      "unit": "px",
+      "default": 0,
+      "hidden": true
+    },
+    {
+      "key": "hudY",
+      "label": "HUD sign: up / down",
+      "type": "number",
+      "unit": "px",
+      "default": 0,
+      "hidden": true
+    },
+    {
+      "key": "clusterSize",
+      "label": "Cluster sign size",
+      "type": "number",
+      "unit": "px",
+      "default": 110,
+      "steps": [
+        70,
+        80,
+        90,
+        100,
+        110,
+        120,
+        130,
+        140,
+        150,
+        160,
+        180
+      ],
+      "hidden": true
+    },
+    {
+      "key": "clusterX",
+      "label": "Cluster sign: left / right",
+      "type": "number",
+      "unit": "px",
+      "default": 0,
+      "hidden": true
+    },
+    {
+      "key": "clusterY",
+      "label": "Cluster sign: up / down",
+      "type": "number",
+      "unit": "px",
+      "default": 0,
+      "hidden": true
+    },
+    {
+      "key": "untagged",
+      "label": "Roads without a limit on the map",
+      "type": "choice",
+      "default": "show",
+      "options": [
+        [
+          "show",
+          "Show the default (grey ring)"
+        ],
+        [
+          "hide",
+          "Show nothing"
+        ]
+      ],
+      "hidden": true
+    },
+    {
+      "key": "defUrban",
+      "label": "Default in a settlement",
+      "type": "number",
+      "unit": "km/h",
+      "default": 60,
+      "markDefault": true,
+      "steps": [
+        40,
+        50,
+        60,
+        70,
+        80
+      ],
+      "hidden": true
+    },
+    {
+      "key": "defRural",
+      "label": "Default outside settlements",
+      "type": "number",
+      "unit": "km/h",
+      "default": 90,
+      "markDefault": true,
+      "steps": [
+        70,
+        80,
+        90,
+        100,
+        110
+      ],
+      "hidden": true
+    },
+    {
+      "key": "defMotorway",
+      "label": "Default on motorways",
+      "type": "number",
+      "unit": "km/h",
+      "default": 110,
+      "markDefault": true,
+      "steps": [
+        90,
+        100,
+        110,
+        120,
+        130
+      ],
+      "hidden": true
+    },
+    {
+      "key": "defLiving",
+      "label": "Default in living streets",
+      "type": "number",
+      "unit": "km/h",
+      "default": 20,
+      "markDefault": true,
+      "steps": [
+        10,
+        20,
+        30
+      ],
+      "hidden": true
+    },
+    {
+      "key": "renderer",
+      "label": "Renderer",
+      "type": "choice",
+      "default": "software",
+      "options": [
+        [
+          "software",
+          "Software"
+        ]
+      ],
+      "hidden": true,
+      "comment": "the QR screen is the HMI's own picture: the kit never connects to (or waits for) the GPU renderer"
+    }
+  ]
+}

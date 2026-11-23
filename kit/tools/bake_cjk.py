@@ -2,8 +2,6 @@
 """Rebuild the shared Chinese glyph atlas. Pillow is required only to regenerate it.
 
 python kit/tools/bake_cjk.py [path/to/NotoSansSC.ttf]
-python kit/tools/bake_cjk.py --diagnostic [path/to/NotoSansSC.ttf]
-Use --diagnostic for the separate Fault Scanner atlas; default is the UI atlas.
 Without a path, downloads the OFL font from Google Fonts and checks its SHA-256.
 The generated atlas is committed; normal app builds need no Pillow/font download.
 """
@@ -21,8 +19,7 @@ SHA256 = 'a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da'
 
 
 def main():
-    diagnostic = '--diagnostic' in sys.argv[1:]
-    arguments = [arg for arg in sys.argv[1:] if arg != '--diagnostic']
+    arguments = sys.argv[1:]
     font = Path(arguments[0]).resolve() if arguments else HERE / '.font-cache/NotoSansSC.ttf'
     if not font.exists():
         font.parent.mkdir(parents=True, exist_ok=True)
@@ -35,9 +32,6 @@ def main():
     spec.loader.exec_module(baker)
     baker.FONTDIR = str(font.parent)
     words = json.loads((ROOT / 'kit/runtime/locales/zh-CN.json').read_text(encoding='utf-8'))
-    if diagnostic:
-        from build_diagnostic_zh import catalog
-        words.update(catalog())
     # Only the app's own translated glyphs, ASCII and its units/symbols: never the full CJK block.
     credit_source = (ROOT / 'kit/localization/credit.zh-CN.json').read_text(encoding='utf-8')
     chars = ''.join(sorted(set(baker.TEXT + ''.join(words.values()) + credit_source)))
@@ -50,8 +44,7 @@ def main():
         raise SystemExit('Chinese atlas exceeds its reserved GPU budget; subset it before publishing')
     cache_key = hashlib.sha256(json.dumps(atlas, separators=(',', ':')).encode()).hexdigest()[:16]
     data = {'family': 'cjk', 'source': 'Noto Sans SC (OFL-1.1)', 'cacheKey': cache_key, 'sizes': [atlas]}
-    out = ROOT / ('kit/localization/fonts/diagnostic-zh-CN.json' if diagnostic else 'kit/runtime/fonts/cjk.json')
-    out.parent.mkdir(parents=True, exist_ok=True)
+    out = ROOT / 'kit/runtime/fonts/cjk.json'
     out.write_text(json.dumps(data, ensure_ascii=False, separators=(',', ':')) + '\n', encoding='utf-8')
     print('cjk:', len(chars), 'glyphs,', atlas['atlasW'], 'x', atlas['atlasH'], 'pixels,', out.stat().st_size, 'bytes')
 

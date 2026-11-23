@@ -1,18 +1,17 @@
 # iDrive 7 custom apps
 
-Two apps for BMW iDrive 7 head units (MGU), installed through the [MGU Store](https://github.com/robertnisipeanu/mgu-store). They run on the app runtime and GPU renderer from [cauliflowermossgrape/idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps).
+Three apps for BMW iDrive 7 head units (MGU), installed through the [MGU Store](https://github.com/robertnisipeanu/mgu-store). They run on the app runtime and GPU renderer from [cauliflowermossgrape/idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps).
 
 | App | Version | Internet | Reads from the car |
 | :--- | :---: | :---: | :--- |
-| [Spotify](#spotify) | 1.0.31 | Yes | Nothing |
-| [M-Copilot](#m-copilot) | 1.0.34 | Yes | Driving signals, service list, fault memory (read-only) |
-
-System Monitor has moved to its own repository, [hexlay/idrive7-system-monitor](https://github.com/hexlay/idrive7-system-monitor). To keep getting updates, add `hexlay/idrive7-system-monitor` as a source in the MGU Store.
+| [Spotify](#spotify) | 1.0.33 | Yes | Nothing |
+| [M-Copilot](#m-copilot) | 1.0.36 | Yes | Driving signals, service list, fault memory (read-only) |
+| [Speed Limit](#speed-limit) | 1.0.9 | No | Position, speed and power state (read-only) |
 
 ## Install
 
 1. In the car, open **MGU Store > Sources > Add source** and enter `hexlay/idrive7-custom-apps`.
-2. Add `cauliflowermossgrape/idrive7-apps` as a source too, and install the renderer (`idrive7-renderd`) and the controller gate (`mgu-inputgate`) from it. Most cars that run these apps already have them.
+2. For Spotify and M-Copilot, add `cauliflowermossgrape/idrive7-apps` as a source too, and install the renderer (`idrive7-renderd`) and the controller gate (`mgu-inputgate`) from it. Most cars that run these apps already have them. Speed Limit needs neither.
 3. Install the apps. New versions show up in the store.
 
 Spotify and M-Copilot need the store's internet uplink: a phone hotspot, a USB-tethered phone, an LTE stick or a USB Ethernet adapter.
@@ -56,6 +55,55 @@ An AI co-driver that answers with your car's own data: live readings, warning me
 
 The screenshots are from the browser emulator with its sample B58.
 
+## Speed Limit
+
+![Speed Limit](docs/screenshots/speed_limit.png)
+
+> [!NOTE]
+> **Georgia only.** The app ships with an offline OpenStreetMap map of Georgia and Georgia's default limits.
+> Tested in the car (G15, HU_MGU_01 030_016_002) and it works.
+
+> [!CAUTION]
+> ### The limits come from OpenStreetMap and some are wrong or out of date. Always follow the signs on the road.
+
+The speed limit of the road you're on, on the head-up display and on the cluster's phone map, worked out offline.
+No internet, no BMW map, and nothing is sent to the car: it only reads the car's position, speed and power state.
+
+- **Page** laid out like Maps on cluster's: Show on (Cluster, HUD, both, Off), red sign over the limit (+5 to +20
+  km/h), what to show when there's no limit (nothing or ---), speed cameras, and size and position for each sign.
+- **Speed cameras:** a camera ahead on your road within 400 m adds a pill with the distance to the sign.
+- **Roads without a limit** show Georgia's legal default with a grey ring: 60 in a settlement, 90 outside, 110 on
+  motorways (not their ramps), 20 in living streets.
+- **Correct a wrong limit in the car:** on the road, pick its real limit under **This road > Correct its limit**. It
+  covers that OpenStreetMap road (both directions, unless the map gives them different limits) and nothing past it,
+  is kept by app updates and new maps, and goes by itself once OpenStreetMap has the same limit. **Undo** and
+  **Clear all** are there too.
+- **Report a problem without SSH:** the drive log (on by default) notes each road and limit change with its place.
+  **Show the log as QR codes** puts it on screen: photograph the codes and send them with a GitHub issue.
+- **Starts with the car and draws no power parked:** stopped, locked or Off, it drops its subscriptions, closes the
+  map and gives the displays back. About 1 MB of memory; wakes twice a second while driving, never while parked.
+- Needs **cluster-render** (comes with Maps on cluster from `robertnisipeanu/idrive-apps`) for the HUD and cluster.
+
+| Show on | Red sign over the limit |
+| :---: | :---: |
+| ![Speed Limit show on](docs/screenshots/speed_limit_show_on.png) | ![Speed Limit over the limit setting](docs/screenshots/speed_limit_overspeed.png) |
+| **HUD settings** | **Show on: Cluster** (the HUD settings greyed) |
+| ![Speed Limit HUD settings](docs/screenshots/speed_limit_hud_settings.png) | ![Speed Limit cluster only](docs/screenshots/speed_limit_cluster_only.png) |
+| **Cluster settings** | |
+| ![Speed Limit cluster settings](docs/screenshots/speed_limit_cluster_settings.png) | |
+| **Speed cameras** | |
+| ![Speed Limit speed cameras](docs/screenshots/speed_limit_cameras.png) | |
+| **When there's no limit** | **The signs** |
+| ![Speed Limit when there's no limit](docs/screenshots/speed_limit_nolimit.png) | ![Speed Limit signs](docs/screenshots/speed_limit_signs.png) |
+| **This road** (corrected to 50 km/h) | **The log as QR codes** |
+| ![Speed Limit this road](docs/screenshots/speed_limit_road.png) | ![Speed Limit QR log](docs/screenshots/speed_limit_qr.png) |
+| **Head-up display** (black is see-through) | **Cluster, over the phone map** |
+| ![Speed Limit on the HUD](docs/screenshots/speed_limit_hud.png) | ![Speed Limit on the cluster](docs/screenshots/speed_limit_cluster.png) |
+
+Screenshots are from the emulator; the HUD and cluster pictures are the layers the app sends, not photos. Map data © OpenStreetMap
+contributors, [ODbL](https://opendatacommons.org/licenses/odbl/1-0/) (`apps/speed_limit/georgia.pack`, from
+Geofabrik's Georgia extract).
+
 ## Phone pages
 
 The pairing pages ([My cars](https://hexlay.github.io/idrive7-custom-apps/)) can be added to the home screen as an app called **iDrive Apps**: on iPhone use Safari's **Share > Add to Home Screen**, on Android Chrome's **Install app**.
@@ -81,6 +129,12 @@ If the store shows **Online** but an app doesn't, look at the `uplink:` line nea
 - `python3 kit/tools/build.py <app_id>` builds `dist/<app_id>@<version>.mgu`. It needs `oap-sdk`, extracted from your own head unit with `kit/tools/extract_sdk.js`.
 - `node kit/tools/emu.js <app_id>` runs an app in the browser emulator. Add `--car b58` or `--car n63` for a sample car.
 - The tests are in `kit/tools/test_*.js` and run in CI on Node 8.9.4 and 8.16.2, the versions on the head units.
+- Speed Limit's map: `python3 kit/tools/pack_sli.py georgia-latest.osm.pbf -o apps/speed_limit/georgia.pack` (a
+  Geofabrik extract, `https://download.geofabrik.de/europe/georgia-latest.osm.pbf`; about a minute). Wrong limits
+  are fixed in OpenStreetMap and come in with the next map, never by editing the pack.
+- Speed Limit's QR log: `pip install zxing-cpp pillow`, then `python3 kit/tools/qrlog_decode.py photos/` prints the
+  log from the photos (the format of idrive7-apps' QR log). `node kit/tools/test_speed_limit.js` replays drives through Tbilisi on it;
+  after a build, `node kit/tools/test_speed_limit_power.js` checks its wake-ups from start-up to parked.
 
 For the platform itself (signals, renderer, controller input, deploying over SSH) see [idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps).
 

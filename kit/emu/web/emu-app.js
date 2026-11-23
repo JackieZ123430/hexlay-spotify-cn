@@ -119,7 +119,7 @@ function onText(m) {
     else Object.keys(m.comps || {}).forEach((n) => {
       const c = S.nui[n] || (S.nui[n] = { cells: {}, img: {} }), q = m.comps[n];
       Object.assign(c.cells, q.cells || {}); Object.assign(c.img, q.img || {});
-      ['vis', 'chk', 'sel'].forEach((k) => { if (q[k] !== undefined) c[k] = q[k]; });
+      ['vis', 'chk', 'sel', 'en'].forEach((k) => { if (q[k] !== undefined) c[k] = q[k]; });
     });
     nsRender();
     break;
@@ -331,7 +331,7 @@ function renderHmi() {
 // (a focused scrolling text scrolls first); BACK (Backspace, push left) closes a drop-down, then the screen; touch
 // presses a row.
 const NS = { open: null, focus: 0, drop: null };
-const FOCUSABLE = { button: 1, iconbutton: 1, twocol: 1, tworow: 1, checkbox: 1, scroll: 1, choice: 1 };
+const FOCUSABLE = { button: 1, iconbutton: 1, twocol: 1, tworow: 1, checkbox: 1, scroll: 1, choice: 1, dropdown: 1, slider: 1 };
 const nsSame = (a, b) => a === b || String(a) === String(b);
 const nsOptions = (s) => (s.type === 'choice' ? s.options || [] : (s.steps || []).map((v) => [v, v + (s.unit ? ' ' + s.unit : '')]));
 const nsList = () => ((S.spec && S.spec.settings) || []).filter((s) => !s.hidden);
@@ -353,15 +353,43 @@ function nsSettingsRows() {
     }
     return { label: s.label, sub: S.values[s.key] == null ? '' : String(S.values[s.key]) + (s.unit ? ' ' + s.unit : ''), act: () => send({ t: 'click', id }) };
   });
-  rows.push({ label: 'iDrive 7 custom apps', sub: 'GitHub cauliflowermossgrape · github.com/cauliflowermossgrape/idrive7-apps', info: true });
+  if (!S.spec || S.spec.credits !== false) rows.push({ label: 'iDrive 7 custom apps', sub: 'GitHub cauliflowermossgrape · github.com/cauliflowermossgrape/idrive7-apps', info: true });
   return rows;
 }
 /** A native screen's rows: its items as build.py made them, with what the app set on them (hidden ones left out). */
 function nsScreenRows(sc) {
+  // an item drop-down open: its choices (the HMI moves the choice itself, then tells the app the row)
+  if (NS.drop && NS.drop.item) {
+    const d = NS.drop;
+    return d.opts.map((o, i) => ({ label: o, radio: true, on: i === d.sel,
+      act: () => { (S.nui[d.id] = S.nui[d.id] || { cells: {}, img: {} }).sel = i; send({ t: 'click', id: d.id, row: i }); NS.focus = d.at; NS.drop = null; } }));
+  }
   const rows = [];
   (sc.items || []).forEach((it) => {
     const [kind, name, label] = it, c = nsComp(name), v = c.cells;
     if (c.vis === false) return;
+    if (kind === 'dropdown') {
+      // ["dropdown", NAME, header, [choices]]: the header, the chosen row on the right
+      const opts = it[3] || [], sel = c.sel || 0, at = rows.length;
+      const r = { kind, name, label: v.HeaderText != null ? v.HeaderText : label || '', value: opts[sel] || '', chevron: true };
+      r.act = c.en === false ? null : () => { NS.drop = { item: true, id: name, label: r.label, opts, sel, at }; NS.focus = sel; };
+      r.dim = c.en === false; r.info = !r.act;
+      rows.push(r);
+      return;
+    }
+    if (kind === 'slider') {
+      // ["slider", NAME, text, steps]: its text and position; a press moves it a step (to the start after the end)
+      const n = Number(it[3]) || 0, val = Math.max(0, Math.min(n, Number(v.Value) || 0));
+      const r = { kind, name, label: v.TextDescription != null ? v.TextDescription : label || '', value: '▮'.repeat(val + 1) + '▯'.repeat(n - val) };
+      r.act = c.en === false ? null : () => {
+        const nv = val >= n ? 0 : val + 1;
+        (S.nui[name] = S.nui[name] || { cells: {}, img: {} }).cells.Value = String(nv);
+        send({ t: 'slide', id: name, value: nv });
+      };
+      r.dim = c.en === false; r.info = !r.act;
+      rows.push(r);
+      return;
+    }
     const click = () => send({ t: 'click', id: name });
     const r = { kind, name, act: FOCUSABLE[kind] ? click : null, info: !FOCUSABLE[kind] };
     if (kind === 'twocol') { r.label = v.Text1stCol != null ? v.Text1stCol : label || ''; r.value = v.Text2ndCol || ''; }
@@ -369,9 +397,12 @@ function nsScreenRows(sc) {
     else if (kind === 'checkbox') { r.label = v.Text != null ? v.Text : label || ''; r.check = true; r.on = !!c.chk; }
     else if (kind === 'graphic') { r.pic = c.img.Graphic || null; }
     else r.label = v.Text != null ? v.Text : label || '';
+    if (c.en === false) { r.act = null; r.dim = true; r.info = true; }      // greyed: the HMI ignores presses
     if ((kind === 'text' || kind === 'text3' || kind === 'scroll' || kind === 'header') && !r.label) return;   // (an empty label shows nothing)
     rows.push(r);
   });
+  // a menu with "settings": true lists the settings after its items, as build.py puts them on the HMI's screen
+  if (sc.settings === true) return NS.drop ? nsSettingsRows() : rows.concat(nsSettingsRows());
   return rows;
 }
 function nsRows() { const sc = nsScreen(); return NS.open === 'SETTINGS' ? nsSettingsRows() : sc ? nsScreenRows(sc) : []; }
@@ -402,7 +433,7 @@ function nsRender() {
     if (r.check) kids.push(el('span', { className: 'ns-check' + (r.on ? ' on' : '') }));
     if (r.chevron) kids.push(el('span', { className: 'ns-chev' }));
     const kind = r.kind ? ' k-' + r.kind : '';
-    return el('div', { className: 'ns-row' + kind + (i === NS.focus && r.act ? ' focus' : '') + (r.info ? ' info' : ''), role: 'option',
+    return el('div', { className: 'ns-row' + kind + (i === NS.focus && r.act ? ' focus' : '') + (r.info ? ' info' : '') + (r.dim ? ' dim' : ''), role: 'option',
       on: { click: () => { if (!r.act) return; NS.focus = i; r.act(); nsRender(); } } }, ...kids);
   }));
   // the list scrolls as little as needed to keep the focused row in view (as the HMI's lists)
@@ -430,7 +461,7 @@ function nsMove(d) {
   NS.focus = foc[k];
   nsRender();
 }
-function nsBack() { if (NS.drop) { NS.focus = nsList().indexOf(NS.drop); NS.drop = null; nsRender(); } else send({ t: 'hmi', a: 'back' }); }
+function nsBack() { if (NS.drop) { NS.focus = NS.drop.item ? NS.drop.at : nsList().indexOf(NS.drop); NS.drop = null; nsRender(); } else send({ t: 'hmi', a: 'back' }); }
 /** A key while a native screen shows: true when it was the screen's. */
 function nsKey(k, e) {
   if (k === '[' || k === ']') nsMove(k === ']' ? 1 : -1);

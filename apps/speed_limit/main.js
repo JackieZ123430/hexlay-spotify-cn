@@ -405,7 +405,7 @@ mgu.run({
             render();
         });
         ui.onClick('SL_LOG', () => s.set('driveLog', s.get('driveLog') === false));
-        ui.onClick('SL_QR', () => { ui.open('SL_QR'); });
+        ui.onClick('SL_QR_SHOW', () => { ui.open('SL_QR'); });
         ['hud', 'cluster'].forEach((k) => {
             const R = k === 'hud' ? 'SL_HUD' : 'SL_CL', slider = sliders[k];
             if (slider && slider.on) slider.on('changed', (step) => { const P = placeOf(k), v = P.sizes[step]; if (v && on(P)) { done[R + ':sizeStep'] = step; s.set(P.size, v); } });

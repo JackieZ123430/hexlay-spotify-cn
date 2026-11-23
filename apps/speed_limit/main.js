@@ -201,6 +201,38 @@ class Engine {
         this._refresh();
         return true;
     }
+    /**
+     * Every correction into the log, with what the map says of that road, for the QR log (kit/tools/qrlog_decode.py
+     * --osm makes them a list of roads to fix in OpenStreetMap):
+     *   correction: way=59594305 set=50/50 map=60d/60d oneway=1 at=41.58993,44.94827 on=2026-11-22T14:23
+     * set / map: km/h along / against the way (0 none; d: the default, none tagged). The map is opened for it when the
+     * app is idle (closed again right after).
+     */
+    logFixes() {
+        const list = this.fixes.list;
+        if (!list.length) return;
+        const { limitOf } = require('./matcher'), { merc, groundScale } = require('./limitpack');
+        let pack = this.pack, opened = false;
+        try { if (!pack) { pack = LimitPack.open(PACK); opened = true; } } catch (e) { pack = null; }
+        const d = this.defaults(), lim = (L) => (L.limit || 0) + (L.inferred ? 'd' : '');
+        list.forEach((r) => {
+            let map = '-', ow = '-';
+            if (pack && r.lat != null) {
+                const xy = merc(r.lat, r.lon), ids = pack.near(xy[0], xy[1], 80 / groundScale(xy[1]));
+                for (let i = 0; i < ids.length; i++) {
+                    const P = pack.piece(ids[i]);
+                    if (P.way !== r.way) continue;
+                    map = lim(limitOf(P, 1, d)) + '/' + lim(limitOf(P, -1, d));
+                    ow = P.flags & 1 ? '1' : '0';
+                    break;
+                }
+            }
+            this.log.info('correction: way=' + r.way + ' set=' + r.f + '/' + r.b + ' map=' + map + ' oneway=' + ow +
+                ' at=' + (r.lat != null ? r.lat + ',' + r.lon : '-') + ' on=' + (r.at || '-'));
+        });
+        if (opened) pack.close();
+    }
+
     undoFix() { if (this.fixes.undo()) this._refresh(); }
     clearFixes() { if (this.fixes.clear()) this._refresh(); }
 
@@ -463,6 +495,7 @@ function qrScreen(ctx, engine) {
         const m = engine.meta || {}, keys = ['show', 'overspeed', 'noLimit', 'cameras', 'untagged', 'hudKeep', 'hudSize', 'clusterSize'];
         log.info('report: ' + APP_ID + ' ' + ((ctx.spec && ctx.spec.version) || '') + ', map ' + (m.data || '-') + ' (' + (m.pieces || 0) + ' pieces), ' +
             engine.fixes.count + ' corrections, ' + (engine.active ? 'on' : 'idle') + ', ' + keys.map((k) => k + '=' + s.get(k)).join(' '));
+        engine.logFixes();
         st.page = 0;
         load();
         show();

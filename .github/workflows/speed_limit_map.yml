@@ -1,0 +1,63 @@
+name: Speed Limit map
+
+# Once a month: Speed Limit's map built again from Geofabrik's Georgia extract (OpenStreetMap). When a road, a limit
+# or a speed camera changed, the new map is tested, Speed Limit's version goes up one and it is pushed to main, so
+# the MGU Store offers it. Fixes made in OpenStreetMap (the drivers' corrections sent back there) reach the cars
+# this way; the map file is never edited by hand. Run it any time from the Actions tab (Run workflow).
+on:
+  schedule:
+    - cron: '17 5 2 * *'          # the 2nd of each month, 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: speed-limit-map
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '8.16.2'      # the head unit's Node: the tests run as in the car
+      - name: Download Georgia from Geofabrik (checksum checked)
+        run: |
+          mkdir -p "$RUNNER_TEMP/osm" && cd "$RUNNER_TEMP/osm"
+          curl -sSfL -A 'idrive7-custom-apps speed limit map' -o georgia-latest.osm.pbf https://download.geofabrik.de/europe/georgia-latest.osm.pbf
+          curl -sSfL -A 'idrive7-custom-apps speed limit map' -o georgia-latest.osm.pbf.md5 https://download.geofabrik.de/europe/georgia-latest.osm.pbf.md5
+          md5sum -c georgia-latest.osm.pbf.md5
+      - name: Build the map
+        run: python3 kit/tools/pack_sli.py "$RUNNER_TEMP/osm/georgia-latest.osm.pbf" -o "$RUNNER_TEMP/osm/georgia.pack"
+      - name: What changed for a driver
+        id: diff
+        run: python3 kit/tools/sli_diff.py apps/speed_limit/georgia.pack "$RUNNER_TEMP/osm/georgia.pack" --github-output "$GITHUB_OUTPUT"
+      - name: Test the app on the new map
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          cp "$RUNNER_TEMP/osm/georgia.pack" apps/speed_limit/georgia.pack
+          node kit/tools/test_speed_limit.js
+          node kit/tools/test_speed_limit_outputs.js
+      - name: New version, pushed to main
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          SUMMARY: ${{ steps.diff.outputs.summary }}
+          DATA: ${{ steps.diff.outputs.data }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          v=$(python3 kit/tools/bump_version.py speed_limit)
+          git add apps/speed_limit/georgia.pack apps/speed_limit/app.json README.md
+          git commit -m "chore(speed_limit): $v - map of $DATA" -m "$SUMMARY"
+          git pull --quiet --rebase origin main     # (a push to main while it ran)
+          git push origin HEAD:main
+          echo "Speed Limit $v: $SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+      - name: Nothing to update
+        if: steps.diff.outputs.changed != 'true'
+        run: echo "No road, limit or camera changed - nothing pushed." >> "$GITHUB_STEP_SUMMARY"

@@ -17,6 +17,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { writeWhole } = require('./kit/write_whole');
 
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/;
 
@@ -39,8 +40,9 @@ const WMI = {
 // VIN 10 = model year; iDrive 7 cars are 2018 on, so only the letters of 2016-2030 count
 const YEARS = { G: 2016, H: 2017, J: 2018, K: 2019, L: 2020, M: 2021, N: 2022, P: 2023, R: 2024, S: 2025, T: 2026, V: 2027, W: 2028, X: 2029, Y: 2030 };
 
-// UDS 22 F150 (control unit type index) -> BMW's unit name, for the engine (0x12) and gearbox (0x18)
-// units (from idrive7-apps Live Data's sgbd_index.json)
+// UDS 22 F150 (control unit type index) -> BMW's unit name, for the engine (0x12), the second engine
+// unit of the V8s and V12s (0x13: one engine computer per cylinder bank, R = bank 1, L = bank 2) and the
+// gearbox (0x18) (from idrive7-apps Live Data's sgbd_index.json)
 const UNITS = {
     0x12: {
         '0F1090': 'MSD85L6', '0F10A0': 'D73N57A0', '0F1370': 'MSD87', '0F1380': 'MSD87_R0', '0F13E0': 'MSV90', '0F13F0': 'MEVD172',
@@ -55,8 +57,12 @@ const UNITS = {
         '0F26BC': 'DME8FF_R', '0F26E0': 'DME8FF_R', '0F26E4': 'DME8FF_R', '0F26E8': 'DME8FF_R', '0F28E0': 'DME9FF_R', '0F2930': 'DME8FF_R',
         '0F2C80': 'D94BX7A0', '0F2E00': 'DME98_R',
     },
+    0x13: {
+        '0F1380': 'MSD87_L0', '0F1A10': 'S63TU_L0', '0F1A20': 'N63TU_L0', '0F242C': 'DME8FF_L', '0F242E': 'DME8FF_L', '0F2460': 'DME8FF_L',
+        '0F26B8': 'DME8FF_L', '0F26BC': 'DME8FF_L', '0F2E00': 'DME98_L',
+    },
     0x18: {
-        '0F1270': 'GS100A', '0F14B0': 'GSB231', '0F1870': 'DKG_10', '0F1C80': 'GSAW01', '0F21D0': 'GSZFB1', '0F21E0': 'GSZFBHY1',
+        '0F1270': 'GS100A', '0F14B0': 'GSB231', '0F14B8': 'GKEB23TU', '0F1890': 'GKEHY23', '0F1F20': 'GKEG3HY', '0F1870': 'DKG_10', '0F1C80': 'GSAW01', '0F21D0': 'GSZFB1', '0F21E0': 'GSZFBHY1',
         '0F2380': 'GSGE01QT', '0F2388': 'GSGE01QW', '0F23A0': 'GSAW02FH', '0F23A8': 'GSAW02FP', '0F25D0': 'GSZFBCE', '0F28F8': 'GSMA02QZ',
         '0F2908': 'GSMA02PU', '0F290C': 'GSMA02PU', '0F2D60': 'GSZF04GF', '0F2D70': 'GSZF04GD', '0F2D80': 'GSZF04GF', '0F2E98': 'GSMA02QZ',
         '0F3530': 'GSZF04GF', '0F3540': 'GSZF04GF',
@@ -65,6 +71,8 @@ const UNITS = {
 // what a unit name says in words; names not listed are passed on as they are
 const FAMILIES = [
     [/^DME8FF_R|^DME9FF_R/, 'Bosch MG1 petrol engine computer of BMW\'s modular B-series engines (B38 / B48 / B58 and their derivatives)'],
+    [/^MSD87/, 'Siemens MSD87 V8 engine computer (N63 / S63 twin-turbo V8)'],
+    [/^DME98/, 'Bosch MG1 V8 engine computer (newer BMW twin-turbo V8)'],
     [/^D(70|75|83|94)BX7/, 'Bosch diesel engine computer of BMW\'s modular B-series diesels (B37 / B47 / B57)'],
     [/^D7\dN57/, 'N57 six-cylinder diesel'],
     [/^D7\dN47/, 'N47 four-cylinder diesel'],
@@ -78,6 +86,29 @@ const FAMILIES = [
     [/^DKG/, 'dual-clutch gearbox (DCT)'],
 ];
 const describe = (name) => { const f = FAMILIES.find((x) => x[0].test(name)); return f ? name + ' = ' + f[1] : name; };
+// the V8s / V12s: an engine computer per cylinder bank; the first one's name alone (DME8FF_R) is the B-series' too
+const V8_FAMILIES = [
+    [/^DME8FF/, 'Bosch MG1, one per cylinder bank: the G-series twin-turbo V8 (N63 / S63)'],
+    [/^DME98/, 'Bosch MG1, one per cylinder bank: a newer BMW twin-turbo V8'],
+    [/^MSD87/, 'Siemens MSD87, one per cylinder bank: N63 / S63 twin-turbo V8'],
+    [/^S63TU/, 'one per cylinder bank: S63 M twin-turbo V8'],
+    [/^N63TU/, 'one per cylinder bank: N63 twin-turbo V8'],
+];
+/** The engine unit(s) in words: the V8s' pair as one engine. */
+function describeEngine(units) {
+    const a = units[0x12], b = units[0x13];
+    if (!a) return null;
+    if (!units.twin) return describe(a);
+    const f = V8_FAMILIES.find((x) => x[0].test(a));
+    return a + (b ? ' + ' + b : ' (+ a second unit for bank 2)') + ' = engine computers ' + (f ? f[1] : 'one per cylinder bank (V8 / V12)');
+}
+/** The engine unit(s) as the Data check page names them. */
+function engineUnitName(units) {
+    if (!units[0x12]) return null;
+    return units.twin ? units[0x12] + ' + ' + (units[0x13] || 'bank 2 unit') + ' (V8)' : units[0x12];
+}
+// the B37 / B47 / B57 diesels' and the older N47 / N57 diesels' units
+const DIESEL_UNIT = /^D\d\d(BX7|N5|N4)/;
 
 /** The VIN MainApp started the app with: "--VIN <vin>", "--VIN=<vin>", or the VIN variable. */
 function vinFromLaunch(argv, env) {
@@ -163,7 +194,7 @@ class Vehicle {
     }
 
     _save() {
-        try { fs.writeFileSync(this.file, JSON.stringify(this.cache)); } catch (e) { this.log.warn('vehicle.json: ' + e.message); }
+        try { writeWhole(this.file, JSON.stringify(this.cache)); } catch (e) { this.log.warn('vehicle.json: ' + e.message); }
     }
 
     /**
@@ -173,7 +204,8 @@ class Vehicle {
     identify(diag, steady, asleep) {
         if (this.busy) return this.busy;
         const sameCar = this.cache.vin && this.vin && this.cache.vin === this.vin;
-        if (this.tried || (this.vin && sameCar && this.cache.units)) return Promise.resolve();
+        // (v 2: the V8s' second engine unit is known too; an older cache is read again once)
+        if (this.tried || (this.vin && sameCar && this.cache.units && this.cache.v === 2)) return Promise.resolve();
         if (!diag || !diag.available || (steady && !steady())) return Promise.resolve();
         // parked without ignition the units sleep: not asked (their silence would look like "none")
         if (asleep && asleep()) return Promise.resolve();
@@ -198,12 +230,19 @@ class Vehicle {
                     const b = await read(ecu, 0xF150);
                     const idx = b && b.length >= 3 ? b.slice(0, 3).map((x) => x.toString(16).toUpperCase().padStart(2, '0')).join('') : null;
                     if (idx && UNITS[ecu][idx]) units[ecu] = UNITS[ecu][idx];
+                    // an engine unit type that comes in pairs (V8 / V12): the second unit (0x13) too
+                    if (ecu === 0x12 && idx && UNITS[0x13][idx]) {
+                        units.twin = true;
+                        const b2 = steady && !steady() ? null : await read(0x13, 0xF150);
+                        const idx2 = b2 && b2.length >= 3 ? b2.slice(0, 3).map((x) => x.toString(16).toUpperCase().padStart(2, '0')).join('') : null;
+                        units[0x13] = (idx2 && UNITS[0x13][idx2]) || UNITS[0x13][idx];
+                    }
                 }
                 if (!complete) return;
                 // nothing answered (asleep, or the link not ready): not final, asked again in 2 minutes
                 if (!replied) { this.retryAt = Date.now() + 120000; return; }
                 this.tried = true;
-                this.cache = { vin: this.vin, units };
+                this.cache = { v: 2, vin: this.vin, units };
                 this._save();
                 this.log.info('M-Copilot: vehicle: ' + (this.vin ? this.vin.slice(0, 11) : 'no VIN') + ', units ' + JSON.stringify(units));
             } catch (e) {
@@ -228,12 +267,18 @@ class Vehicle {
         if (time <= this.profileAt) return false;
         this.profile = cleanProfile(p);
         this.profileAt = time;
-        try { fs.writeFileSync(this.profileFile, JSON.stringify({ time, profile: this.profile })); } catch (e) { this.log.warn('car_profile.json: ' + e.message); }
+        try { writeWhole(this.profileFile, JSON.stringify({ time, profile: this.profile })); } catch (e) { this.log.warn('car_profile.json: ' + e.message); }
         return true;
     }
 
     /** The engine / gearbox unit types found for this car: { 0x12: name, 0x18: name } (Data check page). */
     unitTypes() { return (this.vin && this.cache.vin === this.vin && this.cache.units) || this.cache.units || {}; }
+
+    /** The engine as the engine snapshot needs it: { dme2: the second engine unit's address or null, diesel }. */
+    engineKind() {
+        const u = this.unitTypes();
+        return { dme2: u.twin ? 0x13 : null, diesel: /diesel/.test(this.engineType || '') || DIESEL_UNIT.test(u[0x12] || '') };
+    }
 
     /** Identity lines for the AI (no serial number). */
     lines() {
@@ -246,7 +291,7 @@ class Vehicle {
         }
         if (this.engineType) l.push('Engine type (car signal): ' + this.engineType);
         const units = (this.vin && this.cache.vin === this.vin && this.cache.units) || {};
-        if (units[0x12]) l.push('Engine control unit: ' + describe(units[0x12]));
+        if (units[0x12]) l.push('Engine control unit' + (units.twin ? 's' : '') + ': ' + describeEngine(units));
         if (units[0x18]) l.push('Gearbox control unit: ' + describe(units[0x18]));
         return l.concat(profileLines(this.profile));
     }
@@ -261,6 +306,9 @@ Vehicle.engineTypeOf = (raw) => (raw !== undefined && raw !== null && Object.pro
 /** What the installer left out on this unit (kit/missing-interfaces.json, written by the build on the car): { key: why }. */
 Vehicle.missingAtInstall = () => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'kit', 'missing-interfaces.json'), 'utf8')) || {}; } catch (e) { return {}; } };
 Vehicle.profileLines = profileLines;
+Vehicle.describeEngine = describeEngine;
+Vehicle.engineUnitName = engineUnitName;
+Vehicle.UNITS = UNITS;
 Vehicle.vinFromLaunch = vinFromLaunch;
 Vehicle.decodeVin = decodeVin;
 Vehicle.cleanProfile = cleanProfile;

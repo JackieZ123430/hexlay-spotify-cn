@@ -104,6 +104,26 @@ function layer(key, w, h, draw, textScale) {
 }
 function onLayerDrop(fn) { layerDrop = fn; }
 
+/**
+ * A QR code (qrcodegen.QrCode) at x, y, px logical px a module: its dark modules in black over what is drawn under
+ * it (a white card). Recorded once as a layer for what it encodes (key) and the module size: one op a frame instead
+ * of a rectangle per dark module (about 1300 for a pairing link), and each row's run of dark modules is one rectangle.
+ */
+function qrCode(cv, qr, key, x, y, px) {
+    const n = qr.size;
+    cv.blit(layer(['qr', key, px].join('|'), n * px, n * px, (c) => {
+        for (let r = 0; r < n; r++) {
+            for (let m = 0; m < n;) {
+                if (!qr.getModule(m, r)) { m++; continue; }
+                let e = m + 1;
+                while (e < n && qr.getModule(e, r)) e++;
+                c.fillRect(m * px, r * px, (e - m) * px, px, '#000000');
+                m = e;
+            }
+        }
+    }, cv.textScale), x, y);
+}
+
 /** Colour of value v: the zone it falls in, else `base` (default accent). */
 function zoneColor(t, g, v, base) {
     let c = base || t.accent;
@@ -122,10 +142,9 @@ function panel(cv, t, x, y, w, h, title) { return box(cv, t, x, y, w, stretch(cv
  * (cv.extra: display.js). (read only then: a page whose panels all end higher up is centred in the room instead)
  */
 function stretch(cv, y, h) { return y + h >= 500 && cv.extra ? h + cv.extra : h; }
-function box(cv, t, x, y, w, h, title, options) {
+function box(cv, t, x, y, w, h, title, titleLiteral) {
     x = Math.round(x); y = Math.round(y); w = Math.round(w); h = Math.round(h);
-    const literal = !!(options && options.literal);
-    const L = layer(['panel', w, h, title || '', t.name, literal].join('|'), w, h, (c) => drawPanel(c, t, 0, 0, w, h, title, literal), cv.textScale);
+    const L = layer(['panel', w, h, title || '', t.name, !!titleLiteral].join('|'), w, h, (c) => drawPanel(c, t, 0, 0, w, h, title, titleLiteral), cv.textScale);
     cv.blit(L, x, y);
     return { x, y, w, h };
 }
@@ -141,7 +160,7 @@ const MARGIN = 22;
  * so it ends MARGIN over the panel's real bottom, room px lower (G.panel's stretch: cv.extra, else 0).
  */
 function toMargin(room, m) { return room + m - MARGIN; }
-function drawPanel(cv, t, x, y, w, h, title, literal) {
+function drawPanel(cv, t, x, y, w, h, title, titleLiteral) {
     // flat light grey overlay; top: a short bold bar in the theme's stripe colours (M tricolour:
     // light blue, dark blue, red; the last part with an angled end), then a thin white line;
     // large white title in normal case
@@ -153,7 +172,7 @@ function drawPanel(cv, t, x, y, w, h, title, literal) {
         else cv.fillRect(sx, y, sw, 5, c);
     });
     cv.fillRect(x + BW + 2, y + 2, w - BW - 2, 1.5, withAlpha('#ffffff', 0.9));
-    if (title) cv.text(String(title), x + 18, y + 42, 26, t.text, { font: 'bold', literal });
+    if (title) cv.text(String(title), x + 18, y + 42, 26, t.text, { font: 'bold', literal: titleLiteral });
 }
 
 /* ---------------- radial dial ---------------- */
@@ -297,7 +316,8 @@ function rampSlab(cv, x0, x1, y, h, sl, stops, spanX, spanW) {
  * on it; below it in g.negColor. g.head: false leaves out the label / value row (the bar at y).
  * g.track: the empty track's colour. g.ticks: the values marked on the scale line; g.labels:
  * [{ value, text, color, align }] in place of its numbers. g.text / g.valueColor: the value row's text and colour
- * in place of the formatted value.
+ * in place of the formatted value. g.peakText: the peak as a number too ("PEAK 312"), small, after the label
+ * (left out where the label and the value leave no room for it).
  */
 function bar(cv, t, x, y, w, h, g) {
     const min = g.min || 0, v = g.value;
@@ -306,10 +326,16 @@ function bar(cv, t, x, y, w, h, g) {
     if (g.niceMax) max = min + Math.ceil((max - min) / step - 1e-9) * step;
     const sv = sm(g, 'bar|' + x + '|' + y, v), head = g.head !== false;
     if (head) {
-        cv.text(upperText(g.label || ''), x, y + 26, 22, t.dim, { font: 'bold', spacing: 2 });
-        const uw = g.unit ? cv.textWidth(' ' + g.unit, 26) : 0;
-        cv.text(g.text != null ? g.text : fmt(v, g.decimals), x + w - uw, y + 30, 44, g.valueColor ? t[g.valueColor] || g.valueColor : isNum(v) ? t.text : t.dim, { align: 'right', font: 'num' });
+        const label = upperText(g.label || '');
+        cv.text(label, x, y + 26, 22, t.dim, { font: 'bold', spacing: 2 });
+        const uw = g.unit ? cv.textWidth(' ' + g.unit, 26) : 0, vs = g.text != null ? g.text : fmt(v, g.decimals);
+        cv.text(vs, x + w - uw, y + 30, 44, g.valueColor ? t[g.valueColor] || g.valueColor : isNum(v) ? t.text : t.dim, { align: 'right', font: 'num' });
         if (g.unit) cv.text(' ' + g.unit, x + w, y + 30, 26, t.dim, { align: 'right' });
+        if (g.peakText && isNum(g.peak)) {
+            const ps = localizeLabel('PEAK') + ' ' + fmt(g.peak, g.decimals), po = { font: 'label', spacing: 1, literal: true };
+            const px = x + cv.textWidth(label, 22, { font: 'bold', spacing: 2 }) + 22;
+            if (px + cv.textWidth(ps, 20, po) <= x + w - uw - cv.textWidth(vs, 44, { font: 'num' }) - 18) cv.text(ps, px, y + 26, 20, t.hang || t.accent2 || t.dim, po);
+        }
     }
     const bh = 22, by = y + (head ? 44 : 0), SL = 18, bw = w - SL;
     const X = (val) => x + clamp((val - min) / (max - min), 0, 1) * bw;
@@ -618,7 +644,8 @@ function tyres(cv, t, x, y, w, h, g) {
  */
 function gmeter(cv, t, cx, cy, r, g) {
     const max = g.max || 1.5;
-    const key = ['gmeter', r, max, t.name].join('|'), S = Math.ceil(r + 4);
+    const flip = !!g.flipLong;                  // brake on top, accel at the bottom (issue #72)
+    const key = ['gmeter', r, max, t.name, flip].join('|'), S = Math.ceil(r + 4);
     cv.blit(layer(key, 2 * S + 80, 2 * S, (c) => {
         const x = S, y = S;
         for (let ring_ = 0.5; ring_ <= max + 1e-6; ring_ += 0.5) {
@@ -628,10 +655,10 @@ function gmeter(cv, t, cx, cy, r, g) {
         }
         c.line(x - r, y, x + r, y, 2, withAlpha(t.tick, 0.6));
         c.line(x, y - r, x, y + r, 2, withAlpha(t.tick, 0.6));
-        c.text('BRAKE', x, y + r - 14, 22, t.dim, { align: 'center', font: 'bold', spacing: 1.5 });
-        c.text('ACCEL', x, y - r + 32, 22, t.dim, { align: 'center', font: 'bold', spacing: 1.5 });
+        c.text(flip ? 'ACCEL' : 'BRAKE', x, y + r - 14, 22, t.dim, { align: 'center', font: 'bold', spacing: 1.5 });
+        c.text(flip ? 'BRAKE' : 'ACCEL', x, y - r + 32, 22, t.dim, { align: 'center', font: 'bold', spacing: 1.5 });
     }, cv.textScale), Math.round(cx) - S, Math.round(cy) - S);
-    const P = (lat, lon) => [cx + clamp(lat / max, -1.1, 1.1) * r, cy - clamp(lon / max, -1.1, 1.1) * r];
+    const P = (lat, lon) => [cx + clamp(lat / max, -1.1, 1.1) * r, cy + (flip ? 1 : -1) * clamp(lon / max, -1.1, 1.1) * r];
     const tr = g.trail || [];
     tr.forEach((p, i) => {
         if (!isNum(p[0]) || !isNum(p[1])) return;
@@ -680,7 +707,7 @@ function frame(cv, t, tabs, sel, badges) {
     const opt = { align: 'center', font: 'bold', spacing: 1.5 };
     const live = (badges || []).filter(Boolean);
     const labels = (tabs || []).map((n) => upperText(n));
-    const badgesW = live.reduce((a, b) => a + Math.max(24 * 3.5, cv.textWidth(b.text, 18, Object.assign({}, opt, { literal: b.literal })) + 24) + 24 * 0.4, 0);
+    const badgesW = live.reduce((a, b) => a + Math.max(24 * 3.5, cv.textWidth(b.text, 18, opt) + 24) + 24 * 0.4, 0);
     const widths = tabWidths(cv, labels, 20, opt, 150, 48, W - 32 - badgesW, 20);
     let x = 16;
     cv.tabRects = [];
@@ -695,8 +722,7 @@ function frame(cv, t, tabs, sel, badges) {
         if (i < tabs.length - 1) cv.fillRect(x + tw, 9, 1, BAR_H - 18, withAlpha('#ffffff', 0.12));
         x += tw;
     });
-    const badgeLeft = badgeRow(cv, t, W - 16, 6, 24, 18, live);
-    cv.creditBounds = { left: x + 8, right: badgeLeft - 12 };
+    badgeRow(cv, t, W - 16, 6, 24, 18, (badges || []).filter(Boolean));
 }
 
 /** Badges right-aligned at xr (right edge), top y, height h, text size. Returns the left edge. */
@@ -704,10 +730,9 @@ function badgeRow(cv, t, xr, y, h, size, badges) {
     const opt = { align: 'center', font: 'bold', spacing: 1.5 };
     let bx = xr;
     badges.forEach((b) => {
-        const textOptions = Object.assign({}, opt, { literal: b.literal });
-        const bw = Math.max(h * 3.5, cv.textWidth(b.text, size, textOptions) + h), c = t[b.color] || b.color || t.warn;
+        const bw = Math.max(h * 3.5, cv.textWidth(b.text, size, opt) + h), c = t[b.color] || b.color || t.warn;
         cv.roundRect(bx - bw, y, bw, h, h * 0.2, withAlpha(c, 0.2));
-        cv.text(b.text, bx - bw / 2, y + h / 2 + size * 0.36, size, c, textOptions);
+        cv.text(b.text, bx - bw / 2, y + h / 2 + size * 0.36, size, c, opt);
         bx -= bw + h * 0.4;
     });
     return bx;
@@ -760,7 +785,7 @@ function headerCompact(cv, t, x, y, w, h, title, tabs, sel, badges, k) {
     const bopt = { align: 'center', font: 'bold', spacing: 1.5 };
     const names = (tabs || []).map((n) => upperText(n));
     const bz = Math.min(z, 1.15), bh = Math.round(30 * bz), bsize = Math.round(17 * bz);
-    const bws = (badges || []).map((b) => Math.max(bh * 3.5, cv.textWidth(b.text, bsize, Object.assign({}, bopt, { literal: b.literal })) + bh));
+    const bws = (badges || []).map((b) => Math.max(bh * 3.5, cv.textWidth(b.text, bsize, bopt) + bh));
     const badgesW = bws.reduce((a, b) => a + b + bh * 0.4, 0);
     const tsize = 32, titleW = title ? cv.textWidth(title, tsize) : 0;
     const room = w - 20 - (badgesW ? badgesW + 12 : 0);
@@ -769,7 +794,8 @@ function headerCompact(cv, t, x, y, w, h, title, tabs, sel, badges, k) {
     while (tf > 18 && names.reduce((a, n) => a + cv.textWidth(n, tf, opt) + 20, 0) > room - 20) tf--;
     const tw = tabWidths(cv, names, tf, opt, Math.round(132 * z), Math.round(44 * z), room - 20, 20);
     const tabsW = tw.reduce((a, b) => a + b, 0);
-    const showTitle = title && titleW + 32 + tabsW <= room;
+    // the tabs start 20 px in: the name shows only where every tab still fits after it (else the last tab, Settings, drops)
+    const showTitle = title && 20 + titleW + 32 + tabsW <= room;
     // only as wide as the content: the rest of the strip stays the HMI's
     let end = x + 20 + (showTitle ? titleW + 32 : 0);
     names.forEach((n, i) => { if (end + tw[i] <= x + room) end += tw[i]; });
@@ -864,7 +890,7 @@ function stripes(cv, t, x, y, w) {
     s.forEach((c, i) => cv.roundRect(x + i * sw, y, sw - (i < s.length - 1 ? 4 : 0), 4, 2, c));
 }
 
-module.exports = {
+module.exports = { qrCode,
     BAR_H, TOP, BOTTOM, pageBottom, MARGIN, toMargin, frame, header, layer, onLayerDrop, panel, panelExact: box, segBar, radial, needle, ring, bar, stat, readout,
     shiftLights, gear, chart, table, pill, tyres, gmeter, menuBar, stripes, button, onConfirm, smooth, hold, niceStep,
     fmt, isNum, clamp, mix, zoneColor, withAlpha, ramp,

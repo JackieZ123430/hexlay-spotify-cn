@@ -39,7 +39,7 @@ try { gfxMod = await import('./gfx/mgu-gfx.js'); await newGfx(null); } catch (e)
 /* ---------------- WebSocket ---------------- */
 let ws = null;
 const send = (m) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); };
-const S = { app: null, spec: null, values: {}, stack: [], closed: false, status: 'connecting', conn: { on: false }, focus: null, sig: null, srv: {} };
+const S = { app: null, spec: null, values: {}, nui: {}, stack: [], closed: false, status: 'connecting', conn: { on: false }, focus: null, sig: null, srv: {} };
 // what arrived from the app (for the stats and "renderer not built")
 const rx = { frames: 0, msgs: 0, bytes: 0, types: {}, sawFrame: false, feedErr: null };
 const NAMES = { 1: 'HELLO', 2: 'PLACE', 3: 'SHOW', 4: 'ATLAS', 5: 'RAMP', 6: 'LAYER', 7: 'FRAME', 8: 'DROP_LAYER', 9: 'IMAGE/CLAIM', 10: 'GRAB/IMAGE', 11: 'DROP_IMAGE', 12: 'FPS', 13: 'VIDEO', 14: 'DROP_VIDEO',
@@ -92,7 +92,7 @@ function onText(m) {
     $('#log').replaceChildren();
     break;
   case 'spec': S.spec = m.spec; S.values = m.values || {}; S.app = m.spec.id; $('#app').value = m.spec.id; P.busy = null; picker(); buildSettings(); renderHmi(); $('#version').textContent = m.spec.title + ' ' + m.spec.version; break;
-  case 'settings': S.values = m.values; syncSettings(); break;
+  case 'settings': S.values = m.values; syncSettings(); nsRender(); break;
   case 'status': setStatus(m.s, m.text); break;
   case 'reset':
     awaitReset = false; rx.feedErr = null; rx.dropped = false; rx.types = {};
@@ -113,6 +113,16 @@ function onText(m) {
   case 'stats': S.srv = m; break;
   case 'touchmode': $('#touchroute').checked = !!m.on; break;
   case 'note': toast(m.s, true); break;
+  case 'nui':
+    // what the app set on its native screens' components (all: the whole of it, when this page connects)
+    if (m.all) S.nui = m.comps || {};
+    else Object.keys(m.comps || {}).forEach((n) => {
+      const c = S.nui[n] || (S.nui[n] = { cells: {}, img: {} }), q = m.comps[n];
+      Object.assign(c.cells, q.cells || {}); Object.assign(c.img, q.img || {});
+      ['vis', 'chk', 'sel', 'en'].forEach((k) => { if (q[k] !== undefined) c[k] = q[k]; });
+    });
+    nsRender();
+    break;
   default: break;
   }
   overlay();
@@ -173,7 +183,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 let down = null;
 const at = (e) => { const r = stage.getBoundingClientRect(); return { x: Math.round((e.clientX - r.left) * W / r.width), y: Math.round((e.clientY - r.top) * H / r.height) }; };
 stage.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || e.target.closest('button, #picker')) return;
+  if (e.button !== 0 || e.target.closest('button, #picker, #hmiset')) return;
   try { stage.setPointerCapture(e.pointerId); } catch (x) { /* a pointer already gone */ }
   stage.focus({ preventScroll: true });
   down = e.pointerId;
@@ -196,7 +206,7 @@ stage.addEventListener('wheel', (e) => {
   e.preventDefault();
   wheel += e.deltaMode === 1 ? e.deltaY / 3 : e.deltaMode === 2 ? e.deltaY * 3 : e.deltaY / 60;
   const n = Math.trunc(wheel);
-  if (n) { wheel -= n; if (S.closed) pickMove(n); else send({ t: 'ccu', turn: n }); }
+  if (n) { wheel -= n; if (S.closed) pickMove(n); else if (NS.open) nsMove(n); else send({ t: 'ccu', turn: n }); }
 }, { passive: false });
 const TILT = { ArrowUp: 'N', ArrowRight: 'E', ArrowDown: 'S', ArrowLeft: 'W' };
 // keys belong to the panel's controls while one has the focus (and to the browser with a modifier)
@@ -205,6 +215,8 @@ const typing = (e) => !!(e.target.closest && e.target.closest('#panel, input, se
 document.addEventListener('keydown', (e) => {
   if (typing(e)) return;
   const k = e.key;
+  // the HMI's settings screen has the controller while it shows (the app's page is hidden under it)
+  if (NS.open && nsKey(k, e)) { e.preventDefault(); return; }
   // the app picker has the controller while it shows (the app is not on screen); BACK and HOME leave it there
   if (S.closed) {
     if (k === '[' || k === ']') pickMove(k === ']' ? 1 : -1);
@@ -250,12 +262,15 @@ $('#shot').onclick = () => screenshot().catch((e) => { console.warn('screenshot:
 /* ---------------- screenshot: the screen as shown, a 1920 x 720 PNG ---------------- */
 // The HMI around the app (the stage's other parts: a copy of their HTML drawn as an SVG image, at 1920 x 720, so
 // --u is 1 px) under the renderer's own picture of the app (gfx.readPixels, see-through where the HMI shows).
-async function screenshot() {
+async function screenshot(saveAs) {
   const out = el('canvas', { width: W, height: H }), g = out.getContext('2d');
   const copy = stage.cloneNode(true);
   copy.querySelectorAll('canvas, #overlay, #toast').forEach((e) => e.remove());
   copy.classList.remove('kbd-focus');
   copy.style.cssText = `width:${W}px;height:${H}px;border-radius:0;box-shadow:none`;
+  // a copy keeps no scroll position: a native screen's list is moved up as far as it is scrolled (in the copy's px)
+  const liveBody = $('.ns-body'), copyList = copy.querySelector('.ns-list');
+  if (liveBody && copyList && liveBody.scrollTop) copyList.style.marginTop = (-liveBody.scrollTop * W / stage.getBoundingClientRect().width) + 'px';
   // an SVG image loads nothing: its pictures go in as data URLs
   await Promise.all([...copy.querySelectorAll('img')].map(async (im) => {
     if (im.hidden || !im.getAttribute('src') || im.src.startsWith('data:')) return;
@@ -278,16 +293,24 @@ async function screenshot() {
     layer.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(px.buffer, px.byteOffset, px.length), W, H), 0, 0);
     g.drawImage(layer, 0, 0);
   }
+  // saved by the emulator itself (window.emuShot): preview/emu/shots/<name>.png, in parts under its message limit
+  if (saveAs) {
+    const b64 = out.toDataURL('image/png').split(',')[1], P = 512 * 1024, n = Math.ceil(b64.length / P);
+    for (let i = 0; i < n; i++) send({ t: 'shot', name: saveAs, i, n, part: b64.slice(i * P, (i + 1) * P) });
+    return saveAs;
+  }
   const blob = await new Promise((r) => out.toBlob(r, 'image/png'));
   const a = el('a', { href: URL.createObjectURL(blob), download: `emulator-${S.app || 'screen'}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png` });
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
+window.emuShot = (name) => screenshot(String(name || S.app || 'shot'));
 document.querySelectorAll('[data-hmi]').forEach((b) => { b.onclick = () => send({ t: 'hmi', a: b.dataset.hmi }); });
 $('#touchroute').onchange = (e) => send({ t: 'touch-routing', on: e.target.checked });
 $('#fps').onchange = (e) => send({ t: 'fps', n: Number(e.target.value) });
 
 function renderHmi() {
+  nsSync();
   $('#stack').textContent = S.stack.length ? S.stack.join(' › ') : S.closed ? '(left: the HMI\'s app picker)' : '(none open)';
   $('#soft').style.visibility = S.stack.length ? '' : 'hidden';       // the app's screen is gone: so is the HMI's image of it
   const screens = (S.spec && S.spec.screens) || [];
@@ -296,6 +319,157 @@ function renderHmi() {
   const top = screens.find((s) => s.name === S.stack[S.stack.length - 1]);
   const btns = !top ? [] : top.kind === 'canvas' ? (top.buttons || []).map((b) => [b[0], b[1]]) : (top.items || []).filter((i) => i[0] === 'button').map((i) => [i[1], i[2]]);
   $('#hmibtns').replaceChildren(...btns.map(([id, label]) => el('button', { textContent: label || id, title: id, className: id === S.focus ? 'focus' : '', on: { click: () => send({ t: 'click', id }) } })));
+}
+
+/* ---------------- the HMI's own screens (the app's native states: menus, lists, its settings) ---------------- */
+// What the car draws for an app's non-canvas states (kit/tools/build.py): a list in the wide state (menus, settings) or
+// in the regular one. Components as build.py makes them - button, twocol (70/30 columns), tworow (two rows), checkbox, text /
+// text3 (labels), header, scroll (a text that scrolls), graphic - with what the app set on them since (S.nui: cells,
+// visibility, checkmarks, pictures, from the head unit stub). The settings screen: one row per setting, a drop-down's
+// values as their own list with the chosen one marked (mgu.js wireSettings). Presses go to the app as the HMI's events
+// (click <component>, with a drop-down's row). The knob, push up / down and Enter move and press here while one shows
+// (a focused scrolling text scrolls first); BACK (Backspace, push left) closes a drop-down, then the screen; touch
+// presses a row.
+const NS = { open: null, focus: 0, drop: null };
+const FOCUSABLE = { button: 1, iconbutton: 1, twocol: 1, tworow: 1, checkbox: 1, scroll: 1, choice: 1, dropdown: 1, slider: 1 };
+const nsSame = (a, b) => a === b || String(a) === String(b);
+const nsOptions = (s) => (s.type === 'choice' ? s.options || [] : (s.steps || []).map((v) => [v, v + (s.unit ? ' ' + s.unit : '')]));
+const nsList = () => ((S.spec && S.spec.settings) || []).filter((s) => !s.hidden);
+const nsComp = (n) => (S.nui && S.nui[n]) || { cells: {}, img: {} };
+const nsScreen = () => ((S.spec && S.spec.screens) || []).find((s) => s.name === NS.open);
+function nsSettingsRows() {
+  if (NS.drop) {
+    const s = NS.drop, id = 'SET_' + s.key.toUpperCase();
+    return nsOptions(s).map((o, i) => ({ label: o[1], radio: true, on: nsSame(S.values[s.key], o[0]),
+      act: () => { send({ t: 'click', id, row: i }); NS.focus = nsList().indexOf(s); NS.drop = null; } }));
+  }
+  const rows = nsList().map((s) => {
+    const id = 'SET_' + s.key.toUpperCase();
+    if (s.type === 'bool') return { label: s.label, check: true, on: !!S.values[s.key], act: () => send({ t: 'click', id }) };
+    if (s.type === 'choice' || (s.type === 'number' && s.steps)) {
+      const o = nsOptions(s).find((x) => nsSame(x[0], S.values[s.key]));
+      return { label: s.label, value: o ? o[1] : '', chevron: true,
+        act: () => { NS.drop = s; NS.focus = Math.max(0, nsOptions(s).findIndex((x) => nsSame(x[0], S.values[s.key]))); } };
+    }
+    return { label: s.label, sub: S.values[s.key] == null ? '' : String(S.values[s.key]) + (s.unit ? ' ' + s.unit : ''), act: () => send({ t: 'click', id }) };
+  });
+  if (!S.spec || S.spec.credits !== false) rows.push({ label: 'iDrive 7 custom apps', sub: 'GitHub cauliflowermossgrape · github.com/cauliflowermossgrape/idrive7-apps', info: true });
+  return rows;
+}
+/** A native screen's rows: its items as build.py made them, with what the app set on them (hidden ones left out). */
+function nsScreenRows(sc) {
+  // an item drop-down open: its choices (the HMI moves the choice itself, then tells the app the row)
+  if (NS.drop && NS.drop.item) {
+    const d = NS.drop;
+    return d.opts.map((o, i) => ({ label: o, radio: true, on: i === d.sel,
+      act: () => { (S.nui[d.id] = S.nui[d.id] || { cells: {}, img: {} }).sel = i; send({ t: 'click', id: d.id, row: i }); NS.focus = d.at; NS.drop = null; } }));
+  }
+  const rows = [];
+  (sc.items || []).forEach((it) => {
+    const [kind, name, label] = it, c = nsComp(name), v = c.cells;
+    if (c.vis === false) return;
+    if (kind === 'dropdown') {
+      // ["dropdown", NAME, header, [choices]]: the header, the chosen row on the right
+      const opts = it[3] || [], sel = c.sel || 0, at = rows.length;
+      const r = { kind, name, label: v.HeaderText != null ? v.HeaderText : label || '', value: opts[sel] || '', chevron: true };
+      r.act = c.en === false ? null : () => { NS.drop = { item: true, id: name, label: r.label, opts, sel, at }; NS.focus = sel; };
+      r.dim = c.en === false; r.info = !r.act;
+      rows.push(r);
+      return;
+    }
+    if (kind === 'slider') {
+      // ["slider", NAME, text, steps]: its text and position; a press moves it a step (to the start after the end)
+      const n = Number(it[3]) || 0, val = Math.max(0, Math.min(n, Number(v.Value) || 0));
+      const r = { kind, name, label: v.TextDescription != null ? v.TextDescription : label || '', value: '▮'.repeat(val + 1) + '▯'.repeat(n - val) };
+      r.act = c.en === false ? null : () => {
+        const nv = val >= n ? 0 : val + 1;
+        (S.nui[name] = S.nui[name] || { cells: {}, img: {} }).cells.Value = String(nv);
+        send({ t: 'slide', id: name, value: nv });
+      };
+      r.dim = c.en === false; r.info = !r.act;
+      rows.push(r);
+      return;
+    }
+    const click = () => send({ t: 'click', id: name });
+    const r = { kind, name, act: FOCUSABLE[kind] ? click : null, info: !FOCUSABLE[kind] };
+    if (kind === 'twocol') { r.label = v.Text1stCol != null ? v.Text1stCol : label || ''; r.value = v.Text2ndCol || ''; }
+    else if (kind === 'tworow') { r.label = v.Text1stRow != null ? v.Text1stRow : label || ''; r.sub = v.Text2ndRow || ''; }
+    else if (kind === 'checkbox') { r.label = v.Text != null ? v.Text : label || ''; r.check = true; r.on = !!c.chk; }
+    else if (kind === 'graphic') { r.pic = c.img.Graphic || null; }
+    else r.label = v.Text != null ? v.Text : label || '';
+    if (c.en === false) { r.act = null; r.dim = true; r.info = true; }      // greyed: the HMI ignores presses
+    if ((kind === 'text' || kind === 'text3' || kind === 'scroll' || kind === 'header') && !r.label) return;   // (an empty label shows nothing)
+    rows.push(r);
+  });
+  // a menu with "settings": true lists the settings after its items, as build.py puts them on the HMI's screen
+  if (sc.settings === true) return NS.drop ? nsSettingsRows() : rows.concat(nsSettingsRows());
+  return rows;
+}
+function nsRows() { const sc = nsScreen(); return NS.open === 'SETTINGS' ? nsSettingsRows() : sc ? nsScreenRows(sc) : []; }
+const nsFocusable = (rows) => rows.map((r, i) => (r.act ? i : -1)).filter((i) => i >= 0);
+/** The stack's top is one of the app's native screens (or not any more): show or hide it. */
+function nsSync() {
+  const top = !S.closed && S.stack[S.stack.length - 1];
+  const sc = ((S.spec && S.spec.screens) || []).find((s) => s.name === top);
+  const open = top === 'SETTINGS' ? 'SETTINGS' : sc && sc.kind !== 'canvas' ? top : null;
+  if (open !== NS.open) { NS.open = open; NS.drop = null; NS.focus = nsFocusable(nsRows())[0] || 0; $('.ns-body').scrollTop = 0; }
+  stage.classList.toggle('ns', !!NS.open);
+  $('#hmiset').hidden = !NS.open;
+  nsRender();
+}
+function nsRender() {
+  if (!NS.open) return;
+  const sc = nsScreen(), rows = nsRows(), foc = nsFocusable(rows);
+  if (foc.length && foc.indexOf(NS.focus) < 0) NS.focus = foc.reduce((b, i) => (Math.abs(i - NS.focus) < Math.abs(b - NS.focus) ? i : b), foc[0]);
+  const titleComp = sc ? nsComp(sc.name + '_TITLE').cells.Text : null;
+  $('.ns-title').textContent = NS.drop ? NS.drop.label : NS.open === 'SETTINGS' ? 'Settings' : titleComp || (sc && sc.title) || (S.spec && S.spec.title) || '';
+  const list = $('.ns-list');
+  list.replaceChildren(...rows.map((r, i) => {
+    const kids = [];
+    if (r.radio) kids.push(el('span', { className: 'ns-radio' + (r.on ? ' on' : '') }));
+    if (r.pic) kids.push(el('img', { className: 'ns-pic', src: 'data:image/png;base64,' + r.pic, alt: '' }));
+    else kids.push(el('div', { className: 'ns-text' }, el('div', { className: 'ns-label', textContent: r.label }), ...(r.sub ? [el('div', { className: 'ns-sub', textContent: r.sub })] : [])));
+    if (r.value != null && r.value !== '') kids.push(el('span', { className: 'ns-value', textContent: r.value }));
+    if (r.check) kids.push(el('span', { className: 'ns-check' + (r.on ? ' on' : '') }));
+    if (r.chevron) kids.push(el('span', { className: 'ns-chev' }));
+    const kind = r.kind ? ' k-' + r.kind : '';
+    return el('div', { className: 'ns-row' + kind + (i === NS.focus && r.act ? ' focus' : '') + (r.info ? ' info' : '') + (r.dim ? ' dim' : ''), role: 'option',
+      on: { click: () => { if (!r.act) return; NS.focus = i; r.act(); nsRender(); } } }, ...kids);
+  }));
+  // the list scrolls as little as needed to keep the focused row in view (as the HMI's lists)
+  const body = $('.ns-body'), f = list.children[NS.focus];
+  if (f) {
+    if (f.offsetTop < body.scrollTop) body.scrollTop = f.offsetTop - 10;
+    else if (f.offsetTop + Math.min(f.offsetHeight, body.clientHeight) > body.scrollTop + body.clientHeight) body.scrollTop = f.offsetTop + Math.min(f.offsetHeight, body.clientHeight) - body.clientHeight + 10;
+  }
+  const bar = $('.ns-bar'), th = $('.ns-thumb'), H = list.scrollHeight;
+  bar.hidden = H <= body.clientHeight + 2;
+  if (!bar.hidden) { th.style.height = (100 * body.clientHeight / H) + '%'; th.style.top = (100 * body.scrollTop / H) + '%'; }
+}
+function nsMove(d) {
+  const rows = nsRows(), foc = nsFocusable(rows);
+  if (!foc.length) return;
+  // a focused text that scrolls takes the turn until its end, as the HMI's scroll label
+  const fr = $('.ns-list').children[NS.focus], body = $('.ns-body');
+  if (rows[NS.focus] && rows[NS.focus].kind === 'scroll' && fr) {
+    const top = fr.offsetTop, bottom = top + fr.offsetHeight, step = body.clientHeight * 0.3;
+    if (d > 0 && bottom > body.scrollTop + body.clientHeight + 4) { body.scrollTop += step; nsRender(); return; }
+    if (d < 0 && top < body.scrollTop - 4) { body.scrollTop -= step; nsRender(); return; }
+  }
+  let k = foc.indexOf(NS.focus);
+  k = Math.max(0, Math.min(foc.length - 1, (k < 0 ? 0 : k) + Math.sign(d)));
+  NS.focus = foc[k];
+  nsRender();
+}
+function nsBack() { if (NS.drop) { NS.focus = NS.drop.item ? NS.drop.at : nsList().indexOf(NS.drop); NS.drop = null; nsRender(); } else send({ t: 'hmi', a: 'back' }); }
+/** A key while a native screen shows: true when it was the screen's. */
+function nsKey(k, e) {
+  if (k === '[' || k === ']') nsMove(k === ']' ? 1 : -1);
+  else if (k === 'ArrowDown' || k === 'ArrowUp') { if (!e.repeat) nsMove(k === 'ArrowDown' ? 1 : -1); }
+  else if (k === 'Enter') { if (!e.repeat) { const r = nsRows()[NS.focus]; if (r && r.act) r.act(); nsRender(); } }
+  else if (k === 'Backspace' || k === 'ArrowLeft') { if (!e.repeat) nsBack(); }
+  else return false;
+  return true;
 }
 
 /* ---------------- panel: settings, from the app's app.json ---------------- */
@@ -380,13 +554,10 @@ $('#clearlog').onclick = () => $('#log').replaceChildren();
  * is then hidden as on the car (no SHOW, no ticks); the knob, push and press move the focus here. The current app's
  * tile opens it again ({t:'hmi', a:'open'}), another app's tile starts that one ({t:'app'}: it opens once started).
  * Sizes in the screen's 1920 x 720 px (emu.css .pk-*). */
-// the order of the tiles on the car (the user's photo of it); apps not listed follow by name
-const ORDER = ['brake_test', 'warmup', 'service', 'redline', 'gforce', 'edrive', 'dyno', 'dtc_scanner', 'draggy', 'doom', 'car_vitals'];
 const PK = { cols: 5, row: 236, padTop: 18, padBottom: 30, view: 640, track: 590 };   // (emu.css: grid rows, padding, .pk-body / .pk-bar height)
 const P = { tiles: [], focus: 0, scroll: 0, busy: null, shown: false };
 function buildPicker(apps, titles) {
-  const ids = ORDER.filter((k) => apps.includes(k)).concat(apps.filter((a) => !ORDER.includes(a)));
-  P.tiles = ids.map((id) => ({ id, title: titles[id] || id }));
+  P.tiles = apps.map((id) => ({ id, title: titles[id] || id }));
   $('.pk-grid').replaceChildren(...P.tiles.map((t, i) => {
     const icon = el('img', { src: '/icon/' + encodeURIComponent(t.id) + '.png', alt: '', draggable: false });
     t.el = el('div', { className: 'pk-tile', role: 'option', 'aria-label': t.title, 'data-i': i }, icon, el('span', { textContent: t.title }));

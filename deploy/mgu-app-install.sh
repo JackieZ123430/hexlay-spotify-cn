@@ -30,7 +30,8 @@
 #                                                       guard leaves it out if the HMI fails with it.
 #                                                       --now: restart the HMI now (VM / bench only:
 #                                                       on a car an HMI restart reboots the unit)
-#   sh mgu-app-install.sh inputgate-remove [--now]      take it out again (next start / --now)
+#   sh mgu-app-install.sh inputgate-remove [--now|--reboot]  take it out again (gone after a head-unit reboot;
+#                                                       --reboot: reboot now; --now: restart the HMI, VM / bench)
 #   sh mgu-app-install.sh inputgate-status              loaded / set up / left out
 #
 # Options (env):  NO_RESTART=1  don't restart oapcontroller after changes
@@ -99,10 +100,16 @@ BACKUP_ROOT=${BACKUP_ROOT:-$SELF_DIR/backups}
 TMP=${TMPDIR:-/tmp}/mgu-app-install.$$
 CHANGED=0
 NEED_RESTART=0
+DONE_RESTART=0         # install: the apps already installed need the restart (an error later says so)
 
 say()  { echo "[mgu-app] $*"; }
 warn() { echo "[mgu-app] WARNING: $*" >&2; }
-die()  { echo "[mgu-app] ERROR: $*" >&2; rm -rf "$TMP"; exit 1; }
+die()  {
+    echo "[mgu-app] ERROR: $*" >&2; rm -rf "$TMP"
+    # not restarted here: the app that failed may be an update half replaced (it would start broken)
+    [ $DONE_RESTART = 1 ] && echo "[mgu-app] the apps installed before this error are kept; they start after: sh $0 apply" >&2
+    exit 1
+}
 
 [ "$(id -u)" = 0 ] || die "run as root"
 [ -d "$MAIN" ] || die "$MAIN not found - is this an MGU with the OAP platform (and /var/opt/public mounted)?"
@@ -134,8 +141,8 @@ backup() {
     ts=$(date +%Y%m%d-%H%M%S)
     B=$BACKUP_ROOT/$ts
     mkdir -p "$B" || die "cannot create backup dir $B"
-    cp -p "$UIDS" "$B/uids.txt"
-    tar czf "$B/registry.tgz" -C "$MAIN/data" apps 2>/dev/null
+    cp -p "$UIDS" "$B/uids.txt" || die "cannot back up $UIDS - nothing changed"
+    tar czf "$B/registry.tgz" -C "$MAIN/data" apps || die "cannot back up $REG - nothing changed"
     [ -f "$CUSTOM" ] && cp -p "$CUSTOM" "$B/custom_apps.json"
     echo "$B" > "$BACKUP_ROOT/latest"
     say "backup: $B"
@@ -163,13 +170,13 @@ set_acls() {
     fi
 }
 
-custom_list() {    # custom_list add|del <id>  - maintain custom_apps.json
+custom_list() {    # custom_list add|del <id> [start type]  - maintain custom_apps.json
     "$NODE" -e '
-        const fs = require("fs"), f = process.argv[1], op = process.argv[2], id = process.argv[3];
+        const fs = require("fs"), f = process.argv[1], op = process.argv[2], id = process.argv[3], st = process.argv[4] || "manually";
         let c = {}; try { c = JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) {}
-        if (op === "add") c[id] = c[id] || { "-appStartType": "manually", "-userLoginRequired": "false" };
+        if (op === "add") { c[id] = c[id] || { "-userLoginRequired": "false" }; c[id]["-appStartType"] = st; }
         else delete c[id];
-        fs.writeFileSync(f, JSON.stringify(c, null, 2) + "\n");' "$CUSTOM" "$1" "$2" || warn "could not update $CUSTOM"
+        fs.writeFileSync(f, JSON.stringify(c, null, 2) + "\n");' "$CUSTOM" "$1" "$2" "$3" || warn "could not update $CUSTOM"
     chown 12201:12201 "$CUSTOM" 2>/dev/null; chmod 660 "$CUSTOM" 2>/dev/null
 }
 
@@ -369,20 +376,30 @@ install_one() {
         echo "$u=$id" >> "$UIDS"
     fi
     # (re)write the registry entry: MainApp resets the flags to false while
-    # the provisioning hook is not active, so a reinstall repairs that too
-    printf '{"userId":%s,"provisioningCache":{"-allowed":"true","-appStartType":"manually","-enabled":"true","-userLoginRequired":"false","-updateMechanism":"PLATFORM"},"configStateQueueIndex":null,"installationSource":"PREINSTALLED"}' "$u" > "$REG/$id.json"
+    # the provisioning hook is not active, so a reinstall repairs that too.
+    # How MainApp starts it: package.json "mguAppStartType" (build.py writes "autostart" for app.json "autostart":
+    # started with the car, without its screen), else "manually" (opened from the menu); MainApp knows autostart,
+    # lum and manually.
+    stype=$("$NODE" -e 'try { const t = require(process.argv[1]).mguAppStartType; console.log(["autostart", "lum"].indexOf(t) >= 0 ? t : "manually"); } catch (e) { console.log("manually"); }' "$top/source/package.json")
+    [ -n "$stype" ] || stype=manually
+    printf '{"userId":%s,"provisioningCache":{"-allowed":"true","-appStartType":"%s","-enabled":"true","-userLoginRequired":"false","-updateMechanism":"PLATFORM"},"configStateQueueIndex":null,"installationSource":"PREINSTALLED"}' "$u" "$stype" > "$REG/$id.json"
     chown 12201:12201 "$REG/$id.json"; chmod 660 "$REG/$id.json"
-    custom_list add "$id"
+    custom_list add "$id" "$stype"
     CHANGED=1
     say "installed $id $ver -> $top"
     rm -rf "$TMP"
 }
 
+uninstall_check() {    # <id>: dies unless it is installed and ours; sets u
+    u=$(uid_of "$1")
+    [ -n "$u" ] || die "$1 is not installed"
+    is_ours "$1" "$u" || die "$1 is a BMW app (uid $u); this tool only removes apps it installed"
+}
+
 uninstall_one() {
     id=$1
-    u=$(uid_of "$id")
-    [ -n "$u" ] || die "$id is not installed"
-    is_ours "$id" "$u" || die "$id is a BMW app (uid $u); this tool only removes apps it installed"
+    # checked (uninstall_check) before the platform stopped: nothing here may die, the platform must start again
+    u=$(uid_of "$id"); [ -n "$u" ] || return 0      # (an id given twice: gone already)
     sed -i "/^$u=$id\$/d" "$UIDS"
     rm -f "$REG/$id.json"
     custom_list del "$id"
@@ -422,6 +439,7 @@ restore() {
     B=${1:-}
     [ -n "$B" ] || B=$(cat "$BACKUP_ROOT/latest" 2>/dev/null)
     [ -n "$B" ] && [ -f "$B/uids.txt" ] || die "no backup found (looked in $BACKUP_ROOT)"
+    tar tzf "$B/registry.tgz" >/dev/null || die "$B/registry.tgz is damaged - nothing restored"
     say "restoring registry from $B"
     # remove app dirs that the backup did not know about (installed after it)
     sed 's/\r//' "$UIDS" | while IFS='=' read -r u id || [ -n "$u" ]; do
@@ -742,7 +760,9 @@ gate_loaded() {
     [ -n "$p" ] && grep -q mgu-inputgate "/proc/$p/maps" 2>/dev/null
 }
 gate_state() {    # one line for status
-    if gate_loaded; then echo "loaded"
+    # removed while the HMI runs: it keeps its mapped copy until the head unit reboots (issue #117)
+    if gate_loaded && [ ! -f "/etc/systemd/system/$GATE_DROPIN_NAME" ]; then echo "removed, still loaded in the running HMI until the head unit reboots"
+    elif gate_loaded; then echo "loaded"
     elif [ -f "/etc/systemd/system/$GATE_DROPIN_NAME" ]; then
         n=$(cat "$RENDERD_DIR/inputgate.strikes" 2>/dev/null || echo 0)
         if [ "${n:-0}" -ge 2 ] 2>/dev/null; then echo "left out by the boot guard (the HMI failed with it) - install again to retry"
@@ -815,7 +835,10 @@ remove_inputgate() {
     rm -f "$GATE_SO"      # (a running HMI keeps its mapped copy; without the drop-in it is not loaded again)
     [ $had = 1 ] || { say "controller gate not installed"; return 0; }
     if [ "${1:-}" = "--now" ]; then say "restarting the HMI without the controller gate (VM / bench only)..."; systemctl restart hmi.service 2>/dev/null; fi
-    say "controller gate removed - the HMI drops it the next time the head unit starts"
+    # switching the car off and on is not a head-unit start: the HMI keeps running with the gate (issue #117)
+    say "controller gate removed - the HMI drops it when the head unit reboots (systemctl reboot, or hold the volume knob);"
+    say "  switching the car off and on does not restart the head unit. Or: sh $0 inputgate-remove --reboot"
+    if [ "${1:-}" = "--reboot" ]; then say "rebooting the head unit..."; sync; systemctl reboot; fi
 }
 
 apply() {
@@ -827,13 +850,16 @@ apply() {
 cmd=${1:-}; [ $# -gt 0 ] && shift
 case "$cmd" in
     install)   [ $# -gt 0 ] || die "usage: $0 install <app.mgu>..."
-               backup; for f in "$@"; do install_one "$f"; done
+               backup; for f in "$@"; do install_one "$f"; DONE_RESTART=$NEED_RESTART; done
+               DONE_RESTART=0
                patch_active || warn "provisioning hook not active: MainApp will hide the app. Run: sh $0 patch"
                if [ $NEED_RESTART = 1 ]; then apply; else say "updated in place - the new version runs on the next tile tap"; fi ;;
     verify)    [ $# -gt 0 ] || die "usage: $0 verify <app.mgu>..."
                bad=0; for f in "$@"; do verify_one "$f" || bad=1; done
                exit $bad ;;
     uninstall) [ $# -gt 0 ] || die "usage: $0 uninstall <app-id>..."
+               # every id checked first: an error after the stop below would leave the platform stopped
+               for a in "$@"; do uninstall_check "$a"; done
                # stop the platform first so MainApp doesn't see the app vanish
                # under it (it would try to "recover" it)
                backup; [ "${NO_RESTART:-0}" = 1 ] || systemctl stop oapcontroller.service

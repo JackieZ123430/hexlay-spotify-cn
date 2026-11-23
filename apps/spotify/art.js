@@ -103,9 +103,12 @@ class AlbumArtManager {
             }
             const chunks = [];
             res.on('data', (c) => chunks.push(c));
-            res.on('aborted', () => fail('connection closed mid-download'));
+            // Node 8.9.4 (2019 head units) also says 'aborted' for a whole response that is still being read when
+            // the server closes the connection, as it does here (no keep-alive): only a cut one fails
+            res.on('aborted', () => { if (!res.complete) fail('connection closed mid-download'); });
             res.on('end', () => {
                 if (finished) return;
+                if (!res.complete) { fail('connection closed mid-download'); return; }
                 finished = true;
                 clearTimeout(deadline);
                 this.loadingUrl = null;

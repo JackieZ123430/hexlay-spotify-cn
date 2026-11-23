@@ -15,7 +15,6 @@
  *   cardSheet(spec)         a card: title, rows of label and value, action buttons
  */
 const { withAlpha } = require('./canvas');
-const G = require('./gauges');
 
 const W = 1600, TOP = 46, BOTTOM = 512;
 const ROW_H = 66, GAP = 8;

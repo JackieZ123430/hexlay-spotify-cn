@@ -5,6 +5,12 @@
 //   node kit/tools/test_spotify_auth.js
 const path = require('path'), fs = require('fs'), os = require('os'), assert = require('assert'), Module = require('module');
 const ROOT = path.resolve(__dirname, '..', '..'), KIT = path.join(ROOT, 'kit', 'runtime');
+// runs on the head unit's Node too (8.9.4 / 8.16.2): no fs.rmSync there
+function rmrf(p) {
+    let st;
+    try { st = fs.lstatSync(p); } catch (e) { return; }
+    if (st.isDirectory()) { fs.readdirSync(p).forEach((f) => rmrf(path.join(p, f))); fs.rmdirSync(p); } else fs.unlinkSync(p);
+}
 const base = fs.mkdtempSync(path.join(os.tmpdir(), 'spotify-auth-'));
 const APP = path.join(base, 'app');
 fs.mkdirSync(APP);
@@ -67,6 +73,6 @@ c = client({ data: pairing });
 assert(!c.s.isAuthenticated() && !fs.existsSync(LEGACY) && !json(c.file).token, 'nothing');
 console.log('ok   no login: nothing');
 
-fs.rmSync(base, { recursive: true, force: true });
+rmrf(base);
 console.log('all passed');
 process.exit(0);

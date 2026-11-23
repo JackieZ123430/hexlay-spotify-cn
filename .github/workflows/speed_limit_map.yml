@@ -6,7 +6,7 @@ name: Speed Limit map
 # this way; the map file is never edited by hand. Run it any time from the Actions tab (Run workflow).
 on:
   schedule:
-    - cron: '17 5 2 * *'          # the 2nd of each month, 05:17 UTC
+    - cron: '17 14 2 * *'         # the 2nd of each month, 14:17 UTC (after Geofabrik's morning update)
   workflow_dispatch:
 
 permissions:
@@ -28,11 +28,19 @@ jobs:
         with:
           node-version: '8.16.2'      # the head unit's Node: the tests run as in the car
       - name: Download Georgia from Geofabrik (checksum checked)
+        # While Geofabrik publishes the day's extract, "latest" can point at a file that is gone (404) or the map and
+        # its checksum can be a day apart: both are fetched again, up to 6 times, 5 minutes apart.
         run: |
           mkdir -p "$RUNNER_TEMP/osm" && cd "$RUNNER_TEMP/osm"
-          curl -sSfL -A 'idrive7-custom-apps speed limit map' -o georgia-latest.osm.pbf https://download.geofabrik.de/europe/georgia-latest.osm.pbf
-          curl -sSfL -A 'idrive7-custom-apps speed limit map' -o georgia-latest.osm.pbf.md5 https://download.geofabrik.de/europe/georgia-latest.osm.pbf.md5
-          md5sum -c georgia-latest.osm.pbf.md5
+          base=https://download.geofabrik.de/europe/georgia/georgia-latest.osm.pbf
+          for try in 1 2 3 4 5 6; do
+            if curl -sSfL -A 'idrive7-custom-apps speed limit map' -o georgia-latest.osm.pbf "$base" &&
+               curl -sSfL -A 'idrive7-custom-apps speed limit map' -o georgia-latest.osm.pbf.md5 "$base.md5" &&
+               md5sum -c georgia-latest.osm.pbf.md5; then exit 0; fi
+            echo "try $try: not ready, again in 5 minutes"
+            [ $try -lt 6 ] && sleep 300
+          done
+          exit 1
       - name: Build the map
         run: python3 kit/tools/pack_sli.py "$RUNNER_TEMP/osm/georgia-latest.osm.pbf" -o "$RUNNER_TEMP/osm/georgia.pack"
       - name: What changed for a driver

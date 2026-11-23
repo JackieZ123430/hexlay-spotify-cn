@@ -134,7 +134,7 @@ If the store shows **Online** but an app doesn't, look at the `uplink:` line nea
 - `node kit/tools/emu.js <app_id>` runs an app in the browser emulator. Add `--car b58` or `--car n63` for a sample car.
 - The tests are in `kit/tools/test_*.js` and run in CI on Node 8.9.4 and 8.16.2, the versions on the head units.
 - Speed Limit's map: `python3 kit/tools/pack_sli.py georgia-latest.osm.pbf -o apps/speed_limit/georgia.pack` (a
-  Geofabrik extract, `https://download.geofabrik.de/europe/georgia-latest.osm.pbf`; about a minute).
+  Geofabrik extract, `https://download.geofabrik.de/europe/georgia/georgia-latest.osm.pbf`; about a minute).
   `node kit/tools/test_speed_limit.js` replays drives through Tbilisi on it; after a build,
   `node kit/tools/test_speed_limit_power.js` checks its wake-ups from start-up to parked. Wrong limits are fixed in
   OpenStreetMap and come in with the next map, never by editing the pack.

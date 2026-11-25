@@ -475,23 +475,37 @@ function qrScreen(ctx, engine) {
     const { ui, settings: s, log } = ctx;
     const Q = require('./qrlog'), qr = require('./qr'), { Canvas } = require('./kit/canvas');
     const file = path.join(ctx.dataDir || '.', APP_ID + '.log');
-    const st = { size: 'medium', page: 0, list: null };
+    const st = { size: 'medium', page: 0, list: null, cv: null, timer: null, n: 0 };
     const load = () => {
         st.list = Q.pages(Q.logText(file), st.size, APP_ID + ' ' + ((ctx.spec && ctx.spec.version) || ''));
         st.page = Math.min(st.page, st.list.length - 1);
     };
+    // The picture is sent again while the screen is open: the HMI drops an image set while its page is still
+    // opening (the app's other screens draw in a loop, so the next frame covers it; this one is drawn once).
+    // 0.4, 1.2 and 3 s after a code is drawn, then every 5 s; nothing once the screen is closed.
+    const AGAIN = [400, 800, 1800], EVERY = 5000;
+    const stop = () => { if (st.timer) { clearTimeout(st.timer); st.timer = null; } };
+    const resend = () => {
+        st.timer = null;
+        if (!st.cv || !ui.isVisible('SL_QR')) return;
+        if (ui._invalidate) ui._invalidate();          // the same picture: pushed anyway (the kit skips an unchanged one)
+        ui.image('SL_QR_GFX', st.cv);
+        st.timer = setTimeout(resend, AGAIN[st.n++] || EVERY);
+    };
     const show = () => {
         if (!st.list || !ui.isVisible('SL_QR')) return;
-        const cv = new Canvas(1600, 520), q = qr.encode(st.list[st.page], { version: Q.SIZES[st.size].version, ecl: 'L' });
+        const cv = st.cv || (st.cv = new Canvas(1600, 520)), q = qr.encode(st.list[st.page], { version: Q.SIZES[st.size].version, ecl: 'L' });
         Q.drawCode(cv, q, { page: st.page + 1, pages: st.list.length, size: Q.SIZES[st.size].label });
-        ui.image('SL_QR_GFX', cv);
         ui.text('SL_QR_TITLE', 'Log: code ' + (st.page + 1) + ' of ' + st.list.length);
         ui.enabled('SL_QR_PREV', st.page > 0);
         ui.enabled('SL_QR_NEXT', st.page < st.list.length - 1);
+        stop();
+        st.n = 0;
+        resend();
     };
     ui.onVisible((name, v) => {
         if (name !== 'SL_QR') return;
-        if (!v) { st.list = null; return; }
+        if (!v) { stop(); st.list = null; st.cv = null; return; }
         const m = engine.meta || {}, keys = ['show', 'overspeed', 'noLimit', 'cameras', 'untagged', 'hudKeep', 'hudSize', 'clusterSize'];
         log.info('report: ' + APP_ID + ' ' + ((ctx.spec && ctx.spec.version) || '') + ', map ' + (m.data || '-') + ' (' + (m.pieces || 0) + ' pieces), ' +
             engine.fixes.count + ' corrections, ' + (engine.active ? 'on' : 'idle') + ', ' + keys.map((k) => k + '=' + s.get(k)).join(' '));

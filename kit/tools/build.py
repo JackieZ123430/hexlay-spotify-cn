@@ -295,6 +295,16 @@ def build_ui(spec, language='en'):
         if main_id is None:
             main_id = cid
     xml.append('</application>')
+    # every screen and component needs a name of its own: the SDK looks them up by name in one table, so a button
+    # named as a screen (Speed Limit 1.0.8's SL_QR) gets the screen back and its clicks are never heard in the car
+    # (the emulator looks components up by id and never shows it)
+    seen = {}
+    for cont in ui['containers'].values():
+        for nm in [cont['name']] + [c['name'] for c in cont['components'].values()]:
+            if nm in seen:
+                raise SystemExit(f"{spec['id']}: the name {nm} is used twice ({seen[nm]} and {cont['name']}): "
+                                 "give each screen and component its own")
+            seen[nm] = cont['name']
     return '\n'.join(xml) + '\n', ui, strings, state_ids
 
 

@@ -59,6 +59,8 @@ jobs:
       - run: node kit/tools/test_speed_limit.js
       - run: node kit/tools/test_speed_limit_outputs.js
       - run: python3 kit/tools/test_pack_sli.py
+      # its PC tools: the OpenStreetMap review list, the monthly map's comparison and version bump
+      - run: python3 kit/tools/test_speed_limit_tools.py
       - run: node kit/tools/test_zh.js
       - run: python3 kit/tools/test_zh.py
       - run: node kit/renderd/test/test_gate_apps.js

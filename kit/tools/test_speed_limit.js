@@ -337,19 +337,23 @@ else {
     const on = (rs, way) => rs.filter((r) => r.way === way);
     const plain = driveLoop(new Matcher(pack, {}));
     const loopPlain = on(plain, LOOP);
-    okIf(loopPlain.length > 20 && loopPlain.every((r) => r.inferred && r.limit !== 110),
-        'untagged ramp: the settlement / rural default, not the motorway\'s 110 (' + (loopPlain[0] || {}).limit + ')');
+    // (once OpenStreetMap tags the loop - the point of sending corrections back - its own limit is shown instead)
+    const loopTagged = loopPlain.length > 0 && !loopPlain[0].inferred;
+    okIf(loopPlain.length > 20 && (loopTagged ? loopPlain.every((r) => r.limit === loopPlain[0].limit) : loopPlain.every((r) => r.inferred && r.limit !== 110)),
+        loopTagged ? 'the loop is tagged in OpenStreetMap now: its ' + loopPlain[0].limit + ' km/h all round'
+            : 'untagged ramp: the settlement / rural default, not the motorway\'s 110 (' + (loopPlain[0] || {}).limit + ')');
+    const FIX = loopTagged && loopPlain[0].limit === 50 ? 40 : 50;     // a correction that differs from the map
     const tmp = path.join(require('os').tmpdir(), 'sl_fixes_' + process.pid + '.json');
     try { require('fs').unlinkSync(tmp); } catch (e) { /* none */ }
     const fx = new Fixes(tmp, null);
-    fx.set(LOOP, 50, 50, { lat: 41.58993, lon: 44.94827 });
+    fx.set(LOOP, FIX, FIX, { lat: 41.58993, lon: 44.94827 });
     const fixed = driveLoop(new Matcher(pack, { fixes: fx }));
     const loopFixed = on(fixed, LOOP), s4f = on(fixed, S4N), afterF = on(fixed, AFTER);
-    okIf(loopFixed.length > 20 && loopFixed.every((r) => r.limit === 50 && r.corrected && !r.inferred), 'corrected to 50: 50 all round the loop');
+    okIf(loopFixed.length > 20 && loopFixed.every((r) => r.limit === FIX && r.corrected && !r.inferred), 'corrected to ' + FIX + ': ' + FIX + ' all round the loop');
     okIf(s4f.length > 5 && s4f.every((r) => r.limit === on(plain, S4N)[0].limit && !r.corrected) && afterF.length && afterF.every((r) => r.limit === on(plain, AFTER)[0].limit && !r.corrected),
         'S4 before it and the bypass after it keep the map\'s ' + (s4f[0] || {}).limit + ' / ' + (afterF[0] || {}).limit);
     const again = new Fixes(tmp, null);
-    okIf(again.count === 1 && again.get(LOOP).f === 50, 'kept in the file: read back after a restart');
+    okIf(again.count === 1 && again.get(LOOP).f === FIX, 'kept in the file: read back after a restart');
     // a correction the map has caught up with goes by itself: S4 "corrected" to the limit it already has
     const s4lim = on(plain, S4N)[0].limit;
     again.set(S4N, s4lim, s4lim, null);

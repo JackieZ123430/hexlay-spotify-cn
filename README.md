@@ -4,9 +4,9 @@ Three apps for BMW iDrive 7 head units (MGU), installed through the [MGU Store](
 
 | App | Version | Internet | Reads from the car |
 | :--- | :---: | :---: | :--- |
-| [Spotify](#spotify) | 1.0.33 | Yes | Nothing |
-| [M-Copilot](#m-copilot) | 1.0.36 | Yes | Driving signals, service list, fault memory (read-only) |
-| [Speed Limit](#speed-limit) | 1.0.9 | No | Position, speed and power state (read-only) |
+| [Spotify](#spotify) | 1.0.32 | Yes | Nothing |
+| [M-Copilot](#m-copilot) | 1.0.35 | Yes | Driving signals, service list, fault memory (read-only) |
+| [Speed Limit](#speed-limit) | 1.0.12 | No | Position, speed and power state (read-only) |
 
 ## Install
 
@@ -79,7 +79,11 @@ No internet, no BMW map, and nothing is sent to the car: it only reads the car's
   is kept by app updates and new maps, and goes by itself once OpenStreetMap has the same limit. **Undo** and
   **Clear all** are there too.
 - **Report a problem without SSH:** the drive log (on by default) notes each road and limit change with its place.
-  **Show the log as QR codes** puts it on screen: photograph the codes and send them with a GitHub issue.
+  **Show the log as QR codes** puts it on screen, with your corrections: photograph the codes and attach them to a
+  [Speed Limit issue](https://github.com/hexlay/idrive7-custom-apps/issues/new?template=speed_limit.yml).
+- **A fresh map every month:** OpenStreetMap is read again on the 2nd of each month; when a road, limit or camera
+  changed, a new version comes to the MGU Store. Corrections sent in are fixed in OpenStreetMap by a person (never
+  from the car), reach every car with the next map, and the car's own correction then goes by itself.
 - **Starts with the car and draws no power parked:** stopped, locked or Off, it drops its subscriptions, closes the
   map and gives the displays back. About 1 MB of memory; wakes twice a second while driving, never while parked.
 - Needs **cluster-render** (comes with Maps on cluster from `robertnisipeanu/idrive-apps`) for the HUD and cluster.
@@ -130,11 +134,17 @@ If the store shows **Online** but an app doesn't, look at the `uplink:` line nea
 - `node kit/tools/emu.js <app_id>` runs an app in the browser emulator. Add `--car b58` or `--car n63` for a sample car.
 - The tests are in `kit/tools/test_*.js` and run in CI on Node 8.9.4 and 8.16.2, the versions on the head units.
 - Speed Limit's map: `python3 kit/tools/pack_sli.py georgia-latest.osm.pbf -o apps/speed_limit/georgia.pack` (a
-  Geofabrik extract, `https://download.geofabrik.de/europe/georgia-latest.osm.pbf`; about a minute). Wrong limits
-  are fixed in OpenStreetMap and come in with the next map, never by editing the pack.
+  Geofabrik extract, `https://download.geofabrik.de/europe/georgia/georgia-latest.osm.pbf`; about a minute).
+  `node kit/tools/test_speed_limit.js` replays drives through Tbilisi on it; after a build,
+  `node kit/tools/test_speed_limit_power.js` checks its wake-ups from start-up to parked. Wrong limits are fixed in
+  OpenStreetMap and come in with the next map, never by editing the pack.
+- The monthly map: `.github/workflows/speed_limit_map.yml` (also **Actions > Speed Limit map > Run workflow**)
+  builds it again, compares it (`kit/tools/sli_diff.py old.pack new.pack`), tests it and pushes a new version
+  (`kit/tools/bump_version.py speed_limit`) only when a road, limit or camera changed.
 - Speed Limit's QR log: `pip install zxing-cpp pillow`, then `python3 kit/tools/qrlog_decode.py photos/` prints the
-  log from the photos (the format of idrive7-apps' QR log). `node kit/tools/test_speed_limit.js` replays drives through Tbilisi on it;
-  after a build, `node kit/tools/test_speed_limit_power.js` checks its wake-ups from start-up to parked.
+  log from the photos (the format of idrive7-apps' QR log). With `--osm` it prints the drivers' corrections as roads
+  to check and fix in OpenStreetMap, with links to each road and the editor and the tag to set; it also takes a
+  decoded log or the car's `corrections.json`.
 
 For the platform itself (signals, renderer, controller input, deploying over SSH) see [idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps).
 

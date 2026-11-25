@@ -1,13 +1,24 @@
 'use strict';
 /**
  * themes.js - colour schemes for kit-drawn screens. Picked per app in its
- * settings ("theme"); unknown ids fall back to M Tricolour, the default.
+ * settings ("theme"); unknown ids fall back to Afterglow, the default.
  * oil = colour of oil temperature (red in M Tricolour, so it stands apart from the blue coolant).
  * bar = fill of the OEM-style bars, hang = their peak hold (default: the fill colour), sel = selected tab (selText = its name, default sel), marker = the '|' at the end of a bar / on a chart.
  * ramp = colours a bar runs through from low to high; hotRamp = a dial's arc, running
  * from the theme colour to red at the dial's limit (redline, max boost, ...).
  */
 const THEMES = {
+    // charcoal ground, BMW blue for what is selected, the M colours for marks (panel badge, limits);
+    // style 'afterglow': panels are a badge, a title and a thin line, with no box (gauges.js drawPanel)
+    afterglow: {
+        name: 'Afterglow', style: 'afterglow',
+        bg: '#0b0c0f', panelTop: '#15161b', panelBottom: '#0e0f12', panelEdge: '#26272e',
+        tab: '#e6e6e6', track: '#16171c', tick: '#3a3b44', text: '#f2f2f4', dim: '#8e8f98',
+        accent: '#1c8fe0', accent2: '#0a9cdb', ok: '#0a9cdb', warn: '#ffb000', crit: '#e3242b', cold: '#0a9cdb',
+        glow: '#1c8fe040', stripes: ['#0a9cdb', '#2b3c8f', '#e3242b'], oil: '#e3242b', ramp: ['#2b3c8f', '#0a9cdb', '#9fdcff'],
+        bar: '#1c8fe0', hang: '#e3242b', sel: '#1c8fe0', selText: '#ffffff', marker: '#e3242b',
+        hotRamp: ['#2b3c8f', '#0a9cdb', '#0a9cdb', '#ffb000', '#e3242b'],
+    },
     m_red: {
         name: 'M Red',
         bg: '#050506', panelTop: '#17181c', panelBottom: '#0d0d10', panelEdge: '#2a2b31',
@@ -43,7 +54,7 @@ const THEMES = {
     },
 };
 
-function theme(id) { return THEMES[id] || THEMES.m_tricolour; }
+function theme(id) { return THEMES[id] || THEMES.afterglow; }
 const ids = () => Object.keys(THEMES);
 
 module.exports = { THEMES, theme, ids };

@@ -4,9 +4,9 @@ Three apps for BMW iDrive 7 head units (MGU), installed through the [MGU Store](
 
 | App | Version | Internet | Reads from the car |
 | :--- | :---: | :---: | :--- |
-| [Spotify](#spotify) | 1.0.32 | Yes | Nothing |
-| [M-Copilot](#m-copilot) | 1.0.35 | Yes | Driving signals, service list, fault memory (read-only) |
-| [Speed Limit](#speed-limit) | 1.0.12 | No | Position, speed and power state (read-only) |
+| [Spotify](#spotify) | 2.0.1 | Yes | Nothing |
+| [M-Copilot](#m-copilot) | 2.0.1 | Yes | Driving signals, service list, fault memory (read-only) |
+| [Speed Limit](#speed-limit) | 1.0.13 | No | Position, speed and power state (read-only) |
 
 ## Install
 
@@ -22,36 +22,40 @@ On older firmware (such as MainApp 6.5.5) the store leaves out any vehicle signa
 
 ![Spotify](docs/screenshots/spotify.png)
 
-Control Spotify Connect and browse your playlists and liked songs on the central display.
+Control Spotify Connect and browse your playlists and liked songs on the central display in the **Afterglow** cockpit interface (60 fps full-screen GPU).
 
-- Pair by scanning the QR code on the Connect tab and signing in to Spotify on your phone. Disconnect from the phone too.
-- Now playing with seek, shuffle, repeat and like, Up Next, and switching between Spotify Connect devices. Playback control needs Spotify Premium.
-- Demo mode plays sample music without an account.
-- Settings: colour theme, screen size, layout and how often it syncs with Spotify.
+- **Playlists & Liked Songs:** Cover-art playlist cards, editorial headers with one-tap **Play** and **Shuffle**, two-line track rows with album art, a two-column **Liked Songs** grid, and an ambient-tinted mini player dock.
+- **Now Playing:** Blurred cover-art backdrop, seek bar, shuffle, repeat, like, and a 3D depth **Up Next** cover queue. Playback control needs Spotify Premium.
+- **Connect:** Pair by scanning the QR code on the Connect tab and signing in to Spotify on your phone, and switch between Spotify Connect devices. Disconnect from the phone too.
+- **Demo mode:** Plays built-in sample tracks with generated artwork without an account.
+- **Settings:** Inline segmented controls for playback mode (Online / Demo) and playback sync rate (1–10 s).
 
 | Now Playing | Liked Songs |
 | :---: | :---: |
 | ![Spotify Now Playing](docs/screenshots/spotify_now_playing.png) | ![Spotify Liked Songs](docs/screenshots/spotify_liked.png) |
-| **Pairing** | **No internet** |
-| ![Spotify Pairing](docs/screenshots/spotify_connect.png) | ![Spotify Offline](docs/screenshots/spotify_offline.png) |
+| **Connect & pairing** | **Settings** |
+| ![Spotify Connect](docs/screenshots/spotify_connect.png) | ![Spotify Settings](docs/screenshots/spotify_settings.png) |
 
 ## M-Copilot
 
 ![M-Copilot](docs/screenshots/m_copilot.png)
 
-An AI co-driver that answers with your car's own data: live readings, warning messages, the service list, the fault memory with BMW's fault descriptions, and a quick read of the engine computer (boost, intake air, timing, fuel pressure, misfires). Pick one of 24 topics or type your own question.
+An AI co-driver in the **Afterglow** cockpit interface that answers with your car's own data: live readings, warning messages, the service list, the fault memory with BMW's fault descriptions, and a read of the engine computer (boost, intake air, load, timing, fuel pressure, gearbox oil, misfires).
 
-- Pair from your phone: scan the QR code on the Connect tab, choose Gemini, Claude, OpenAI, Groq or OpenRouter and enter your API key. You can also add a car profile (model, tune, mods) and the answer language there.
-- While the car is moving, answers are short and in larger text, and typing is locked. Topics still work, and a half-typed question is kept for when you stop.
-- The Data check tab shows which signals your car actually sends.
-- Read-only. Fault memory and the engine computer are only read when a question needs them, never while the engine is starting or stopping.
-- Nothing runs while the app is off screen.
+- **Answer & 3D telemetry:** Clean answer view paired with a live 3D extruded history ribbon for **Oil**, **Coolant**, **Boost**, and **12 V battery** with peak/delta tracking and operating limits.
+- **Topics & custom questions:** 24 categorized topics across Check, Drive, Perform, and Know-how (with `ECU SCAN` indicators for fault-reading prompts), plus an on-screen keyboard with quick presets.
+- **Driving safety:** While the car is moving, answers are shorter in larger text and typing is locked; topics and follow-up chips still work, and a half-typed question is kept for when you stop.
+- **Data check:** Two-zone telemetry coverage console showing live readiness across Car & links, Live signals, and Engine computer, with manual **Read engine** and **Read fault memory** triggers.
+- **Connect:** Scan the QR code from your phone to choose Gemini, Claude, OpenAI, Groq, or OpenRouter, enter your API key, and set your car profile (model, tune, mods) and answer language.
+- **Strictly read-only:** Enforced at the diagnostic transport layer — fault memory and engine values are read-only (no fault clearing or ECU writes are possible) and never read while the engine is starting or stopping. Nothing runs while the app is off screen.
 
-| Your own question | Data check |
+| Topics | Your own question |
 | :---: | :---: |
-| ![M-Copilot Keyboard](docs/screenshots/m_copilot_keyboard.png) | ![M-Copilot Data Check](docs/screenshots/m_copilot_data_check.png) |
-| **Connected** | **Phone page QR** |
-| ![M-Copilot Connected](docs/screenshots/m_copilot_connected.png) | ![M-Copilot Pairing](docs/screenshots/m_copilot_pairing.png) |
+| ![M-Copilot Topics](docs/screenshots/m_copilot_topics.png) | ![M-Copilot Keyboard](docs/screenshots/m_copilot_keyboard.png) |
+| **Data check** | **Connected** |
+| ![M-Copilot Data Check](docs/screenshots/m_copilot_data_check.png) | ![M-Copilot Connected](docs/screenshots/m_copilot_connected.png) |
+| **Phone page QR** | |
+| ![M-Copilot Pairing](docs/screenshots/m_copilot_pairing.png) | |
 
 The screenshots are from the browser emulator with its sample B58.
 

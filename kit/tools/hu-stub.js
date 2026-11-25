@@ -68,7 +68,7 @@ function headUnit(stage, o) {
         isVisible: (n) => !!process.env.MGU_RENDERD_FILE && n === shown, onVisible: () => {}, comp: () => ({}),
     };
     if (live) ui._image = (name, cv) => o.image(name, cv);
-    const themeFn = () => require(path.join(kitDir, 'themes')).theme(settings.get('theme'));
+    const themeFn = () => require(path.join(kitDir, 'themes')).theme(settings.item && settings.item('theme') ? settings.get('theme') : 'afterglow');
     const { Display } = require(path.join(kitDir, 'display'));
     settings.onChange = settings.onChange || (() => {});
     display = hu.display = new Display(ui, log, spec, settings, themeFn);

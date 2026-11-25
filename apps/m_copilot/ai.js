@@ -402,12 +402,16 @@ class AiBridge {
                 return ' [' + l.join(', ') + ']';
             };
             const fault = (c) => (typeof c === 'string' ? c : c.code + state(c.status) + (c.text ? ' "' + c.text + '"' : ' (no text known)'));
-            faults = (d.partial ? 'Read with the car parked and the ignition off: control units that were asleep did not answer, so this may be only part of the car. Say so, and suggest switching the ignition on (the engine can stay off) and asking again for a full read.\n' : '')
+            const refNote = Array.isArray(d.refused) && d.refused.length
+                ? '\nUnits that refused the fault read (not checked): ' + d.refused.map((u) => u.name + ' (' + u.why + ')').join(', ') + '.'
+                : '';
+            faults = ((d.asleep || (d.partial && !(d.refused && d.refused.length))) ? 'Read with the car parked and the ignition off: control units that were asleep did not answer, so this may be only part of the car. Say so, and suggest switching the ignition on (the engine can stay off) and asking again for a full read.\n' : '')
                 + 'Fault memory (read ' + Math.max(0, Math.round((Date.now() - d.at) / 60000)) + ' min ago from ' + d.answered + ' control units): '
                 + (units.length ? d.total + ' stored fault(s):\n' + units.map((u) => '- ' + u.name + ': ' + u.codes.map(fault).join('; ')).join('\n')
                     + '\nThe quoted texts are BMW\'s own fault descriptions: explain what they mean for the driver. A code without a text: do not guess its meaning.'
                     + ' Lead with ACTIVE NOW faults and those with the warning lamp: they matter now. Faults not active now happened earlier and may be old.'
-                    : 'no stored faults.');
+                    : 'no stored faults.')
+                + refNote;
         }
 
         const who = t.vehicle && typeof t.vehicle.lines === 'function' ? t.vehicle.lines() : [];

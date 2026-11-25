@@ -1,8 +1,8 @@
 {
   "id": "spotify",
   "title": "Spotify",
-  "description": "Spotify Connect cockpit player and library browser for BMW iDrive 7",
-  "version": "1.0.35",
+  "description": "Spotify Connect cockpit player and cover-art library browser for BMW iDrive 7",
+  "version": "2.0.1",
   "vendor": "custom",
   "loggingId": "OASP",
   "iconGlyph": "music",
@@ -21,16 +21,8 @@
     }
   ],
   "settings": [
-    {"key": "theme", "label": "Colour theme", "type": "choice", "default": "m_tricolour", "aliases": {"spotify": "m_tricolour", "idrive": "m_tricolour", "idrive_red": "m_tricolour"},
-     "options": [["m_red", "M Red"], ["m_tricolour", "M Tricolour"], ["ice", "Ice White"], ["amber", "Night Amber"]]},
     {"key": "demo", "label": "Playback mode", "type": "choice", "default": "off",
      "options": [["off", "Online Mode (Default)"], ["on", "Demo Mode (Offline)"]]},
-    {"key": "screen", "label": "Screen size", "type": "choice", "default": "auto",
-     "options": [["auto", "Automatic"], ["10.25", "10.25-inch"], ["12.3", "12.3-inch"], ["8.8", "8.8-inch"]]},
-    {"key": "layout", "label": "Screen layout", "type": "choice", "default": "full",
-     "options": [["full", "Full screen"], ["standard", "Standard"]]},
-    {"key": "renderer", "label": "Renderer", "type": "choice", "default": "auto",
-     "options": [["auto", "GPU 60 fps (default)"], ["software", "Software"]]},
     {"key": "pollRate", "label": "Playback sync rate", "type": "number", "unit": "s", "default": 2,
      "steps": [1, 2, 3, 5, 10]}
   ]

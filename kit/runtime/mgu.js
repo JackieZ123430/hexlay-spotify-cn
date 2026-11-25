@@ -582,13 +582,14 @@ async function runInner(impl) {
         return;
     }
     const ui = new Ui(app);
-    const display = new Display(ui, log, SPEC, settings, () => themes.theme(settings.get('theme')));
+    const themeFn = () => themes.theme(settings.item('theme') ? settings.get('theme') : 'afterglow');
+    const display = new Display(ui, log, SPEC, settings, themeFn);
     ui.display = display;
     if (SPEC.mguInternet) { try { log.info('uplink: ' + uplink.describe()); } catch (e) {} }
     const ctx = {
         app, ui, settings, log, spec: SPEC, dataDir: DATA_DIR, display, widget, uplink, background,
         signals: require('./signals'),
-        theme: () => themes.theme(settings.get('theme')),
+        theme: themeFn,
         /**
          * controller.grab(true): the iDrive controller's knob, press and tilt go to this app only
          * (the HMI stops moving its focus or opening its menus); BACK, MENU and the touchscreen

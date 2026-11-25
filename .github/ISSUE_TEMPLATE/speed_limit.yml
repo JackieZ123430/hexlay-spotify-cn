@@ -1,0 +1,35 @@
+name: "Speed Limit: wrong limit or a problem"
+description: Send the app's QR log (photos) for a wrong speed limit, a missed road or anything else in Speed Limit.
+title: "Speed Limit: "
+labels: ["speed_limit"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! In the car: **Speed Limit > Drive log > Show the log as QR codes**. Take a photo of every code
+        (**Next** for the next one) and attach the photos below. They hold the roads the app matched, what it showed,
+        your corrections and the app's settings - no account or car data.
+
+        Your corrections (**This road > Correct its limit**) become a list of roads to fix in OpenStreetMap
+        (`kit/tools/qrlog_decode.py --osm`). Once fixed there, the next monthly map brings them to every car.
+  - type: textarea
+    id: what
+    attributes:
+      label: What was wrong
+      description: Where (a road, a place, a link from openstreetmap.org), what the app showed, and the limit on the signs.
+      placeholder: "The loop from S4 onto the Tbilisi Bypass near Rustavi: the app showed 90, the signs say 50."
+    validations:
+      required: true
+  - type: textarea
+    id: photos
+    attributes:
+      label: Photos of the QR codes
+      description: Drag the photos here (all of them, in any order).
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: In the MGU Store, or the top line of a code ("speed_limit 1.0.10").
+      placeholder: "1.0.10"

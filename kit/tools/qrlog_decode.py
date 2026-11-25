@@ -4,9 +4,17 @@ QR log back into the log (Speed Limit: Drive log > Show the log as QR codes, app
 
     pip install zxing-cpp pillow
     python3 kit/tools/qrlog_decode.py photo1.jpg photo2.jpg ...   (or a folder of photos)
+    python3 kit/tools/qrlog_decode.py --osm photos/               the drivers' corrections as roads to fix in OSM
 
 Prints the log in time order (page 1 holds the newest lines, so it comes last) (a photo with several codes, or the same page twice, is fine). A page that
 didn't read is named, so you can ask for that photo again.
+
+--osm: instead of the log, Speed Limit's corrections in it (its "correction: way=..." lines, written when the QR
+screen opens) as a list to check and fix in OpenStreetMap, newest first: a link to each road, to its place and to
+the editor, what the driver set, what the map had and the tag to set. Nothing is sent anywhere: a person checks each
+road (street-level photos, local knowledge) and edits OpenStreetMap; the monthly map rebuild then brings it to the
+cars and their correction goes by itself. Besides photos it takes a log already decoded (.txt / .log) and the car's
+data/corrections.json (copied over SSH).
 
 A code is a text line "MGULOG2 d<n> <app> <version> <page>/<pages>" and a newline, then the page's log lines
 compressed with raw deflate and the preset dictionary <n> (apps/speed_limit/qrdict.js holds dictionary 1; d0: none). In a page, a time
@@ -16,11 +24,22 @@ import os
 import sys
 import zlib
 
-try:
-    import zxingcpp
-    from PIL import Image, ImageFilter, ImageOps
-except ImportError:
-    sys.exit('needs: pip install zxing-cpp pillow')
+import json
+import re
+
+zxingcpp = Image = ImageFilter = ImageOps = None
+
+
+def _readers():
+    """The QR reader, loaded for photos only (a decoded log or corrections.json needs none)."""
+    global zxingcpp, Image, ImageFilter, ImageOps
+    if zxingcpp is None:
+        try:
+            import zxingcpp as z
+            from PIL import Image as I, ImageFilter as F, ImageOps as O
+        except ImportError:
+            sys.exit('photos need: pip install zxing-cpp pillow')
+        zxingcpp, Image, ImageFilter, ImageOps = z, I, F, O
 
 MAGIC = b'MGULOG2 '
 DICT1 = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'apps', 'speed_limit', 'qrdict.js')
@@ -56,6 +75,7 @@ def abs_times(text):
 
 def codes(path):
     """The QR codes' bytes in one photo (as is, then cleaned up: grey with more contrast, sharpened, bigger)."""
+    _readers()
     img = ImageOps.exif_transpose(Image.open(path)).convert('RGB')
     grey = ImageOps.autocontrast(img.convert('L'), cutoff=1)
     sharp = grey.filter(ImageFilter.UnsharpMask(radius=3, percent=200, threshold=0))
@@ -86,7 +106,95 @@ def page(data):
     return ' '.join(words[2:-1]), n, of, text
 
 
+CORR = re.compile(r'correction: way=(\d+) set=(\d+)/(\d+) map=(\S+) oneway=(\S+) at=(\S+) on=(\S+)')
+
+
+def corrections(text):
+    """The correction lines of a log, the last one of each road (a later QR log may hold a newer one)."""
+    out = {}
+    for m in CORR.finditer(text):
+        way, f, b, mp, ow, at, on = m.groups()
+        lat, lon = (at.split(',') + [None])[:2] if at != '-' else (None, None)
+        out.pop(int(way), None)
+        out[int(way)] = {'way': int(way), 'f': int(f), 'b': int(b), 'map': mp if mp != '-' else None,
+                         'oneway': {'1': True, '0': False}.get(ow), 'lat': lat, 'lon': lon, 'at': on if on != '-' else None}
+    return list(out.values())
+
+
+def corrections_json(path):
+    with open(path, encoding='utf-8') as f:
+        roads = json.load(f).get('roads', [])
+    return [{'way': int(r['way']), 'f': int(r.get('f') or 0), 'b': int(r.get('b') or 0), 'map': None, 'oneway': None,
+             'lat': r.get('lat'), 'lon': r.get('lon'), 'at': r.get('at')} for r in roads if r.get('way')]
+
+
+def _kmh(v):
+    """'60d' -> 'none tagged (the default 60)', '90' -> '90 km/h', '0' -> 'none'."""
+    m = re.fullmatch(r'(\d+)(d?)', v or '')
+    if not m:
+        return '?'
+    n, d = int(m.group(1)), m.group(2)
+    return ('none tagged (default %d)' % n if n else 'none tagged') if d else ('%d km/h' % n if n else 'none')
+
+
+def osm_review(items):
+    """The roads to check, newest first, as Markdown (it pastes into a GitHub issue as it is)."""
+    if not items:
+        return 'No corrections in it.'
+    out = ['## Speed limits to check in OpenStreetMap (%d)' % len(items), '',
+           'Check each road (a street-level photo, local knowledge) before editing; "forward" is the direction the way '
+           'is drawn in (the arrows in the editor).', '']
+    for i, c in enumerate(reversed(items), 1):
+        f, b, ow = c['f'], c['b'], c['oneway']
+        if ow or (f and f == b):
+            # a one-way road (its pieces run the way traffic goes: the limit set is the road's) or both the same
+            want, tags = '%d km/h' % (f or b) + ('' if ow else ' (both directions)'), 'maxspeed=%d' % (f or b)
+        elif not b:
+            want, tags = '%d km/h (forward)' % f, 'maxspeed:forward=%d' % f
+        elif not f:
+            want, tags = '%d km/h (backward)' % b, 'maxspeed:backward=%d' % b
+        else:
+            want, tags = '%d km/h forward, %d km/h backward' % (f, b), 'maxspeed:forward=%d + maxspeed:backward=%d' % (f, b)
+        had = ''
+        if c['map']:
+            mf, _, mb = c['map'].partition('/')
+            had = '; the map had ' + (_kmh(mf) if ow or mf == mb else _kmh(mf) + ' forward, ' + _kmh(mb) + ' backward')
+        out.append('%d. **way %d**: the driver set %s%s%s%s' % (i, c['way'], want, had, ', one-way' if ow else '',
+                                                               ' (%s)' % c['at'] if c['at'] else ''))
+        out.append('   - road: https://www.openstreetmap.org/way/%d' % c['way'])
+        if c['lat'] and c['lon']:
+            out.append('   - place: https://www.openstreetmap.org/?mlat=%s&mlon=%s#map=18/%s/%s' % (c['lat'], c['lon'], c['lat'], c['lon']))
+        out.append('   - edit: https://www.openstreetmap.org/edit?editor=id&way=%d' % c['way'])
+        out.append('   - tag to set: `%s`' % tags)
+    return '\n'.join(out)
+
+
 def main(args):
+    osm = '--osm' in args
+    args = [a for a in args if a != '--osm']
+    if osm:
+        items, photos = [], []
+        for a in args:
+            if a.lower().endswith('.json'):
+                items += corrections_json(a)
+            elif a.lower().endswith(('.txt', '.log')):
+                with open(a, encoding='utf-8', errors='replace') as f:
+                    items += corrections(f.read())
+            else:
+                photos.append(a)
+        if photos:
+            import io
+            from contextlib import redirect_stdout
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                main(photos)
+            items += corrections(buf.getvalue())
+        seen = {}
+        for c in items:
+            seen.pop(c['way'], None)
+            seen[c['way']] = c
+        print(osm_review(list(seen.values())))
+        return 0 if seen else 1
     files = []
     for a in args:
         if os.path.isdir(a):

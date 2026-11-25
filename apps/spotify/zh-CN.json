@@ -109,5 +109,11 @@
   "PLAYING FROM LIKED SONGS": "播放来源：喜欢的歌曲",
   "PLAYING FROM ALBUM": "播放来源：专辑",
   "PLAYING FROM ARTIST": "播放来源：艺人",
-  "Up Next": "接下来播放"
+  "Up Next": "接下来播放",
+  "Nothing playing": "暂无播放",
+  "Start a song from Playlists or Liked Songs": "请从歌单或喜欢的歌曲开始播放",
+  "Start a song from Playlists or Liked Songs.": "请从歌单或喜欢的歌曲开始播放。",
+  "Playing here": "正在此设备播放",
+  "Library": "曲库",
+  "No device: open Spotify on your phone": "未找到设备，请在手机上打开 Spotify"
 }

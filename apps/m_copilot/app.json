@@ -1,8 +1,8 @@
 {
   "id": "m_copilot",
   "title": "M-Copilot",
-  "description": "AI co-driver that answers with your car's own data: live readings, service list, fault memory, model and engine from the car, plus your tune and mods. Read-only.",
-  "version": "1.0.37",
+  "description": "AI co-driver that answers with your car's own data: live 3D telemetry, warning messages, service list, fault memory, model and engine from the car, plus your tune and mods. Read-only.",
+  "version": "2.0.1",
   "vendor": "custom",
   "loggingId": "OAMC",
   "iconGlyph": "copilot",
@@ -103,18 +103,11 @@
         [
           "BTN_REPAIR",
           "Connect"
-        ],
-        [
-          "BTN_SETTINGS",
-          "Settings"
         ]
       ]
     }
   ],
-  "settings": [
-    {"key": "theme", "label": "Colour theme", "type": "choice", "default": "m_tricolour", "aliases": {"idrive": "m_tricolour", "idrive_red": "m_tricolour"},
-     "options": [["m_red", "M Red"], ["m_tricolour", "M Tricolour"], ["ice", "Ice White"], ["amber", "Night Amber"]]}
-  ],
+  "settings": [],
   "config": {
     "comment": "Engine snapshot (engine_snapshot.js): dme = M Vitals' engine unit table, battery = eDrive's (soc / soh from the high-voltage battery unit, v12 from the engine unit), both from cauliflowermossgrape/idrive7-apps (MIT). value = raw * factor + offset; candidates are tried in order, the first plausible one wins.",
     "dme": {

@@ -35,12 +35,36 @@ const NRC = {
     0x72: 'programming failure', 0x78: 'pending', 0x7E: 'sub-function not supported in session', 0x7F: 'service not supported in session',
 };
 
+const READONLY_SID = Object.freeze({ 0x22: 'ReadDataByIdentifier', 0x19: 'ReadDTCInformation', 0x01: 'OBD current data', 0x06: 'OBD monitor results' });
+const isByte = (b) => Number.isInteger(b) && b >= 0 && b <= 0xFF;
+
+/**
+ * Strict read-only UDS gate: throws before any byte reaches TASU unless the request is strictly
+ * read-only (0x22 ReadDataByIdentifier, 0x19 02 ReadDTCInformation, 0x01 OBD data, 0x06 OBD monitors).
+ * Blocks 0x14 ClearDTC, 0x10 Session, 0x11 Reset, 0x27 Security, 0x2E Write, 0x2F IO, 0x31 Routine, etc.
+ */
+function assertReadOnly(target, sid, data) {
+    const d = data || [];
+    if (!Array.isArray(d) || !d.every(isByte)) throw new Error('read-only: invalid request bytes');
+    if (!isByte(target)) throw new Error('read-only: invalid target address');
+    if (!isByte(sid) || !READONLY_SID[sid]) throw new Error('read-only: UDS service 0x' + hex(Number(sid) || 0) + ' is blocked');
+    if (sid === 0x22 && (d.length < 2 || d.length > 16 || d.length % 2 !== 0)) throw new Error('read-only: 0x22 requires 1-8 DIDs');
+    if (sid === 0x19 && (d.length !== 2 || d[0] !== 0x02)) throw new Error('read-only: 0x19 allows only sub-function 0x02');
+    if ((sid === 0x01 || sid === 0x06) && d.length !== 1) throw new Error('read-only: 0x' + hex(sid) + ' requires 1 byte');
+    if (target === ALL) {
+        const ok19 = sid === 0x19 && d[0] === 0x02;
+        const ok22 = sid === 0x22 && d.length === 2 && d[0] === 0xF1 && d[1] === 0x50;
+        if (!ok19 && !ok22) throw new Error('read-only: functional 0xDF allows only 19 02 or 22 F1 50');
+    }
+}
+
 class Diag extends EventEmitter {
     constructor(signals, log) {
         super();
         this.signals = signals; this.log = log;
         this.p = null; this.available = false; this.error = null;
         this.quiet = false;           // true: don't log every request (apps that poll)
+        this.readOnly = false;        // true: hard transport-level block on any write / clear / session / reset
         this.busyMs = 1000;           // pause before a retry when the transport is busy (x 1, 2, 3, 4)
         this.busyLog = true;          // log each busy verdict (false: only count them in .busy)
         this.busy = 0;
@@ -75,8 +99,9 @@ class Diag extends EventEmitter {
      * such a verdict is retried a few times with a growing pause (busyMs x 1, 2, 3, 4: 1, 2, 3, 4 s).
      */
     async send(target, sid, data, opts) {
+        const d = Array.isArray(data) ? data.slice() : [];
+        if (this.readOnly) assertReadOnly(target, sid, d);
         if (!this.p) throw new Error(this.error || 'no diagnostic link');
-        const d = data || [];
         const maxRetries = opts && opts.maxRetries != null ? opts.maxRetries : 4;
         const callTimeoutMs = opts && opts.callTimeoutMs || 8000;
         const retryBaseMs = opts && opts.retryBaseMs || this.busyMs;
@@ -116,6 +141,10 @@ class Diag extends EventEmitter {
                 // every app gets every frame: only this service's answer (or refusal) is a reply
                 if (f.uds[0] !== sid + 0x40 && !(f.uds[0] === 0x7F && f.uds[1] === sid)) return;
                 if (sid === 0x19 && f.uds[0] === 0x59 && f.uds[1] !== (data || [])[0]) return;   // 0x19 echoes its sub-function
+                // 0x22 echoes its identifier: another app's read of the same unit isn't this scan's answer,
+                // and a refusal (which names no identifier) never replaces a positive answer
+                if (sid === 0x22 && f.uds[0] === 0x62 && (f.uds[1] !== (data || [])[0] || f.uds[2] !== (data || [])[1])) return;
+                if (sid === 0x22 && f.uds[0] === 0x7F && replies.has(f.ecu) && replies.get(f.ecu)[0] === 0x62) return;
                 const pending = f.uds[0] === 0x7F && f.uds[2] === 0x78;
                 if (!pending || !replies.has(f.ecu)) replies.set(f.ecu, f.uds);
                 if (opts && opts.onReply && !pending) opts.onReply(f.ecu, replies.size);
@@ -210,4 +239,4 @@ function statusInfo(b) {
     return { label: 'HISTORY', sev: 'dim' };
 }
 
-module.exports = { Diag, parseDtcReply, statusInfo, toBytes, hex, NRC, ALL, replyTo };
+module.exports = { Diag, assertReadOnly, parseDtcReply, statusInfo, toBytes, hex, NRC, ALL, replyTo };

@@ -37,6 +37,8 @@
 const { mix, ramp, withAlpha } = require('./canvas');
 const { makeLayer, dropLayer } = require('./record');
 const { getLanguage, t: localizeLabel } = require('./i18n');
+const SCENE = require('./scene');
+const scene = () => SCENE;
 const upperText = (value) => localizeLabel(String(value)).toUpperCase();
 
 const isNum = (x) => typeof x === 'number' && isFinite(x);
@@ -142,9 +144,9 @@ function panel(cv, t, x, y, w, h, title) { return box(cv, t, x, y, w, stretch(cv
  * (cv.extra: display.js). (read only then: a page whose panels all end higher up is centred in the room instead)
  */
 function stretch(cv, y, h) { return y + h >= 500 && cv.extra ? h + cv.extra : h; }
-function box(cv, t, x, y, w, h, title, titleLiteral) {
+function box(cv, t, x, y, w, h, title) {
     x = Math.round(x); y = Math.round(y); w = Math.round(w); h = Math.round(h);
-    const L = layer(['panel', w, h, title || '', t.name, !!titleLiteral].join('|'), w, h, (c) => drawPanel(c, t, 0, 0, w, h, title, titleLiteral), cv.textScale);
+    const L = layer(['panel', w, h, title || '', t.name].join('|'), w, h, (c) => drawPanel(c, t, 0, 0, w, h, title), cv.textScale);
     cv.blit(L, x, y);
     return { x, y, w, h };
 }
@@ -160,7 +162,16 @@ const MARGIN = 22;
  * so it ends MARGIN over the panel's real bottom, room px lower (G.panel's stretch: cv.extra, else 0).
  */
 function toMargin(room, m) { return room + m - MARGIN; }
-function drawPanel(cv, t, x, y, w, h, title, titleLiteral) {
+function drawPanel(cv, t, x, y, w, h, title) {
+    if (t.style === 'afterglow') {
+        // no box: the M badge, the title beside it and a thin line under them; the page's ground shows
+        // through. A panel with no title draws nothing (its page lays out its own headings)
+        if (!title) return;
+        const bx = scene().badge(cv, x + 2, y + 15, 17, t);
+        cv.text(String(title), x + bx + 14, y + 32, 24, t.text, { font: 'bold' });
+        cv.fillRect(x, y + 46, w, 1, withAlpha('#ffffff', 0.1));
+        return;
+    }
     // flat light grey overlay; top: a short bold bar in the theme's stripe colours (M tricolour:
     // light blue, dark blue, red; the last part with an angled end), then a thin white line;
     // large white title in normal case
@@ -172,7 +183,7 @@ function drawPanel(cv, t, x, y, w, h, title, titleLiteral) {
         else cv.fillRect(sx, y, sw, 5, c);
     });
     cv.fillRect(x + BW + 2, y + 2, w - BW - 2, 1.5, withAlpha('#ffffff', 0.9));
-    if (title) cv.text(String(title), x + 18, y + 42, 26, t.text, { font: 'bold', literal: titleLiteral });
+    if (title) cv.text(String(title), x + 18, y + 42, 26, t.text, { font: 'bold' });
 }
 
 /* ---------------- radial dial ---------------- */
@@ -700,26 +711,26 @@ function tabWidths(cv, names, size, opt, min, pad, room, pad0) {
 }
 function frame(cv, t, tabs, sel, badges) {
     if (cv.chrome) { cv.chrome.tabs = { tabs: tabs || [], sel, badges: (badges || []).filter(Boolean) }; return; }
-    const W = cv.w, S = t.sel || t.accent;
+    const W = cv.w, S = t.sel || t.accent, ag = t.style === 'afterglow';
     cv.fillRect(0, 0, W, BAR_H, t.bg);
-    cv.fillRect(0, 0, W, BAR_H, withAlpha('#ffffff', 0.07));
-    cv.fillRect(0, BAR_H - 1, W, 1, withAlpha('#ffffff', 0.18));
-    const opt = { align: 'center', font: 'bold', spacing: 1.5 };
+    cv.fillRect(0, 0, W, BAR_H, withAlpha('#ffffff', ag ? 0.03 : 0.07));
+    cv.fillRect(0, BAR_H - 1, W, 1, withAlpha('#ffffff', ag ? 0.1 : 0.18));
+    const opt = { align: 'center', font: ag ? 'label' : 'bold', spacing: ag ? 0 : 1.5 };
     const live = (badges || []).filter(Boolean);
-    const labels = (tabs || []).map((n) => upperText(n));
+    const labels = (tabs || []).map((n) => (ag ? localizeLabel(String(n)) : upperText(n)));
     const badgesW = live.reduce((a, b) => a + Math.max(24 * 3.5, cv.textWidth(b.text, 18, opt) + 24) + 24 * 0.4, 0);
-    const widths = tabWidths(cv, labels, 20, opt, 150, 48, W - 32 - badgesW, 20);
+    const widths = tabWidths(cv, labels, 20, opt, ag ? 120 : 150, ag ? 38 : 48, W - 32 - badgesW, 20);
     let x = 16;
     cv.tabRects = [];
     labels.forEach((label, i) => {
         const tw = widths[i], on = i === sel;
         cv.tabRects.push({ i, x, y: 0, w: tw, h: BAR_H });
         if (on) {
-            cv.gradientRect(x, 0, tw, BAR_H, [[0, withAlpha(S, 0)], [1, withAlpha(S, 0.22)]]);
-            cv.fillRect(x, BAR_H - 4, tw, 4, S);
+            cv.gradientRect(x, 0, tw, BAR_H, [[0, withAlpha(S, 0)], [1, withAlpha(S, ag ? 0.24 : 0.22)]]);
+            cv.fillRect(x, BAR_H - (ag ? 3 : 4), tw, ag ? 3 : 4, S);
         }
-        cv.text(label, x + tw / 2, 25, 20, on ? t.selText || S : t.dim, opt);
-        if (i < tabs.length - 1) cv.fillRect(x + tw, 9, 1, BAR_H - 18, withAlpha('#ffffff', 0.12));
+        cv.text(label, x + tw / 2, 25, 20, on ? t.selText || S : t.dim, ag && on ? { align: 'center', font: 'bold' } : opt);
+        if (i < tabs.length - 1) cv.fillRect(x + tw, 9, 1, BAR_H - 18, withAlpha('#ffffff', ag ? 0.08 : 0.12));
         x += tw;
     });
     badgeRow(cv, t, W - 16, 6, 24, 18, (badges || []).filter(Boolean));
@@ -781,31 +792,40 @@ function header(cv, t, x, y, w, h, title, tabs, sel, badges, flat, compact, k) {
 }
 
 function headerCompact(cv, t, x, y, w, h, title, tabs, sel, badges, k) {
-    const z = Math.max(1, k || 1), S = t.sel || t.accent, opt = { align: 'center', font: 'bold', spacing: 1.6 };
+    const z = Math.max(1, k || 1), S = t.sel || t.accent, ag = t.style === 'afterglow';
+    const opt = { align: 'center', font: ag ? 'label' : 'bold', spacing: ag ? 0 : 1.6 };
     const bopt = { align: 'center', font: 'bold', spacing: 1.5 };
-    const names = (tabs || []).map((n) => upperText(n));
+    const names = (tabs || []).map((n) => (ag ? localizeLabel(String(n)) : upperText(n)));
     const bz = Math.min(z, 1.15), bh = Math.round(30 * bz), bsize = Math.round(17 * bz);
     const bws = (badges || []).map((b) => Math.max(bh * 3.5, cv.textWidth(b.text, bsize, bopt) + bh));
     const badgesW = bws.reduce((a, b) => a + b + bh * 0.4, 0);
-    const tsize = 32, titleW = title ? cv.textWidth(title, tsize) : 0;
+    const tsize = ag ? 28 : 32;
+    const badgeW = ag ? Math.round(17 * (3 * 0.47 + 2 * 0.18 + 0.32)) + 12 : 0;
+    const titleW = title ? badgeW + cv.textWidth(title, tsize, ag ? { font: 'bold' } : undefined) : 0;
     const room = w - 20 - (badgesW ? badgesW + 12 : 0);
     // the tabs' text as big as this display asks for, smaller only as far as every tab still fits
-    let tf = Math.round(18 * z);
+    let tf = Math.round((ag ? 20 : 18) * z);
     while (tf > 18 && names.reduce((a, n) => a + cv.textWidth(n, tf, opt) + 20, 0) > room - 20) tf--;
-    const tw = tabWidths(cv, names, tf, opt, Math.round(132 * z), Math.round(44 * z), room - 20, 20);
+    const tw = tabWidths(cv, names, tf, opt, Math.round((ag ? 104 : 132) * z), Math.round((ag ? 34 : 44) * z), room - 20, 18);
     const tabsW = tw.reduce((a, b) => a + b, 0);
     // the tabs start 20 px in: the name shows only where every tab still fits after it (else the last tab, Settings, drops)
-    const showTitle = title && 20 + titleW + 32 + tabsW <= room;
+    const titleGap = ag ? 28 : 32;
+    const showTitle = title && 20 + titleW + titleGap + tabsW <= room;
     // only as wide as the content: the rest of the strip stays the HMI's
-    let end = x + 20 + (showTitle ? titleW + 32 : 0);
+    let end = x + 20 + (showTitle ? titleW + titleGap : 0);
     names.forEach((n, i) => { if (end + tw[i] <= x + room) end += tw[i]; });
     end = Math.min(x + w, end + (badgesW ? 12 + badgesW : 0) + 16);
     cv.fillRect(x, y, end - x, h, t.bg);
-    cv.fillRect(x, y + h - 2, end - x, 2, withAlpha('#ffffff', 0.22));
+    cv.fillRect(x, y + h - (ag ? 1 : 2), end - x, ag ? 1 : 2, withAlpha('#ffffff', ag ? 0.12 : 0.22));
     let tx = x + 20;
     if (showTitle) {
-        cv.text(title, tx, y + h / 2 + tsize * 0.36, tsize, t.text);
-        tx += titleW + 32;
+        if (ag) {
+            const bw0 = scene().badge(cv, tx, y + Math.round((h - 17) / 2), 17, t);
+            cv.text(title, tx + bw0 + 12, y + h / 2 + tsize * 0.35, tsize, t.text, { font: 'bold' });
+        } else {
+            cv.text(title, tx, y + h / 2 + tsize * 0.36, tsize, t.text);
+        }
+        tx += titleW + titleGap;
     }
     cv.tabRects = [];
     names.forEach((n, i) => {
@@ -813,11 +833,11 @@ function headerCompact(cv, t, x, y, w, h, title, tabs, sel, badges, k) {
         if (tx + bw > x + room) return;
         cv.tabRects.push({ i, x: tx, y, w: bw, h });
         if (on) {
-            cv.gradientRect(tx, y, bw, h, [[0, withAlpha(S, 0)], [1, withAlpha(S, 0.25)]]);
-            cv.fillRect(tx, y + h - 4, bw, 4, S);
+            cv.gradientRect(tx, y, bw, h, [[0, withAlpha(S, 0)], [1, withAlpha(S, ag ? 0.26 : 0.25)]]);
+            cv.fillRect(tx, y + h - (ag ? 3 : 4), bw, ag ? 3 : 4, S);
         }
-        cv.text(n, tx + bw / 2, y + h / 2 + tf * 0.34, tf, on ? t.selText || '#ffffff' : t.dim, opt);
-        if (i < names.length - 1) cv.fillRect(tx + bw, y + h * 0.3, 1, h * 0.4, withAlpha('#ffffff', 0.14));
+        cv.text(n, tx + bw / 2, y + h / 2 + tf * 0.34, tf, on ? t.selText || '#ffffff' : t.dim, ag && on ? { align: 'center', font: 'bold' } : opt);
+        if (i < names.length - 1) cv.fillRect(tx + bw, y + h * 0.3, 1, h * 0.4, withAlpha('#ffffff', ag ? 0.08 : 0.14));
         tx += bw;
     });
     if (badgesW) badgeRow(cv, t, tx + 12 + badgesW, y + (h - bh) / 2, bh, bsize, badges);
@@ -830,22 +850,22 @@ function headerCompact(cv, t, x, y, w, h, title, tabs, sel, badges, k) {
  * variant: 'slim' (the full-screen layout's bar, any height, e.g. 48) or 'standard' (120).
  */
 function menuBar(cv, t, x, y, w, h, buttons, focus, variant, flash) {
-    const std = variant === 'standard', u = h / (std ? 120 : 48);
+    const std = variant === 'standard', u = h / (std ? 120 : 48), ag = t.style === 'afterglow';
     const sel = t.sel || t.accent;
     cv.fillRect(x, y, w, h, t.bg);
-    cv.gradientRect(x, y, w, h, [[0, withAlpha('#ffffff', 0.09)], [1, withAlpha('#ffffff', 0.03)]]);
-    cv.fillRect(x, y, w, Math.max(1, 2 * u), withAlpha('#ffffff', 0.2));
-    const size = (std ? 30 : 19) * u;
+    if (!ag) cv.gradientRect(x, y, w, h, [[0, withAlpha('#ffffff', 0.09)], [1, withAlpha('#ffffff', 0.03)]]);
+    cv.fillRect(x, y, w, Math.max(1, (ag ? 1 : 2) * u), withAlpha('#ffffff', ag ? 0.1 : 0.2));
+    const size = (std ? 30 : ag ? 20 : 19) * u;
     buttons.forEach((b, i) => {
         const on = i === focus, hit = i === flash;
         if (on || hit) {
-            cv.gradientRect(b.x, y, b.w, h, [[0, withAlpha(sel, hit ? 0.5 : 0.08)], [1, withAlpha(sel, hit ? 0.7 : 0.4)]]);
-            cv.fillRect(b.x, y + h - 4 * u, b.w, 4 * u, sel);
+            cv.gradientRect(b.x, y, b.w, h, [[0, withAlpha(sel, hit ? 0.5 : 0.04)], [1, withAlpha(sel, hit ? 0.7 : 0.34)]]);
+            cv.fillRect(b.x, y + h - (ag ? 3 : 4) * u, b.w, (ag ? 3 : 4) * u, sel);
         }
-        const label = std ? String(b.label) : upperText(b.label);
+        const label = std || ag ? localizeLabel(String(b.label)) : upperText(b.label);
         cv.text(label, b.x + b.w / 2, y + h / 2 + size * 0.36, size, on || hit ? t.selText || '#ffffff' : std ? t.text : t.dim,
-            { align: 'center', font: std ? 'label' : 'bold', spacing: std ? 0 : 2 * u });
-        if (i < buttons.length - 1) cv.fillRect(b.x + b.w, y + h * 0.25, Math.max(1, u), h * 0.5, withAlpha('#ffffff', 0.13));
+            { align: 'center', font: std || (ag && !on) ? 'label' : 'bold', spacing: std || ag ? 0 : 2 * u });
+        if (i < buttons.length - 1) cv.fillRect(b.x + b.w, y + h * 0.25, Math.max(1, u), h * 0.5, withAlpha('#ffffff', ag ? 0.08 : 0.13));
     });
 }
 
@@ -873,13 +893,19 @@ function button(cv, t, x, y, w, h, label, run, opts) {
             return null;
         };
     }
-    const S = t.sel || t.accent, c = o.color || S;
-    if (!w) w = Math.max(h * 3, cv.textWidth(String(label).toUpperCase(), h * 0.4, { font: 'bold', spacing: 1.5 }) + h * 1.2);
-    cv.roundRect(x, y, w, h, h / 2, o.primary ? withAlpha(c, o.busy ? 0.35 : 0.85) : withAlpha('#ffffff', 0.07));
-    if (!o.primary) cv.strokeRoundRect(x, y, w, h, h / 2, 1.5, withAlpha(o.color || '#ffffff', o.busy ? 0.25 : o.color ? 0.75 : 0.3));
-    cv.text(String(label).toUpperCase(), x + w / 2, y + h / 2 + h * 0.15, h * 0.4, o.primary ? '#ffffff' : o.busy ? t.dim : o.color || t.text,
-        { align: 'center', font: 'bold', spacing: 1.5 });
-    if (!o.busy && run) cv.target(x, y, w, h, run, o.key || label);
+    const S = t.sel || t.accent, c = o.color || S, ag = t.style === 'afterglow';
+    const txt = ag ? localizeLabel(String(label)) : String(label).toUpperCase();
+    const topt = ag ? { align: 'center' } : { align: 'center', font: 'bold', spacing: 1.5 };
+    if (!w) w = Math.max(h * (ag ? 2.4 : 3), cv.textWidth(txt, h * 0.4, topt) + h * 1.1);
+    if (ag) {
+        if (o.primary) scene().lit(cv, t, x, y, w, h, o.busy ? 0.5 : 1.3);
+        cv.strokeRoundRect(x + 0.5, y + 0.5, w - 1, h - 1, 3, 1, withAlpha(o.primary ? c : (o.color || '#ffffff'), o.busy ? 0.15 : o.primary ? 0.65 : o.color ? 0.7 : 0.24));
+    } else {
+        cv.roundRect(x, y, w, h, h / 2, o.primary ? withAlpha(c, o.busy ? 0.35 : 0.85) : withAlpha('#ffffff', 0.07));
+        if (!o.primary) cv.strokeRoundRect(x, y, w, h, h / 2, 1.5, withAlpha(o.color || '#ffffff', o.busy ? 0.25 : o.color ? 0.75 : 0.3));
+    }
+    cv.text(txt, x + w / 2, y + h / 2 + h * 0.15, h * 0.4, o.primary ? '#ffffff' : o.busy ? t.dim : o.color || t.text, topt);
+    if (!o.busy && run) cv.target(x, y, w, h, run, o.key || label, ag ? 3 : undefined);
     return w;
 }
 

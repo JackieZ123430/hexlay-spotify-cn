@@ -23,12 +23,13 @@
 const mgu = require('./kit/mgu');
 const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
+const S = require('./kit/scene');
 const { AiBridge } = require('./ai');
 const { CloudPairManager } = require('./cloud_pair');
 const qrcodegen = require('./kit/qrcodegen');
 
 const W = 1600, H = 520;
-const PAGES = ['M-Copilot', 'Data check', 'Connect'];
+const PAGES = ['Answer', 'Topics', 'Data check', 'Connect'];
 
 /*
  * Sizes on this display (kit/runtime/panel.js): k = 1.2 on a 12.3" display, 1.44 on a 10.25" one, so keys,
@@ -61,12 +62,12 @@ const TOPIC_CATEGORIES = [
         name: 'CHECK',
         label: 'Health & Service',
         topics: [
-            { title: 'Quick Health Check', faults: true, query: 'Do a health check of my car from every reading you have, the warning messages in the cluster, the service list and the fault memory. Start with anything that needs attention and how urgent it is; if all is fine, say so in one line.' },
-            { title: 'Warning Lights & Faults', faults: true, query: 'Which warning messages is my car showing and what is stored in its fault memory, in which units? How serious is it, and can I keep driving normally?' },
-            { title: 'Service Due', query: 'From my car\'s service list: what is due next and when, what does each item involve for my engine, and what can I check or do myself?' },
-            { title: 'Tyres & Pressures', query: 'Compare my tyre pressures and temperatures with the targets set in the car, taking the outside temperature and my tyre type into account. Should I adjust anything, cold or hot?' },
-            { title: 'Brakes & Pads', query: 'How are my brakes from the service list (front and rear pads, brake fluid due date), and which warning signs can I check myself before the next service?' },
-            { title: '12V Battery & Start-Stop', query: 'How is my 12 V battery from its charge level, and what does that mean for auto start-stop, short trips and the car standing for a few days?' },
+            { title: 'Quick Health Check', desc: 'All live readings, warnings, service due & stored faults', faults: true, query: 'Do a health check of my car from every reading you have, the warning messages in the cluster, the service list and the fault memory. Start with anything that needs attention and how urgent it is; if all is fine, say so in one line.' },
+            { title: 'Warning Lights & Faults', desc: 'Active cluster warnings, ECU fault codes & severity', faults: true, query: 'Which warning messages is my car showing and what is stored in its fault memory, in which units? How serious is it, and can I keep driving normally?' },
+            { title: 'Service Due', desc: 'Upcoming CBS items, intervals & what to check yourself', query: 'From my car\'s service list: what is due next and when, what does each item involve for my engine, and what can I check or do myself?' },
+            { title: 'Tyres & Pressures', desc: 'Actual vs target pressures & temps for current weather', query: 'Compare my tyre pressures and temperatures with the targets set in the car, taking the outside temperature and my tyre type into account. Should I adjust anything, cold or hot?' },
+            { title: 'Brakes & Pads', desc: 'Front & rear pad life, brake fluid due date & wear checks', query: 'How are my brakes from the service list (front and rear pads, brake fluid due date), and which warning signs can I check myself before the next service?' },
+            { title: '12V Battery & Start-Stop', desc: 'Charge health, short-trip impact & parking readiness', query: 'How is my 12 V battery from its charge level, and what does that mean for auto start-stop, short trips and the car standing for a few days?' },
         ],
     },
     {
@@ -74,12 +75,12 @@ const TOPIC_CATEGORIES = [
         name: 'DRIVE',
         label: 'Right Now',
         topics: [
-            { title: 'Ready for Full Power?', query: 'Is my engine warm enough for full throttle and high revs right now? Use the oil and coolant temperatures, and say what threshold you use for my engine and tune.' },
-            { title: 'Fuel & Range', query: 'How far can I go on the fuel I have, how does my consumption look, and what would make the biggest difference to it on this trip?' },
-            { title: 'Weather & Grip', query: 'With the outside temperature and my tyres as they are now, how much grip should I expect, is there a risk of ice or cold tyres, and what should I change in how I drive?' },
-            { title: 'How Was That Drive?', query: 'Look at this drive so far: how hard was the car driven, was the engine warm before it was pushed, any heat soak, boost falling short or timing pulled? Anything to change next time?' },
-            { title: 'Running Hot? What Now', query: 'Look at my temperatures right now: is anything running too hot (coolant, oil, gearbox, intake air)? If so, exactly what should I do on the road right now to protect the engine?' },
-            { title: 'Cool-Down & Parking', query: 'After how I have been driving, should I let the engine idle or drive gently before switching off? Use the oil and coolant temperatures and say why it matters for my engine and tune.' },
+            { title: 'Ready for Full Power?', desc: 'Oil & coolant warm-up check before hard acceleration', query: 'Is my engine warm enough for full throttle and high revs right now? Use the oil and coolant temperatures, and say what threshold you use for my engine and tune.' },
+            { title: 'Fuel & Range', desc: 'Remaining range, trip consumption & efficiency tips', query: 'How far can I go on the fuel I have, how does my consumption look, and what would make the biggest difference to it on this trip?' },
+            { title: 'Weather & Grip', desc: 'Outside temp, tyre grip expectations & ice risk', query: 'With the outside temperature and my tyres as they are now, how much grip should I expect, is there a risk of ice or cold tyres, and what should I change in how I drive?' },
+            { title: 'How Was That Drive?', desc: 'Drive summary: warm-up, peaks, heat soak & boost health', query: 'Look at this drive so far: how hard was the car driven, was the engine warm before it was pushed, any heat soak, boost falling short or timing pulled? Anything to change next time?' },
+            { title: 'Running Hot? What Now', desc: 'Immediate road steps if coolant, oil or gearbox runs hot', query: 'Look at my temperatures right now: is anything running too hot (coolant, oil, gearbox, intake air)? If so, exactly what should I do on the road right now to protect the engine?' },
+            { title: 'Cool-Down & Parking', desc: 'Whether to idle or cruise gently before switching off', query: 'After how I have been driving, should I let the engine idle or drive gently before switching off? Use the oil and coolant temperatures and say why it matters for my engine and tune.' },
         ],
     },
     {
@@ -87,12 +88,12 @@ const TOPIC_CATEGORIES = [
         name: 'PERFORM',
         label: 'Spirited, Track & Tuned',
         topics: [
-            { title: 'Launch & 0-100', query: 'How do I use launch control on my car (gearbox and drivetrain), what must be met for it to work, are my temperatures ready for it now, and how hard is it on the drivetrain with my tune?' },
-            { title: 'Track Day Prep', query: 'Get my car ready for a track day: tyre pressures cold and hot for my tyres, brake fluid and pads from the service list, oil level and cooling, and the settings to use. Use my readings.' },
-            { title: 'Tune Health Check', query: 'Look at my boost, torque and temperatures for signs of heat soak, an engine running too hard or a weak point of my tune. For a stock car, say what is normal for it and what headroom it has.' },
-            { title: 'Heat Soak & Cooling', query: 'Are my oil and coolant temperatures OK for hard driving right now? At what temperatures does my engine pull power, and how do I manage heat on back-to-back pulls or laps?' },
-            { title: 'Gearbox & Clutch Load', query: 'With my engine\'s torque and my tune, how close is my gearbox (and its clutch or torque converter) to its limits, what does its oil temperature say right now, and how do I avoid hurting it?' },
-            { title: 'Mods & Upgrade Path', query: 'For my car and its current modifications, what is the most sensible next upgrade, what supporting parts does it need, and what does it risk (reliability, warranty, inspection)?' },
+            { title: 'Launch & 0-100', desc: 'Launch control steps, temp readiness & drivetrain load', query: 'How do I use launch control on my car (gearbox and drivetrain), what must be met for it to work, are my temperatures ready for it now, and how hard is it on the drivetrain with my tune?' },
+            { title: 'Track Day Prep', desc: 'Hot/cold pressures, brake fluid, cooling & chassis setup', query: 'Get my car ready for a track day: tyre pressures cold and hot for my tyres, brake fluid and pads from the service list, oil level and cooling, and the settings to use. Use my readings.' },
+            { title: 'Tune Health Check', desc: 'Boost vs target, intake temps, timing & headroom', query: 'Look at my boost, torque and temperatures for signs of heat soak, an engine running too hard or a weak point of my tune. For a stock car, say what is normal for it and what headroom it has.' },
+            { title: 'Heat Soak & Cooling', desc: 'Thermal limits & managing heat across repeated pulls', query: 'Are my oil and coolant temperatures OK for hard driving right now? At what temperatures does my engine pull power, and how do I manage heat on back-to-back pulls or laps?' },
+            { title: 'Gearbox & Clutch Load', desc: 'Torque margin, gearbox oil temp & shift protection', query: 'With my engine\'s torque and my tune, how close is my gearbox (and its clutch or torque converter) to its limits, what does its oil temperature say right now, and how do I avoid hurting it?' },
+            { title: 'Mods & Upgrade Path', desc: 'Best next upgrade, supporting mods & reliability trade-offs', query: 'For my car and its current modifications, what is the most sensible next upgrade, what supporting parts does it need, and what does it risk (reliability, warranty, inspection)?' },
         ],
     },
     {
@@ -100,12 +101,12 @@ const TOPIC_CATEGORIES = [
         name: 'KNOW-HOW',
         label: 'Ownership',
         topics: [
-            { title: 'Oil Spec & Level', query: 'Which BMW oil approval and viscosity does my engine need (and with my tune and use), how much does it hold, what does my oil level reading say, and how do I top up correctly?' },
-            { title: 'Gearbox Care', query: 'What gearbox does my car have, when should its fluid be changed (BMW says lifetime; what is realistic for my use and tune), and what is an adaptation reset for?' },
-            { title: 'Fuel & Octane', query: 'Which fuel should my engine and tune run on, what happens on lower octane (knock, timing pulled, power), and is an ethanol blend an option?' },
-            { title: 'Known Weak Points', query: 'What are the known weak points of my engine and model at my mileage, what are their early signs, and what should I check or replace before it fails?' },
-            { title: 'Due at This Mileage', query: 'At my mileage and the car\'s age, what maintenance is due or coming up beyond the service list (spark plugs, coolant, gearbox and differential oil, brake fluid, belts), and roughly when?' },
-            { title: 'Long Trip Prep', query: 'I am about to go on a long trip: check my readings (oil level, tyres, fuel, battery, service list, faults if read) and tell me what to sort out before leaving.' },
+            { title: 'Oil Spec & Level', desc: 'BMW approval, viscosity, capacity & top-up guidance', query: 'Which BMW oil approval and viscosity does my engine need (and with my tune and use), how much does it hold, what does my oil level reading say, and how do I top up correctly?' },
+            { title: 'Gearbox Care', desc: 'Unit ID, realistic fluid intervals & adaptation resets', query: 'What gearbox does my car have, when should its fluid be changed (BMW says lifetime; what is realistic for my use and tune), and what is an adaptation reset for?' },
+            { title: 'Fuel & Octane', desc: 'Recommended octane, knock protection & ethanol blends', query: 'Which fuel should my engine and tune run on, what happens on lower octane (knock, timing pulled, power), and is an ethanol blend an option?' },
+            { title: 'Known Weak Points', desc: 'Common issues & early warning signs for this engine', query: 'What are the known weak points of my engine and model at my mileage, what are their early signs, and what should I check or replace before it fails?' },
+            { title: 'Due at This Mileage', desc: 'Preventive items beyond CBS: plugs, fluids, belts', query: 'At my mileage and the car\'s age, what maintenance is due or coming up beyond the service list (spark plugs, coolant, gearbox and differential oil, brake fluid, belts), and roughly when?' },
+            { title: 'Long Trip Prep', desc: 'Pre-trip checklist across oil, tyres, fuel, battery & faults', query: 'I am about to go on a long trip: check my readings (oil level, tyres, fuel, battery, service list, faults if read) and tell me what to sort out before leaving.' },
         ],
     },
 ];
@@ -173,7 +174,7 @@ mgu.run({
             : 'Typing is locked while driving - use a topic, or stop the car');
 
         let currentPrompt = TOPIC_CATEGORIES[0].topics[0].title;
-        let currentResponse = 'M-Copilot ready. Select a category & topic chip or ask a custom question.';
+        let currentResponse = 'Pick a topic under Topics, or ask your own question below.';
         let statusMsg = null;
         let statusTime = 0;
 
@@ -393,7 +394,7 @@ mgu.run({
             cachedQrUrl = null;
             cloudPair.reset();
             cloudPair.startPolling();
-            page = 2;
+            page = 3;
             notify('Phone disconnected AI. Scan QR code to re-pair.');
             render(true).catch(() => {});
         };
@@ -401,9 +402,9 @@ mgu.run({
         const fmtNum = (v, unit) => (typeof v === 'number' && isFinite(v) ? Math.round(v) + unit : '--');
         function vitalsLine() {
             // no car (emulator, bench): kit/car's simulator, marked DEMO - shown here only, never sent to the AI
-            const d = car ? car.data() : null, demo = !!(d && d.demo);
-            const oil = demo ? d.oil : telemetry.oilTemp, coolant = demo ? d.coolant : telemetry.coolantTemp;
-            return 'OIL ' + fmtNum(oil, '°C') + '  ·  COOLANT ' + fmtNum(coolant, '°C') + '  ·  BATTERY ' + fmtNum(demo ? null : telemetry.batteryPct, '%') + (demo ? '  ·  DEMO' : '');
+            const v = vitalsNow();
+            const bst = typeof v.boost === 'number' && isFinite(v.boost) ? (Math.round(v.boost * 20) / 20).toFixed(2) : '--';
+            return fmtNum(v.oil, '') + '|' + fmtNum(v.coolant, '') + '|' + bst + '|' + fmtNum(v.battery, '') + (v.demo ? '|D' : '');
         }
 
         /** The paired AI provider's name, for the status pill and messages. */
@@ -471,6 +472,7 @@ mgu.run({
             diagAt = Date.now();
             const link = new Diag(signals, log);
             link.quiet = true;                  // not every request in the log: the Data check page reads all the time (as M Vitals)
+            link.readOnly = true;               // hard transport-level guard: M-Copilot can never clear faults or write to any ECU
             diagMaking = link.init().then((d) => { diag = d; diagMaking = null; return d; }, (e) => { diagMaking = null; throw e; });
             return diagMaking;
         }
@@ -542,7 +544,7 @@ mgu.run({
          * from these rounds too while they are fresh.
          */
         let liveTimer = null, liveRunning = false, liveRound = 0;
-        const liveWanted = () => page === 1 && onScreen();
+        const liveWanted = () => page === 2 && onScreen();
         // one loop only: a round still reading when the page is left and opened again carries on as the loop
         function engineLive(on) {
             if (!on) { if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; } return; }
@@ -590,7 +592,7 @@ mgu.run({
             if (telemetry.dtcScan && !telemetry.dtcScan.error && !telemetry.dtcScan.partial && telemetry.dtcScan.cc === ccNow
                 && Date.now() - telemetry.dtcScan.at < 5 * 60 * 1000) return;
             try {
-                const { parseDtcReply } = require('./kit/diag');
+                const { parseDtcReply, NRC, hex } = require('./kit/diag');
                 const { ECU } = require('./kit/ecus');
                 if (!(await whenSteady(8000))) {
                     // not cached: the next question tries again
@@ -602,11 +604,18 @@ mgu.run({
                 currentResponse = 'Reading the fault memory of all control units...';
                 render(true).catch(() => {});
                 const res = await d.functional(0x19, [0x02, 0x0C]);
-                const found = [];
+                const found = [], refused = [];
                 res.forEach((uds, addr) => {
                     const p = parseDtcReply(uds, [0x02, 0x0C]);
-                    found.push({ addr, codes: p.ok ? p.dtcs : [] });
+                    if (p.ok) found.push({ addr, codes: p.dtcs });
+                    else refused.push({ addr, nrc: p.nrc });
                 });
+                if (!found.length) {
+                    // 0 control units answered cleanly (ignition off / asleep): never report this as "0 faults"
+                    telemetry.dtcScan = { at: 0, error: refused.length ? 'control units refused fault read (ignition on?)' : 'no control unit answered (ignition on?)' };
+                    log.warn('M-Copilot: fault memory read: ' + telemetry.dtcScan.error);
+                    return;
+                }
                 // the texts: for the units with faults, their exact type first (once per unit, kept)
                 const T = require('./dtc_text');
                 const ids = await unitTypes(d, found.filter((u) => u.codes.length).map((u) => u.addr), T.hasDb);
@@ -616,9 +625,20 @@ mgu.run({
                     return { addr: u.addr, name: T.unitName(u.addr, ids) || ECU[u.addr] || ('ECU 0x' + u.addr.toString(16).toUpperCase()),
                         codes: u.codes.map((x) => ({ code: x.code, status: x.status, text: T.describe(u.addr, x.code, ids) })) };
                 });
-                // parked without ignition, units that sleep don't answer: said so, and read again next time
-                telemetry.dtcScan = { at: Date.now(), answered: units.length, total, units, partial: carAwake() === 'asleep', cc: JSON.stringify(telemetry.checkControl || []) };
-                log.info('M-Copilot: fault memory read: ' + units.length + ' units, ' + total + ' faults');
+                const refusedNamed = refused.map((u) => ({
+                    addr: u.addr,
+                    name: T.unitName(u.addr, ids) || ECU[u.addr] || ('ECU 0x' + hex(u.addr)),
+                    why: u.nrc != null ? 'NRC ' + hex(u.nrc) + (NRC[u.nrc] ? ' ' + NRC[u.nrc] : '') : 'invalid reply',
+                }));
+                // parked without ignition (or some units refused): marked partial so the AI knows and next scan retries
+                telemetry.dtcScan = {
+                    at: Date.now(), answered: units.length, total, units, refused: refusedNamed,
+                    asleep: carAwake() === 'asleep',
+                    partial: carAwake() === 'asleep' || refusedNamed.length > 0,
+                    cc: JSON.stringify(telemetry.checkControl || []),
+                };
+                log.info('M-Copilot: fault memory read: ' + units.length + ' units, ' + total + ' faults'
+                    + (refusedNamed.length ? ' (' + refusedNamed.length + ' refused)' : ''));
             } catch (e) {
                 telemetry.dtcScan = { at: Date.now(), error: e.message || String(e) };
                 log.warn('M-Copilot: fault memory read failed: ' + (e.message || e));
@@ -661,7 +681,7 @@ mgu.run({
                 return;
             }
             if (!ai.isConfigured()) {
-                page = 2;
+                page = 3;
                 render(true).catch(() => {});
                 return;
             }
@@ -741,21 +761,21 @@ mgu.run({
         }
 
         const wrapCache = { key: null, lines: null };
-        function wrapLines(text, maxChars = 62) {
+        function wrapLines(cv, text, maxW, size) {
             if (!text) return [];
-            const key = maxChars + '|' + text;
+            const key = maxW + '|' + size + '|' + text;
             if (wrapCache.key === key) return wrapCache.lines;
             wrapCache.key = key;
-            return (wrapCache.lines = wrapLinesNow(text, maxChars));
+            return (wrapCache.lines = wrapLinesNow(cv, text, maxW, size));
         }
-        function wrapLinesNow(text, maxChars) {
+        function wrapLinesNow(cv, text, maxW, size) {
             // Clean markdown syntax & sanitize characters into atlas-supported glyphs
             const cleaned = text
                 .replace(/\*\*(.*?)\*\*/g, '$1')   // bold asterisks removed
                 .replace(/^#{1,6}\s*/gm, '')          // markdown headings
                 .replace(/`([^`]*)`/g, '$1')          // inline code
                 .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, '$1$2')   // *italic*
-                .replace(/^\s*\d+[.)]\s+/gm, (m) => '- ')   // numbered lists as bullets
+                .replace(/^\s*\d+[.)]\s+/gm, () => '- ')   // numbered lists as bullets
                 .replace(/^[\*\-]\s+/gm, '- ')     // list bullet prefix to '- '
                 .replace(/[•\u2022]/g, '- ')       // bullet dot to '- '
                 .replace(/[≥]/g, '>=')
@@ -766,11 +786,12 @@ mgu.run({
                 .replace(/[‘’]/g, "'")
                 .replace(/\n{3,}/g, '\n\n');       // collapse excessive blank lines
 
+            const measure = (s) => cv.textWidth(s, size, { literal: true });
             const rawLines = drawable(cleaned).split('\n');
             const lines = [];
             let lastEmpty = false;
 
-            rawLines.forEach(rl => {
+            rawLines.forEach((rl) => {
                 const trimmed = rl.trim();
                 if (!trimmed) {
                     if (!lastEmpty && lines.length > 0) {
@@ -781,446 +802,565 @@ mgu.run({
                 }
                 lastEmpty = false;
 
-                if (trimmed.length <= maxChars) {
+                if (measure(trimmed) <= maxW) {
                     lines.push(trimmed);
-                } else {
-                    const words = trimmed.split(' ');
-                    let cur = '';
-                    words.forEach(w => {
-                        if ((cur + ' ' + w).length <= maxChars) {
-                            cur = cur ? cur + ' ' + w : w;
+                    return;
+                }
+                const words = trimmed.split(/\s+/);
+                let cur = '';
+                words.forEach((w) => {
+                    const cand = cur ? cur + ' ' + w : w;
+                    if (measure(cand) <= maxW) {
+                        cur = cand;
+                    } else {
+                        if (cur) lines.push(cur);
+                        // Split an overlong unspaced token (e.g. long code or URL) so it never crosses maxW
+                        if (measure(w) > maxW) {
+                            let part = '';
+                            for (const ch of w) {
+                                if (part && measure(part + ch) > maxW) { lines.push(part); part = ch; }
+                                else part += ch;
+                            }
+                            cur = part;
                         } else {
-                            if (cur) lines.push(cur);
                             cur = w;
                         }
-                    });
-                    if (cur) lines.push(cur);
-                }
+                    }
+                });
+                if (cur) lines.push(cur);
             });
             return lines;
         }
 
-        /* ---------- Offline Screen: No Internet Connection ---------- */
+        /* ---------- Offline: no internet ---------- */
         function drawNoInternet(cv, t) {
-            G.panelExact(cv, t, 40, 52, 1520, 458 + (cv.extra || 0), 'Network Status: Offline');
-
-            cv.roundRect(80, 110, 1440, 358 + (cv.extra || 0), 16, '#0f141f');
-            cv.strokeRoundRect(80, 110, 1440, 358 + (cv.extra || 0), 16, 2, '#e1001a');
-
-            cv.circle(180, 240, 44, withAlpha('#e1001a', 0.2));
-            cv.text('!', 180, 255, 46, '#e1001a', { align: 'center', font: 'bold' });
-
-            cv.text('NO INTERNET CONNECTION', 260, 180, 26, '#e1001a', { font: 'bold', spacing: 1 });
-            cv.text('M-Copilot Cloud AI requires an active internet connection on your vehicle.', 260, 218, 18, '#ffffff');
-            cv.text('Please verify that your BMW has cellular data or is connected to a mobile Wi-Fi hotspot.', 260, 248, 16, '#94a3b8');
-
-            // Retry Button
-            const btnW = 280, btnH = 48, btnY = 320;
-            const b1X = 260;
-            cv.roundRect(b1X, btnY, btnW, btnH, 10, '#004e8c');
-            cv.strokeRoundRect(b1X, btnY, btnW, btnH, 10, 1.5, '#00a3e0');
-            cv.text('RETRY CONNECTION', b1X + btnW / 2, btnY + 30, 16, '#ffffff', { align: 'center', font: 'bold' });
-            cv.target(b1X, btnY, btnW, btnH, () => {
-                notify('Re-checking uplink connectivity...');
+            const y = S.state(cv, t, 64, 110, 1000, {
+                tone: 'error', glow: !!cv.place, title: 'No internet connection', size: sz(cv, 26),
+                lines: ['M-Copilot asks its AI over the internet.', 'Check the phone hotspot, the USB-tethered phone or the LTE stick.'],
+            });
+            S.button(cv, t, 64, y + 20, 'Try again', () => {
+                notify('Checking the connection...');
                 ai.checkInternetConnection().then(() => render(true));
-            }, 'btn_retry_net', 10);
+            }, { h: sz(cv, 32), primary: true, key: 'btn_retry_net', size: sz(cv, 13) });
         }
 
-        /* ---------- Connect: pairing the phone, and what is set from it (as Spotify's Connect tab) ---------- */
+        /* ---------- Connect: pairing the phone, and what is set from it ---------- */
+        /** The pairing QR code on a white square with a soft shadow under it, size px, top left x, y. */
         function drawQr(cv, url, x, y, size) {
             const qr = getPairingQr(url);
             if (!qr) return;
             const n = qr.size, px = Math.floor(size / n), real = px * n, ox = x + Math.floor((size - real) / 2), oy = y + Math.floor((size - real) / 2);
-            cv.roundRect(ox - 10, oy - 10, real + 20, real + 20, 10, '#ffffff');
+            if (cv.place) S.softRect(cv, ox, oy + 14, real, real, 26, '#000000', 0.7);
+            cv.roundRect(ox - 12, oy - 12, real + 24, real + 24, 4, '#ffffff');
             G.qrCode(cv, qr, url, ox, oy, px);       // drawn once as a layer, not a rectangle per module every frame
         }
         const LANG_NAMES = { ka: 'Georgian', de: 'German', fr: 'French', es: 'Spanish', it: 'Italian', nl: 'Dutch', pt: 'Portuguese', tr: 'Turkish', pl: 'Polish' };
         function drawConnect(cv, t) {
-            const ex = cv.extra || 0, paired = ai.isConfigured(), now = Date.now();
-            // left: connected, or the pairing QR
-            G.panelExact(cv, t, 40, 52, 640, 458 + ex, paired ? 'AI Connection' : 'Scan to Connect Your Phone');
-            const cx = 360;
+            const ex = cv.extra || 0, paired = ai.isConfigured(), bottom = 510 + ex;
+            const panelH = bottom - 44, acc = S.acc(t);
+            const ds = Math.min(sz(cv, 12), 18), rs = Math.min(sz(cv, 13), 19), rh = Math.min(sz(cv, 26), 38);
+            // left: the AI, or the code to pair with
+            const lx = 40, lw = 620;
+            G.panelExact(cv, t, lx, 44, lw, panelH, paired ? 'AI connection' : 'Connect your phone');
             if (paired) {
-                const C = '#00a3e0';
-                cv.roundRect(64, 100, 592, 330 + ex, 14, '#0a1218');
-                cv.strokeRoundRect(64, 100, 592, 330 + ex, 14, 1.5, withAlpha(C, 0.55));
-                const sh = Math.floor(ex * 0.45);        // taller page (no bar): the card's contents move to its middle
-                const by = 150 + sh;
-                cv.circle(cx, by, 36, withAlpha(C, 0.12));
-                cv.arc(cx, by, 30, 32, 0, 360, withAlpha(C, 0.45));
-                cv.circle(cx, by, 25, C);
-                cv.polyline([[cx - 11, by + 1], [cx - 4, by + 8], [cx + 11, by - 8]], 4.5, '#04101a');
-                cv.text('CONNECTED TO ' + providerName().toUpperCase(), cx, 212 + sh, 20, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+                const y = S.state(cv, t, lx, 112, lw, { tone: 'info', glow: !!cv.place, title: 'Connected to ' + providerName(), size: Math.min(sz(cv, 20), 29), lines: [] });
                 const ml = ai.modelLabel();
-                cv.text('Model: ' + (ml || ai.config.model || 'default') + (ml ? ' (answered last)' : ''), cx, 238 + sh, 16, '#cbd5e1', { align: 'center' });
-                const pill = (y, on, text) => {
-                    const w = 440, x = cx - w / 2;
-                    cv.roundRect(x, y, w, 32, 16, withAlpha(on ? '#2af575' : '#ffffff', on ? 0.12 : 0.06));
-                    cv.circle(x + 22, y + 16, 5, on ? '#2af575' : '#94a3b8');
-                    cv.text(text, x + 38, y + 21, 14, on ? '#2af575' : '#94a3b8', { font: 'bold' });
-                };
-                pill(278 + sh, ai.hasInternet, ai.hasInternet ? 'Internet: online' : 'Internet: offline (phone hotspot?)');
+                [['Model', (ml || ai.config.model || 'default') + (ml ? ' (answered last)' : '')],
+                 ['Internet', ai.hasInternet ? 'Online' : 'Offline: phone hotspot?']].forEach((r, i) => {
+                    S.pair(cv, t, lx, y + 4 + i * rh, lw, rh, r[0], fitText(cv, r[1], lw - 160, rs), { size: rs, dot: i === 1 ? (ai.hasInternet ? S.OK : S.critC(t)) : null });
+                });
                 // disconnecting (or a new AI key) is the phone's: the car follows it live
-                cv.text('Disconnect or change the AI key on your phone.', cx, 380 + ex, 14, '#64748b', { align: 'center' });
+                cv.text(fitText(cv, 'Disconnect or change the AI key on your phone.', lw, ds), lx, y + 4 + 2 * rh + 30, ds, t.dim);
             } else {
-                // the QR code grows into the room a taller page has (no bar), the block centred in the panel
-                const qs = Math.min(320, 210 + Math.round(ex * 0.9)), top = 92, bottom = 52 + 458 + ex - 12;
-                const block = qs + 20 + 108, y0 = top + Math.max(0, Math.floor((bottom - top - block) / 2));
-                drawQr(cv, cloudPair.getPairingUrl(), cx - qs / 2, y0 + 10, qs);
-                const ty = y0 + qs + 56;
-                cv.text('Scan with your phone to connect an AI', cx, ty, 18, t.text, { align: 'center', font: 'bold' });
-                cv.text('PAIRING CODE: ' + cloudPair.getShortCode(), cx, ty + 26, 15, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
-                cv.text('Google Gemini (free), Claude, OpenAI, Groq or OpenRouter', cx, ty + 50, 14, '#94a3b8', { align: 'center' });
-                cv.text('hexlay.github.io/idrive7-custom-apps/copilot.html', cx, ty + 72, 12, '#64748b', { align: 'center' });
+                const cardY = 104, cardH = Math.max(220, bottom - cardY);
+                cv.roundRect(lx, cardY, lw, cardH, 6, '#101218');
+                cv.strokeRoundRect(lx + 0.5, cardY + 0.5, lw - 1, cardH - 1, 6, 1, withAlpha('#ffffff', 0.09));
+                const qs = Math.max(150, Math.min(236, cardH - 56));
+                const qx = lx + 28, qy = cardY + Math.round((cardH - qs) / 2);
+                drawQr(cv, cloudPair.getPairingUrl(), qx, qy, qs);
+                const tx = qx + qs + 34, tw = lx + lw - tx - 20, ts = Math.min(sz(cv, 15.5), 22), codeSz = Math.min(sz(cv, 21), 28);
+                cv.text(fitText(cv, 'Scan with your phone', tw, ts, { font: 'bold' }), tx, qy + ts, ts, t.text, { font: 'bold' });
+                ['Choose Gemini (free), Claude,', 'OpenAI, Groq or OpenRouter.'].forEach((l, i) => {
+                    cv.text(fitText(cv, l, tw, ds), tx, qy + ts + 14 + (i + 1) * ds * 1.4, ds, t.dim);
+                });
+                const cy2 = qy + ts + 14 + 3.4 * ds * 1.4;
+                cv.text('Pairing code', tx, cy2, ds, t.dim);
+                cv.text(cloudPair.getShortCode(), tx, cy2 + codeSz + 4, codeSz, acc, { font: 'bold', literal: true });
+                cv.text(fitText(cv, 'hexlay.github.io/.../copilot.html', tw, Math.max(13, ds - 1), { literal: true }), tx, cy2 + codeSz + 26, Math.max(13, ds - 1), t.dim, { literal: true });
             }
 
             // right: what is set from the phone (the only place it can be changed)
-            G.panelExact(cv, t, 700, 52, 860, 458 + ex, 'Set From Your Phone');
+            const rx = 720, rw = 840;
+            G.panelExact(cv, t, rx, 44, rw, panelH, showPhoneQr && paired ? 'Phone page' : 'Set from your phone');
             if (showPhoneQr && paired) {
-                const qs2 = Math.min(280, 180 + Math.round(ex * 0.8)), y2 = 96 + Math.max(0, Math.floor((410 + ex - 96 - qs2 - 92) / 2));
-                drawQr(cv, cloudPair.getPairingUrl(), 1130 - qs2 / 2, y2 + 10, qs2);
-                cv.text('Open the phone page for this car', 1130, y2 + qs2 + 48, 17, t.text, { align: 'center', font: 'bold' });
-                cv.text('Car profile, AI model, Disconnect', 1130, y2 + qs2 + 72, 14, '#94a3b8', { align: 'center' });
-                // the camera opens the browser; on iPhone the Home Screen app keeps its own cars
-                cv.text('Installed the phone app? Scan with its Scan car QR, not the camera.', 1130, y2 + qs2 + 94, 13, '#64748b', { align: 'center' });
+                const bh = Math.min(sz(cv, 30), 42);
+                const cardY = 104, cardH = Math.max(200, bottom - bh - 18 - cardY);
+                cv.roundRect(rx, cardY, rw, cardH, 6, '#101218');
+                cv.strokeRoundRect(rx + 0.5, cardY + 0.5, rw - 1, cardH - 1, 6, 1, withAlpha('#ffffff', 0.09));
+                const qs2 = Math.max(150, Math.min(220, cardH - 52)), qx2 = rx + 28, qy = cardY + Math.round((cardH - qs2) / 2);
+                drawQr(cv, cloudPair.getPairingUrl(), qx2, qy, qs2);
+                const tx = qx2 + qs2 + 36, tw = rx + rw - tx - 24, ts = Math.min(sz(cv, 15.5), 22);
+                cv.text(fitText(cv, 'Open this car on your phone', tw, ts, { font: 'bold' }), tx, qy + ts, ts, t.text, { font: 'bold' });
+                ['Edit car profile, switch AI model or disconnect.', 'In the phone app, use Scan car QR.'].forEach((l, i) => {
+                    cv.text(fitText(cv, l, tw, ds), tx, qy + ts + 16 + (i + 1) * ds * 1.45, ds, t.dim);
+                });
             } else {
                 const p = vehicle.profile || {};
                 const lines = Vehicle.profileLines(p).filter((l) => !/^Country|^Model \(owner\)/.test(l));
                 const rows = [['Model', p.model || 'not set']].concat(lines.map((l) => { const i = l.indexOf(': '); return [l.slice(0, i), l.slice(i + 2)]; }));
                 rows.push(['Country', p.country || 'not set'], ['Answer language', LANG_NAMES[p.lang] || 'English'], ['AI model', ai.config.model || 'default']);
-                const rstep = 26 + Math.min(12, Math.floor(ex / 8));
-                rows.slice(0, 10).forEach(([k, v], i) => {
-                    const y = 134 + i * rstep;
-                    cv.text(k, 730, y, 14, t.dim);
-                    cv.text(v.length > 52 ? v.slice(0, 51) + '…' : v, 1530, y, 14, /not set|default/.test(v) ? t.dim : '#e2e8f0', { align: 'right' });
+                const room = bottom - 110 - (paired ? Math.min(sz(cv, 30), 42) + 26 : 16);
+                const rRh = Math.min(rh, Math.max(24, Math.floor(room / Math.min(rows.length, 9))));
+                rows.slice(0, Math.max(1, Math.floor(room / rRh))).forEach(([k, v], i) => {
+                    S.pair(cv, t, rx, 110 + i * rRh, rw, rRh, k, fitText(cv, v, rw - 260, rs), { size: Math.min(rs, Math.round(rRh * 0.5)), color: /not set|default/.test(v) ? t.dim : t.text });
                 });
-                cv.text('Change these on the phone page: Your car and AI model.', 730, 408 + ex, 13, '#64748b');
             }
             if (paired) {
-                const bw = 380, bx = 1130 - bw / 2, by = 424 + ex, bh = Math.min(56, sz(cv, 32));
-                cv.roundRect(bx, by, bw, bh, 10, '#004e8c');
-                cv.strokeRoundRect(bx, by, bw, bh, 10, 1.5, '#00a3e0');
-                cv.text(showPhoneQr ? 'BACK TO THE SETTINGS' : 'SHOW QR FOR THE PHONE PAGE', 1130, by + bh / 2 + sz(cv, 4), sz(cv, 11), '#ffffff', { align: 'center', font: 'bold' });
-                cv.target(bx, by, bw, bh, () => { showPhoneQr = !showPhoneQr; render(true); }, 'btn_phone_qr', 10);
+                const bh = Math.min(sz(cv, 30), 42), by = bottom - bh;
+                const bw = S.button(cv, t, rx, by, showPhoneQr ? 'Back to settings' : 'Show phone QR', () => { showPhoneQr = !showPhoneQr; render(true); },
+                    { h: bh, size: Math.min(sz(cv, 12.5), 18), key: 'btn_phone_qr' });
+                if (!showPhoneQr) cv.text(fitText(cv, 'Change these on the phone page.', rw - bw - 20, ds), rx + rw, by + bh / 2 + ds * 0.36, ds, t.dim, { align: 'right' });
             }
         }
-        /** The co-driver before an AI is paired: where to pair. */
+        /** The answer page before an AI is paired: where to pair. */
         function drawNeedsConnect(cv, t) {
-            G.panelExact(cv, t, 40, 52, 1520, 458 + (cv.extra || 0), '');
-            const sh = Math.floor((cv.extra || 0) / 2);
-            cv.text('M-COPILOT NEEDS AN AI KEY FROM YOUR PHONE', 800, 210 + sh, 24, '#00a3e0', { align: 'center', font: 'bold', spacing: 1 });
-            cv.text('Pair once on the Connect tab: scan its QR code with your phone and choose a provider (Google Gemini is free).', 800, 248 + sh, 16, '#cbd5e1', { align: 'center' });
-            const bw = 320, bx = 800 - bw / 2, by = 290 + sh, bh = 50;
-            cv.roundRect(bx, by, bw, bh, 10, '#004e8c');
-            cv.strokeRoundRect(bx, by, bw, bh, 10, 1.5, '#00a3e0');
-            cv.text('OPEN CONNECT', 800, by + 32, 17, '#ffffff', { align: 'center', font: 'bold' });
-            cv.target(bx, by, bw, bh, () => { page = 2; render(true); }, 'btn_open_connect', 10);
+            const y = S.state(cv, t, 64, 110, 1000, {
+                tone: 'info', glow: !!cv.place, title: 'Pair an AI from your phone', size: sz(cv, 26),
+                lines: ['Scan the code on the Connect tab and choose an AI there (Google Gemini is free).', 'Your answers then show here, with your car\'s own data.'],
+            });
+            S.button(cv, t, 64, y + 20, 'Open Connect', () => { page = 3; render(true); }, { h: sz(cv, 32), primary: true, key: 'btn_open_connect', size: sz(cv, 13) });
         }
 
-        /* ---------- On-Screen Touch Keyboard (Panel 2) ---------- */
+        /* ---------- The on-screen keyboard (in place of the band while the question box is open) ---------- */
         function drawKeyboard(cv, t, now) {
-            G.panelExact(cv, t, 510, 52, 1050, 458 + (cv.extra || 0), 'Ask Custom Question');
-
-            // Live Engine Vitals in header
-            cv.text(vitalsLine(), 1530, 80, 13, t.dim, { align: 'right', font: 'num' });
-
-            const kx = 540, kw = 990;
-
-            // 1. Query Input Display Box
-            // (sized for this display: sz; the keys fill the panel down to its bottom)
-            const ex = cv.extra || 0;
-            const qBoxY = 100, qBoxH = sz(cv, 36), qSize = sz(cv, 13);
-            cv.roundRect(kx, qBoxY, kw, qBoxH, 8, '#080d14');
-            cv.strokeRoundRect(kx, qBoxY, kw, qBoxH, 8, 1.5, '#00a3e0');
-
+            const ex = cv.extra || 0, bottom = 510 + ex;
+            const kx = 700, kw = 860;
             const hasText = !!customQuery.trim();
-            const clrW = sz(cv, 66), clrH = qBoxH - 10, clrX = kx + kw - clrW - 6, clrY = qBoxY + 5;
-            const displayText = hasText ? fitTail(cv, customQuery, clrX - kx - 36, qSize) + '_' : 'Type your question with touch keyboard or tap a preset below...';
-            cv.text(displayText, kx + 18, qBoxY + qBoxH / 2 + qSize * 0.36, qSize, hasText ? '#ffffff' : '#64748b', { font: hasText ? 'bold' : 'normal' });
+            const s = Math.min(sz(cv, 11.5), 16);
 
-            // Clear button inside input bar
-            if (hasText) {
-                const cs = sz(cv, 10.5);
-                cv.roundRect(clrX, clrY, clrW, clrH, 6, withAlpha('#e1001a', 0.22));
-                cv.strokeRoundRect(clrX, clrY, clrW, clrH, 6, 1, '#e1001a');
-                cv.text('CLEAR', clrX + clrW / 2, clrY + clrH / 2 + cs * 0.36, cs, '#ff6b6b', { align: 'center', font: 'bold' });
-                cv.target(clrX, clrY, clrW, clrH, () => {
-                    customQuery = '';
-                    render(true);
-                }, 'kb_btn_clear', 8);
-            }
+            // live query bar right above the keyboard so your eyes stay here while typing
+            const qH = 42, qY = 58, qSz = 19;
+            cv.roundRect(kx, qY, kw, qH, 3, '#101218');
+            cv.strokeRoundRect(kx + 0.5, qY + 0.5, kw - 1, qH - 1, 3, 1, withAlpha('#ffffff', hasText ? 0.24 : 0.12));
+            cv.fillRect(kx + 1, qY + qH - 2, kw - 2, 2, S.sel(t));
+            const previewTxt = hasText ? fitTail(cv, customQuery, kw - 36, qSz, { font: 'bold', literal: true }) + '_' : 'Type a question or tap a preset below...';
+            cv.text(previewTxt, kx + 16, qY + qH / 2 + qSz * 0.34, qSz, hasText ? t.text : t.dim, { font: hasText ? 'bold' : 'normal', literal: true });
 
-            // 2. Quick Preset Chips Row
-            const presetY = qBoxY + qBoxH + 8, presetH = sz(cv, 24), pSize = sz(cv, 10.5);
-            const presets = [
-                'What is my boost?',
-                'Brake pad health',
-                'Cold start high idle',
-                'Recommended oil spec',
-                'Scan active fault codes'
-            ];
-            // as many as fit on the row, each as wide as its text
+            // a few ready questions, as many as fit on the row
+            const presetH = Math.min(sz(cv, 26), 36), presetY = qY + qH + 10;
+            const presets = ['What is my boost?', 'Brake pad health', 'Cold start idle', 'Recommended oil', 'Scan fault codes'];
             let px = kx;
             presets.forEach((pr, pIdx) => {
-                const pw = cv.textWidth(pr, pSize) + sz(cv, 22);
+                const pw = Math.round(cv.textWidth(pr, s) + 24);
                 if (px + pw > kx + kw) return;
-                cv.roundRect(px, presetY, pw, presetH, presetH / 2, '#101a28');
-                cv.strokeRoundRect(px, presetY, pw, presetH, presetH / 2, 1, '#1e324c');
-                cv.text(pr, px + pw / 2, presetY + presetH / 2 + pSize * 0.36, pSize, '#cbd5e1', { align: 'center' });
-                cv.target(px, presetY, pw, presetH, () => {
-                    if (!typingLocked()) customQuery = pr;
-                    render(true);
-                }, 'kb_preset_' + pIdx, presetH / 2);
-                px += pw + 10;
+                S.button(cv, t, px, presetY, pr, () => { if (!typingLocked()) customQuery = pr; render(true); }, { h: presetH, size: s, w: pw, key: 'kb_preset_' + pIdx });
+                px += pw + 8;
             });
 
-            // 3. Speller Keyboard Key Rows: four rows of keys and the action row share the room down to the panel's bottom
-            const kbY = presetY + presetH + 10;
-            const keyGap = 6;
-            const keyH = Math.min(sz(cv, 40), Math.floor((52 + 458 + ex - 12 - kbY - 4 * keyGap) / 5));
-            const kSize = sz(cv, 14);
-
+            // the keys: four rows and the action row share the room down to the page's bottom
+            const kbY = presetY + presetH + 12, keyGap = 6;
+            const keyH = Math.min(sz(cv, 54), Math.floor((bottom - kbY - 4 * keyGap) / 5));
+            const kSize = Math.min(sz(cv, 15), 22);
             const rows = [
                 ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '?'],
                 ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
                 ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
-                ['Z', 'X', 'C', 'V', 'B', 'N', 'M', '.', ',']
+                ['Z', 'X', 'C', 'V', 'B', 'N', 'M', '.', ','],
             ];
-
+            const key = (x, y, w, label, run, k, o) => {
+                o = o || {};
+                if (o.primary) {
+                    S.lit(cv, t, x, y, w, keyH, 1.3);
+                    cv.strokeRoundRect(x + 0.5, y + 0.5, w - 1, keyH - 1, 3, 1, withAlpha(S.sel(t), 0.65));
+                } else {
+                    cv.roundRect(x, y, w, keyH, 3, '#13161e');
+                    cv.strokeRoundRect(x + 0.5, y + 0.5, w - 1, keyH - 1, 3, 1, withAlpha('#ffffff', 0.1));
+                }
+                cv.text(label, x + w / 2, y + keyH / 2 + (o.size || kSize) * 0.36, o.size || kSize, o.color || '#ffffff', { align: 'center', font: o.primary ? 'bold' : 'normal', literal: true });
+                cv.target(x, y, w, keyH, run, k, 3);
+            };
             rows.forEach((row, rIdx) => {
                 const ry = kbY + rIdx * (keyH + keyGap);
-                const count = row.length;
-                const keyW = Math.floor((kw - (count - 1) * keyGap) / count);
-
-                row.forEach((k, cIdx) => {
-                    const kxPos = kx + cIdx * (keyW + keyGap);
-                    cv.roundRect(kxPos, ry, keyW, keyH, 6, '#0f1724');
-                    cv.strokeRoundRect(kxPos, ry, keyW, keyH, 6, 1, '#1e2d42');
-                    cv.text(k, kxPos + keyW / 2, ry + keyH / 2 + kSize * 0.36, kSize, '#ffffff', { align: 'center', font: 'bold' });
-
-                    cv.target(kxPos, ry, keyW, keyH, () => {
-                        if (customQuery.length < QUERY_MAX && !typingLocked()) customQuery += k;
-                        render(true);
-                    }, 'kb_k_' + rIdx + '_' + cIdx, 6);
-                });
+                const keyW = Math.floor((kw - (row.length - 1) * keyGap) / row.length);
+                row.forEach((k, cIdx) => key(kx + cIdx * (keyW + keyGap), ry, keyW, k, () => {
+                    if (customQuery.length < QUERY_MAX && !typingLocked()) customQuery += k;
+                    render(true);
+                }, 'kb_k_' + rIdx + '_' + cIdx));
             });
-
-            // 4. Action Row (Row 5)
-            const aY = kbY + 4 * (keyH + keyGap);
-            const aH = keyH, aSize = sz(cv, 12), aBase = aY + aH / 2 + aSize * 0.36;
-
-            // Cancel button
-            const canW = 150, canX = kx;
-            cv.roundRect(canX, aY, canW, aH, 8, '#141f2e');
-            cv.strokeRoundRect(canX, aY, canW, aH, 8, 1, '#253347');
-            cv.text('CANCEL', canX + canW / 2, aBase, aSize, '#94a3b8', { align: 'center', font: 'bold' });
-            cv.target(canX, aY, canW, aH, () => {
+            // the action row: Close, space, delete, clear, Ask
+            const aY = kbY + 4 * (keyH + keyGap), aS = sz(cv, 12.5);
+            let ax = kx;
+            const act = (w, label, run, k, o) => { key(ax, aY, w, label, run, k, Object.assign({ size: aS }, o)); ax += w + keyGap; };
+            act(120, 'Close', () => { showKeyboard = false; render(true); }, 'kb_act_cancel', { color: t.dim });
+            act(260, 'Space', () => { if (customQuery.length < QUERY_MAX && !typingLocked()) customQuery += ' '; render(true); }, 'kb_act_space');
+            act(120, 'Delete', () => { customQuery = customQuery.slice(0, -1); render(true); }, 'kb_act_del');
+            act(110, 'Clear', () => { customQuery = ''; render(true); }, 'kb_btn_clear', { color: hasText ? S.critC(t) : t.dim });
+            act(kx + kw - ax, 'Ask M-Copilot', () => {
+                if (!hasText) return;
+                const q = customQuery.trim();
+                customQuery = '';
                 showKeyboard = false;
-                render(true);
-            }, 'kb_act_cancel', 8);
-
-            // Spacebar
-            const spW = 380, spX = canX + canW + keyGap;
-            cv.roundRect(spX, aY, spW, aH, 8, '#0f1724');
-            cv.strokeRoundRect(spX, aY, spW, aH, 8, 1, '#1e2d42');
-            cv.text('SPACEBAR', spX + spW / 2, aBase, aSize, '#cbd5e1', { align: 'center', font: 'bold' });
-            cv.target(spX, aY, spW, aH, () => {
-                if (customQuery.length < QUERY_MAX && !typingLocked()) customQuery += ' ';
-                render(true);
-            }, 'kb_act_space', 8);
-
-            // Backspace / Del
-            const delW = 170, delX = spX + spW + keyGap;
-            cv.roundRect(delX, aY, delW, aH, 8, '#1f1418');
-            cv.strokeRoundRect(delX, aY, delW, aH, 8, 1, '#421a22');
-            cv.text('BACKSPACE', delX + delW / 2, aBase, aSize, '#ff8080', { align: 'center', font: 'bold' });
-            cv.target(delX, aY, delW, aH, () => {
-                customQuery = customQuery.slice(0, -1);
-                render(true);
-            }, 'kb_act_del', 8);
-
-            // Ask Copilot / Submit
-            const askX = delX + delW + keyGap, askW = kx + kw - askX;
-            cv.roundRect(askX, aY, askW, aH, 8, hasText ? '#00a3e0' : '#1e293b');
-            if (hasText) cv.strokeRoundRect(askX, aY, askW, aH, 8, 1.5, '#00f0ff');
-            cv.text('ASK M-COPILOT >', askX + askW / 2, aBase, aSize, hasText ? '#ffffff' : '#64748b', { align: 'center', font: 'bold', spacing: 1 });
-            cv.target(askX, aY, askW, aH, () => {
-                if (hasText) {
-                    const q = customQuery.trim();
-                    customQuery = '';
-                    showKeyboard = false;
-                    askCopilot(q, 'Custom: ' + (q.length > 25 ? q.slice(0, 25) + '...' : q));
-                }
-            }, 'kb_act_go', 10);
+                askCopilot(q, 'Custom: ' + (q.length > 25 ? q.slice(0, 25) + '...' : q));
+            }, 'kb_act_go', { primary: hasText, color: hasText ? '#ffffff' : t.dim });
+            void now;
         }
 
-        /* ---------- M-Copilot AI Main Screen (2-Panel Wide Architecture) ---------- */
-        function drawMainCopilot(cv, t, now) {
-            const curCat = TOPIC_CATEGORIES[activeCategory] || TOPIC_CATEGORIES[0];
-            const topics = curCat.topics;
+        /* ---------- the band's history ---------- */
+        /*
+         * History for the 3D band: oil, coolant, boost and the 12 V battery every 2 s while M-Copilot
+         * is on screen, up to 15 minutes. Back on screen after more than 5 minutes away it starts again
+         * (brief tab or HMI switches keep history intact). No car (emulator, bench): the simulator's
+         * values (with a realistic demo warmup seed so the 3D band is immediately visible); never sent
+         * to the AI.
+         */
+        const HIST_MS = 15 * 60 * 1000, HIST_STEP = 2000;
+        const BAND_SIGNALS = [
+            { key: 'oil', name: 'Oil', label: 'Oil temperature', unit: '°C', dec: 0, min: 20, max: 135, ref: 90, refText: '90 °C', limit: 130, stops: S.TEMP_STOPS },
+            { key: 'coolant', name: 'Coolant', label: 'Coolant temperature', unit: '°C', dec: 0, min: 20, max: 125, ref: 90, refText: '90 °C', limit: 120, stops: S.TEMP_STOPS },
+            { key: 'boost', name: 'Boost', label: 'Boost pressure', unit: 'bar', dec: 2, min: 0, max: 2.2, ref: 1.0, refText: '1.0 bar', limit: 1.8,
+                stops: [[0, S.M2], [0.65, S.M1], [1.25, '#7cc8f0'], [1.6, S.AMBER], [1.95, S.M3]] },
+            { key: 'battery', name: 'Battery', label: '12 V battery charge', unit: '%', dec: 0, min: 30, max: 100, ref: 80, refText: '80 %', limit: 50, low: true,
+                stops: [[40, S.M3], [55, S.AMBER], [70, S.M1], [100, '#7cc8f0']] },
+        ];
+        let history = [], histTimer = null, bandSignal = 0, bandSwitchAt = 0, demoSeeded = false;
+        const BAND_SWITCH_MS = 320;
+        function vitalsNow() {
+            const d = car ? car.data() : null, demo = !!(d && d.demo);
+            const snapBoost = telemetry.engineSnap && telemetry.engineSnap.values && typeof telemetry.engineSnap.values.boostActual === 'number'
+                ? telemetry.engineSnap.values.boostActual : null;
+            const demoBoost = demo && typeof d.rpm === 'number'
+                ? Math.max(0, Math.min(1.95, ((d.rpm - 1100) / 5200) * 1.4 + (typeof d.torque === 'number' && d.torque > 240 ? 0.25 : 0))) : null;
+            return {
+                oil: demo ? d.oil : telemetry.oilTemp,
+                coolant: demo ? d.coolant : telemetry.coolantTemp,
+                boost: demo ? demoBoost : (snapBoost !== null ? snapBoost : telemetry.boost),
+                battery: demo ? 86 : telemetry.batteryPct,
+                demo,
+            };
+        }
+        function seedDemoHistory(now, v) {
+            // In demo/emulator mode only: seed 12 minutes of realistic warmup so the 3D band shows full depth immediately.
+            history = [];
+            demoSeeded = true;
+            const pts = 72, totalMs = 12 * 60 * 1000;
+            const curOil = typeof v.oil === 'number' ? v.oil : 94;
+            const curCool = typeof v.coolant === 'number' ? v.coolant : 90;
+            const curBoost = typeof v.boost === 'number' ? v.boost : 0.72;
+            const curBat = typeof v.battery === 'number' ? v.battery : 86;
+            const oilStart = Math.max(20, curOil - Math.min(34, Math.max(8, curOil - 20)));
+            const coolStart = Math.max(20, curCool - Math.min(28, Math.max(8, curCool - 20)));
+            for (let i = pts; i >= 1; i--) {
+                const frac = 1 - i / pts; // 0 oldest -> 1 near now
+                const ease = frac * frac * (3 - 2 * frac);
+                const wave = Math.sin(i * 0.42) * 0.7 * (1 - frac * 0.6);
+                const pull = 0.22 + 1.18 * Math.pow(0.5 + 0.5 * Math.sin(i * 0.24 + 0.6), 2.1);
+                const boostVal = pull * (1 - Math.pow(frac, 3) * 0.75) + curBoost * (Math.pow(frac, 3) * 0.75);
+                history.push({
+                    at: now - Math.round((i / pts) * totalMs),
+                    oil: oilStart + (curOil - oilStart) * ease + wave,
+                    coolant: coolStart + (curCool - coolStart) * ease + Math.cos(i * 0.35) * 0.5 * (1 - frac * 0.6),
+                    boost: Math.max(0.08, Math.min(1.85, boostVal)),
+                    battery: Math.max(70, Math.min(98, curBat - 4 * (1 - ease) + Math.sin(i * 0.2) * 0.4)),
+                });
+            }
+        }
+        function sampleHistory() {
+            const now = Date.now(), v = vitalsNow();
+            if (history.length && now - history[history.length - 1].at > 5 * 60 * 1000) { history = []; demoSeeded = false; }
+            if (!demoSeeded && v.demo && typeof v.oil === 'number') seedDemoHistory(now, v);
+            if (!v.demo && demoSeeded) { history = []; demoSeeded = false; }
+            if (typeof v.oil === 'number' || typeof v.coolant === 'number' || typeof v.boost === 'number' || typeof v.battery === 'number') {
+                history.push({ at: now, oil: v.oil, coolant: v.coolant, boost: v.boost, battery: v.battery });
+            }
+            while (history.length && now - history[0].at > HIST_MS) history.shift();
+        }
+        function historyOn(on) {
+            if (!on) { if (histTimer) { clearInterval(histTimer); histTimer = null; } return; }
+            if (histTimer) return;
+            sampleHistory();
+            histTimer = setInterval(sampleHistory, HIST_STEP);
+        }
+        /** Downsample points to at most maxN while preserving first and last samples. */
+        function thinSamples(arr, maxN) {
+            if (arr.length <= maxN) return arr;
+            const out = [arr[0]], step = (arr.length - 1) / (maxN - 1);
+            for (let i = 1; i < maxN - 1; i++) out.push(arr[Math.round(i * step)]);
+            out.push(arr[arr.length - 1]);
+            return out;
+        }
+        /** Theme-aware colour stops for the 3D band (Afterglow keeps M blues -> amber -> red). */
+        function bandStops(t, sig) {
+            if (t.style === 'afterglow' || !t.hotRamp) return sig.stops;
+            if (sig.low) return [[40, t.crit], [55, t.warn], [70, t.accent], [100, t.accent2 || t.text]];
+            const lo = sig.min, hi = sig.limit || sig.max;
+            return [[lo, t.ramp ? t.ramp[0] : t.accent], [lo + (hi - lo) * 0.5, t.accent], [lo + (hi - lo) * 0.72, t.accent2 || t.accent], [lo + (hi - lo) * 0.86, t.warn], [hi, t.crit]];
+        }
 
-            // Panel 1 (Left): Quick Topics & Custom Query Action (No header text)
-            G.panelExact(cv, t, 40, 52, 440, 458 + (cv.extra || 0), '');
+        function drawBand(cv, t, x, y, w, h) {
+            const sig = BAND_SIGNALS[bandSignal];
+            const small = Math.min(sz(cv, 12), 18);
+            const stops = bandStops(t, sig);
+            // which signal: a segmented control, right-aligned at the top
+            const segH = Math.min(sz(cv, 28), 42), segSz = Math.min(sz(cv, 12.5), 18);
+            const segW = Math.min(w, Math.min(480, Math.max(400, sz(cv, 300))));
+            S.segmented(cv, t, x + w - segW, y, segH, BAND_SIGNALS.map((s) => s.name), bandSignal, (i) => {
+                if (i !== bandSignal) { bandSignal = i; bandSwitchAt = Date.now(); }
+                render(true).catch(() => {});
+            }, 'band', segSz, segW);
 
-            // category tabs
-            const ex = cv.extra || 0;
-            // (sized for this display: sz)
-            const tabY = 62, tabH = sz(cv, 30), catSize = sz(cv, 10.5);
-            TOPIC_CATEGORIES.forEach((cat, cIdx) => {
-                const tabW = 96, tabX = 60 + cIdx * 101, isCurCat = activeCategory === cIdx;
-                cv.roundRect(tabX, tabY, tabW, tabH, 7, isCurCat ? '#004e8c' : t.track);
-                cv.strokeRoundRect(tabX, tabY, tabW, tabH, 7, 1, isCurCat ? '#00a3e0' : t.panelEdge);
-                cv.text(fitText(cv, cat.name, tabW - 8, catSize, { font: 'bold' }), tabX + tabW / 2, tabY + tabH / 2 + catSize * 0.36, catSize, isCurCat ? '#00f0ff' : '#94a3b8', { align: 'center', font: isCurCat ? 'bold' : 'normal' });
-                cv.target(tabX, tabY, tabW, tabH, () => {
-                    activeCategory = cIdx;
-                    selectedTopicIdx = 0;
-                    currentPrompt = cat.topics[0].title;
-                    render(true);
-                }, 'cat_' + cIdx, 6);
-            });
+            // the value now, large, right-aligned under it (scaled to h so it never crowds the band on 8.8" standard)
+            const v = vitalsNow(), nowVal = v[sig.key];
+            const vy = y + segH + 18 + small;
+            cv.text(sig.label + (v.demo && typeof nowVal === 'number' ? '  ·  demo' : ''), x + w, vy, small, t.dim, { align: 'right' });
+            const big = Math.min(sz(cv, 56), Math.max(46, Math.round(h * 0.175)));
+            const uSize = Math.min(sz(cv, 21), Math.round(big * 0.38));
+            const num = typeof nowVal === 'number' && isFinite(nowVal) ? (sig.dec ? fix(nowVal, sig.dec) : String(Math.round(nowVal))) : '--';
+            const unitW = cv.textWidth(sig.unit, uSize);
+            const numY = vy + 6 + big * 0.9;
+            cv.text(sig.unit, x + w, numY - 2, uSize, t.dim, { align: 'right' });
+            cv.text(num, x + w - unitW - 8, numY, big, t.text, { align: 'right', font: 'num' });
 
-            // the question box at the bottom, the topic chips filling the room above it (taller on bigger screens)
-            const inputH = sz(cv, 42), inputX = 60, inputW = 400, inputY = 52 + 458 + ex - 14 - inputH;
-            const chipTop = tabY + tabH + 10, step = Math.floor((inputY - 8 - chipTop) / topics.length), topicH = Math.min(sz(cv, 50), step - 6);
-            const topicSize = Math.min(sz(cv, 13), Math.round(topicH * 0.42));
-            topics.forEach((p, idx) => {
-                const py = chipTop + idx * step;
-                const isSelected = selectedTopicIdx === idx, isCur = currentPrompt === p.title;
-                cv.roundRect(60, py, 400, topicH, 9, isSelected ? withAlpha('#00a3e0', 0.22) : t.track);
-                cv.strokeRoundRect(60, py, 400, topicH, 9, isSelected ? 1.5 : 1, isSelected ? '#00a3e0' : t.panelEdge);
-                cv.circle(82, py + topicH / 2, 5, isCur ? '#00f0ff' : (isSelected ? '#00a3e0' : t.dim));
-                const topicOpt = { font: isSelected ? 'bold' : 'normal' };
-                cv.text(fitText(cv, p.title, 446 - 102, topicSize, topicOpt), 102, py + topicH / 2 + topicSize * 0.36, topicSize, isSelected ? '#ffffff' : '#cbd5e1', topicOpt);
-                cv.target(60, py, 400, topicH, () => {
-                    selectedTopicIdx = idx;
-                    showKeyboard = false;
-                    askCopilot(p.query, p.title, { fresh: true, faults: !!p.faults });
-                }, 'chip_' + idx, 8);
-            });
-
-            const locked = typingLocked();
-            if (locked) {
-                // driving: the box says so, dimmed, with the end of a question typed before (kept), and a tap only explains
-                const lSize = sz(cv, 12.5), lOpt = { font: 'bold' }, lHead = customQuery.trim() ? 'Locked while driving: ' : 'Typing locked while driving';
-                cv.roundRect(inputX, inputY, inputW, inputH, 10, '#0b111a');
-                cv.strokeRoundRect(inputX, inputY, inputW, inputH, 10, 1, '#1e2d42');
-                const lRoom = inputW - 36 - (customQuery.trim() ? cv.textWidth(lHead, lSize, lOpt) : 0);
-                cv.text(customQuery.trim() ? lHead + fitTail(cv, customQuery.trim(), lRoom, lSize, lOpt) : fitText(cv, lHead, inputW - 36, lSize, lOpt),
-                    inputX + 18, inputY + inputH / 2 + lSize * 0.36, lSize, '#64748b', lOpt);
-                cv.target(inputX, inputY, inputW, inputH, () => {
-                    notify(lockMsg());
-                    render(true);
-                }, 'btn_custom_input', 10);
-            } else {
-                cv.roundRect(inputX, inputY, inputW, inputH, 10, showKeyboard ? withAlpha('#00a3e0', 0.25) : '#0b111a');
-                cv.strokeRoundRect(inputX, inputY, inputW, inputH, 10, showKeyboard ? 1.5 : 1, showKeyboard ? '#00f0ff' : '#1e2d42');
-                const hasCustom = !!customQuery.trim();
-                const inSize = sz(cv, 13.5), inOpt = { font: (hasCustom || showKeyboard) ? 'bold' : 'normal' };
-                const inputLabel = hasCustom ? (fitTail(cv, customQuery, inputW - 44, inSize, inOpt) + (showKeyboard ? '_' : '')) : (showKeyboard ? 'Typing custom question..._' : 'Ask Custom Question...');
-                cv.text(inputLabel, inputX + 18, inputY + inputH / 2 + inSize * 0.36, inSize, hasCustom ? '#ffffff' : (showKeyboard ? '#00f0ff' : '#94a3b8'), inOpt);
-                cv.target(inputX, inputY, inputW, inputH, () => {
-                    showKeyboard = !showKeyboard;
-                    render(true);
-                }, 'btn_custom_input', 10);
+            // delta + peak summary line under the readout
+            const pts = history.filter((s) => typeof s[sig.key] === 'number' && isFinite(s[sig.key]));
+            const deltaY = numY + 12 + small;
+            if (pts.length >= 2) {
+                const first = pts[0], last = pts[pts.length - 1];
+                const curV = typeof nowVal === 'number' && isFinite(nowVal) ? nowVal : last[sig.key];
+                const rawDiff = curV - first[sig.key];
+                const dTxt = sig.dec ? fix(rawDiff, sig.dec) : String(Math.round(rawDiff));
+                const over = Math.max(1, Math.round((Date.now() - first.at) / 60000));
+                const zero = sig.dec ? Math.abs(rawDiff) < 0.05 : Math.round(rawDiff) === 0;
+                const peakVal = pts.reduce((m, p) => (sig.low ? Math.min(m, p[sig.key]) : Math.max(m, p[sig.key])), curV);
+                const peakTxt = (sig.low ? 'low ' : 'peak ') + (sig.dec ? fix(peakVal, sig.dec) : String(Math.round(peakVal))) + ' ' + sig.unit;
+                const diffStr = zero ? 'steady ' + over + ' min' : (rawDiff > 0 ? '+' : '') + dTxt + ' ' + sig.unit + ' in ' + over + ' min';
+                cv.text(peakTxt + '  ·  ' + diffStr, x + w, deltaY, small, t.dim, { align: 'right', literal: true });
+            } else if (typeof nowVal === 'number') {
+                cv.text('live reading · recording history', x + w, deltaY, small, t.dim, { align: 'right' });
             }
 
-            // Panel 2 (Right): Interactive Touch Keyboard OR Dialogue Stream
-            if (showKeyboard) {
-                drawKeyboard(cv, t, now);
+            const by = deltaY + 14, bh = Math.max(120, y + h - by);
+            if (typeof nowVal !== 'number' && pts.length < 2) {
+                cv.text('No ' + sig.name.toLowerCase() + ' value from the car yet',
+                    x + w * 0.56, by + bh * 0.55, Math.min(sz(cv, 13), 19), t.dim, { align: 'center' });
                 return;
             }
 
-            const dEx = 48 + (cv.extra || 0);   // the dialogue grows down to the page's bottom
-            G.panelExact(cv, t, 510, 52, 1050, 410 + dEx, 'Dialogue: ' + currentPrompt);
+            // Pick a clean multiple-of-3 minute span (3, 6, 9, 12, 15) so all 4 time marks are evenly spaced
+            const nowMs = Date.now();
+            const ageMin = pts.length ? (nowMs - pts[0].at) / 60000 : 0;
+            const mins = Math.min(15, Math.max(3, Math.ceil(ageMin / 3) * 3));
+            const span = mins * 60000;
+            const third = mins / 3;
 
-            // Live Engine Vitals in header
-            cv.text(vitalsLine(), 1530, 80, 13, t.dim, { align: 'right', font: 'num' });
+            // Build samples oldest-first; if just opened with 1 reading, draw a calm baseline from that reading immediately
+            let rawSamples;
+            if (pts.length >= 2) {
+                rawSamples = thinSamples(pts, 84).map((s) => ({ t: Math.max(0, Math.min(1, (nowMs - s.at) / span)), v: s[sig.key] }));
+                if (typeof nowVal === 'number') rawSamples.push({ t: 0, v: nowVal });
+            } else {
+                rawSamples = [{ t: 0.35, v: nowVal }, { t: 0, v: nowVal }];
+            }
 
-            // Response Box Card
-            const rx = 530, ry = 104, rw = 1010, rh = 340 + dEx;
-            cv.roundRect(rx, ry, rw, rh, 12, '#090e15');
-            cv.strokeRoundRect(rx, ry, rw, rh, 12, 1, t.panelEdge);
+            // Smooth vertical rise on signal switch (320 ms ease-out)
+            const sw = bandSwitchAt ? Math.max(0, 1 - (nowMs - bandSwitchAt) / BAND_SWITCH_MS) : 0;
+            const easeIn = 1 - sw * sw;
+            const animSamples = easeIn < 0.999
+                ? rawSamples.map((s) => ({ t: s.t, v: sig.min + (s.v - sig.min) * (0.25 + 0.75 * easeIn) }))
+                : rawSamples;
 
-            // Left decorative M stripe on response card
-            cv.fillRect(rx + 2, ry + 12, 4, rh - 24, '#00a3e0');
+            const liveCol = typeof nowVal === 'number' ? S.rampColour(stops, nowVal) : S.M2;
+            const pulse = 0.5 + 0.5 * Math.sin(nowMs / 650);
+            S.band(cv, t, {
+                x, y: by, w, h: bh, min: sig.min, max: sig.max, stops, bg: t.bg,
+                samples: animSamples,
+                poolColor: liveCol,
+                pulse,
+                ref: sig.ref, refText: sig.refText,
+                limit: sig.limit, limitText: (sig.low ? 'Low ' : 'Limit ') + sig.limit + ' ' + sig.unit,
+                marks: [[0, 'now'], [1 / 3, '-' + third + ' min'], [2 / 3, '-' + (2 * third) + ' min'], [1, '-' + mins + ' min']],
+            });
+        }
 
-            // follow-up chips along the bottom of the card after a real answer
-            const chips = canFollowUp && !isThinking, chipH = sz(cv, 32), chipY = ry + rh - chipH - 12, chipSize = sz(cv, 12.5);
-            // while it answers: Cancel, where the follow-ups go (touch or the controller's focus)
+        /* ---------- M-Copilot main screen: the answer on the left, a signal's last minutes in 3D on the right ---------- */
+        function drawMainCopilot(cv, t, now) {
+            const ex = cv.extra || 0, bottom = 510 + ex;
+            const gpu = !!cv.place;
+            const selC = S.sel(t), acc = S.acc(t), warn = S.warnC(t);
+
+            // a quiet pool of light behind the band: matches the live signal state (cool blue -> amber -> red)
+            if (gpu) {
+                const sig = BAND_SIGNALS[bandSignal], vNow = vitalsNow()[sig.key];
+                const hot = (telemetry.coolantTemp || 0) >= 110 || (telemetry.oilTemp || 0) >= 125;
+                const glowCol = hot ? warn : (typeof vNow === 'number' ? S.rampColour(bandStops(t, sig), vNow) : (t.style === 'afterglow' ? S.M2 : selC));
+                S.softEllipse(cv, 1180, bottom - 110, 620, 290, glowCol, hot ? 0.16 : 0.24);
+            }
+
+            const ax = 56, aw = 608;
+            // your own question: a plain box along the bottom (locked while driving)
+            const inputH = Math.min(sz(cv, 36), 52), inputY = bottom - inputH;
+            const locked = typingLocked(), hasCustom = !!customQuery.trim();
+            const inSize = Math.min(sz(cv, 13.5), 19), inOpt = { font: hasCustom ? 'bold' : 'normal' };
+            cv.strokeRoundRect(ax + 0.5, inputY + 0.5, aw - 1, inputH - 1, 3, 1, withAlpha('#ffffff', showKeyboard ? 0.32 : 0.16));
+            if (showKeyboard) cv.fillRect(ax + 1, inputY + inputH - 3, aw - 2, 2, selC);
+            let inText;
+            if (locked) {
+                const lHead = hasCustom ? 'Locked while driving: ' : 'Typing locked while driving';
+                inText = hasCustom ? lHead + fitTail(cv, customQuery.trim(), aw - 60 - cv.textWidth(lHead, inSize, inOpt), inSize, inOpt) : lHead;
+            } else {
+                inText = hasCustom ? fitTail(cv, customQuery, aw - 70, inSize, inOpt) + (showKeyboard ? '_' : '') : (showKeyboard ? 'Type your question..._' : 'Ask your own question');
+            }
+            // a keyboard glyph, then the text
+            const kx = ax + 20, kcy = inputY + inputH / 2, kc = withAlpha('#ffffff', 0.55);
+            cv.strokeRoundRect(kx, kcy - 8, 26, 16, 3, 1.4, kc);
+            [0, 1, 2, 3].forEach((i) => cv.fillRect(kx + 4 + i * 5, kcy - 4, 2, 2, kc));
+            cv.fillRect(kx + 7, kcy + 2, 12, 2, kc);
+            cv.text(fitText(cv, inText, aw - 78, inSize, inOpt), kx + 40, kcy + inSize * 0.36, inSize, locked ? '#5f606a' : hasCustom || showKeyboard ? t.text : t.dim, inOpt);
+            cv.target(ax, inputY, aw, inputH, () => {
+                if (locked) notify(lockMsg()); else showKeyboard = !showKeyboard;
+                render(true);
+            }, 'btn_custom_input', 3);
+
+            /* ----- the answer ----- */
+            const small = Math.min(sz(cv, 12), 18);
+            const topicName = /^Custom: /.test(currentPrompt) ? 'Your question' : currentPrompt;
+            // When a real answer starts with a short verdict line (<= 34 chars, no markdown bullet), promote it to the headline
+            let head = isThinking ? 'Reading your car' : topicName;
+            let bodyText = currentResponse;
+            if (!isThinking && canFollowUp && currentResponse) {
+                const firstNl = currentResponse.indexOf('\n');
+                const firstLine = (firstNl > 0 ? currentResponse.slice(0, firstNl) : currentResponse).replace(/[*#`]/g, '').trim();
+                const firstClause = firstLine.split(/[.!]\s/)[0].trim();
+                if (firstLine.length >= 4 && firstLine.length <= 34 && firstNl > 0 && !/^[-•\d]/.test(firstLine)) {
+                    head = firstLine.replace(/[:.]$/, '');
+                    bodyText = currentResponse.slice(firstNl + 1).trim() || currentResponse;
+                } else if (firstClause.length >= 4 && firstClause.length <= 30 && firstLine.length > firstClause.length + 2 && !/^[-•\d]/.test(firstClause)) {
+                    head = firstClause;
+                }
+            }
+            const meta = (head !== topicName && !isThinking ? topicName + '  ·  ' : '')
+                + providerName() + (ai.modelLabel() ? ' · ' + ai.modelLabel() : '')
+                + (isThinking ? '  ·  reading your car, ' + Math.floor((Date.now() - thinkStart) / 1000) + ' s' : '');
+            let lx = ax;
             if (isThinking) {
-                const w = cv.textWidth('CANCEL', chipSize, { font: 'bold' }) + sz(cv, 30), cx = rx + 24;
-                cv.roundRect(cx, chipY, w, chipH, 8, '#141f2e');
-                cv.strokeRoundRect(cx, chipY, w, chipH, 8, 1, '#94a3b8');
-                cv.text('CANCEL', cx + w / 2, chipY + chipH / 2 + chipSize * 0.36, chipSize, '#e2e8f0', { align: 'center', font: 'bold' });
-                cv.target(cx, chipY, w, chipH, cancelAnswer, 'cancel_answer', 8);
+                const pulse = 0.5 + 0.5 * Math.sin(now / 320);
+                if (gpu) S.softEllipse(cv, ax + 4, 82 - small * 0.36, 9 + pulse * 4, 9 + pulse * 4, acc, 0.55 + pulse * 0.35);
+                cv.circle(ax + 4, 82 - small * 0.36, 4, acc);
+                lx += 18;
             }
-            if (chips) {
-                let cx = rx + 24;
-                FOLLOW_UPS.forEach((f, i) => {
-                    const w = cv.textWidth(f.title, chipSize, { font: 'bold' }) + sz(cv, 30);
-                    cv.roundRect(cx, chipY, w, chipH, 8, withAlpha('#00a3e0', 0.15));
-                    cv.strokeRoundRect(cx, chipY, w, chipH, 8, 1, '#00a3e0');
-                    cv.text(f.title, cx + w / 2, chipY + chipH / 2 + chipSize * 0.36, chipSize, '#e2e8f0', { align: 'center', font: 'bold' });
-                    cv.target(cx, chipY, w, chipH, () => askCopilot(f.query, f.title, { fresh: false }), 'follow_' + i, 8);
-                    cx += w + 12;
-                });
-            }
+            cv.text(fitText(cv, meta, aw - 20, small), lx, 82, small, t.dim);
+            const hSize = Math.min(sz(cv, 36), 48);
+            cv.text(fitText(cv, head, aw, hSize, { font: 'bold' }), ax, 90 + hSize * 0.94, hSize, t.text, { font: 'bold' });
 
-            // Render Response text with wrap and scroll: bigger while the car is moving (a glance, not a read)
-            // (sized for this display: a line holds fewer characters as the text grows)
-            const big = telemetry.moving === true, size = big ? sz(cv, 17.5) : sz(cv, 13.5), lineH = Math.round(size * (big ? 1.6 : 1.62));
+            // from the bottom up: the input box, the action chips (Cancel / follow-ups), then the full answer text
+            const chips = canFollowUp && !isThinking, bar = chips || isThinking;
+            const btnH = Math.min(sz(cv, 28), 40), btnY = inputY - 12 - btnH;
+            const big = telemetry.moving === true, size = big ? Math.min(sz(cv, 18), 26) : Math.min(sz(cv, 15), 21), lineH = Math.round(size * 1.42);
             rowH = lineH;
-            const shown = isThinking ? currentResponse + '  ' + Math.floor((Date.now() - thinkStart) / 1000) + ' s' : currentResponse;
-            // (about 0.42 em a character in the label font: the card's width, a little to spare)
-            const lines = wrapLines(shown, Math.floor((rw - 64) / (size * 0.42)));
-            const bar = chips || isThinking;        // a row of buttons under the text
-            const maxVisibleLines = Math.floor((rh - 24 - (bar ? chipH + 18 : 0)) / lineH);
+            const top = 90 + hSize + 16;
+            const lines = wrapLines(cv, bodyText, aw - 8, size);
+            const textBottom = (bar ? btnY : inputY) - 12;
+            const maxVisibleLines = Math.max(1, Math.floor((textBottom - top) / lineH));
             dialogueRows = { count: lines.length, visible: maxVisibleLines };
             cv.scroll = true;
             const maxScroll = Math.max(0, lines.length - maxVisibleLines);
             if (dialogueScroll > maxScroll) dialogueScroll = maxScroll;
-
-            const visible = lines.slice(dialogueScroll, dialogueScroll + maxVisibleLines);
-            visible.forEach((line, idx) => {
-                const ly = ry + 12 + Math.round(lineH * 0.8) + idx * lineH;
-                let col = '#e2e8f0';
-                let isBold = false;
-
-                if (line.startsWith('[OK]') || line.startsWith('✓') || line.includes('PASS') || line.includes('OPTIMAL')) col = '#2af575';
-                else if (line.startsWith('[!]') || line.includes('CAUTION') || line.includes('FAIL') || line.includes('Warning')) col = '#ffb703';
-                else if ((line.startsWith('[') && line.endsWith(']')) || (line.startsWith('- ') && line.includes(':'))) {
-                    isBold = true;
-                    col = '#ffffff';
-                } else if (/^\d+\./.test(line)) col = '#ffffff';
-
-                cv.text(line, rx + 24, ly, size, col, { font: isBold ? 'bold' : 'normal' });
+            lines.slice(dialogueScroll, dialogueScroll + maxVisibleLines).forEach((line, idx) => {
+                const ly = top + Math.round(lineH * 0.75) + idx * lineH;
+                let col = t.text || '#e6e6ea', isBold = false;
+                if (/^(\[OK\]|✓|OK:|PASS:|OPTIMAL:)/.test(line)) col = S.OK;
+                else if (/^(\[!\]|WARNING:|CAUTION:|ALERT:|FAIL:)/i.test(line)) col = warn;
+                else if ((line.startsWith('[') && line.endsWith(']')) || (line.startsWith('- ') && line.includes(':'))) { isBold = true; col = t.text; }
+                else if (/^\d+\./.test(line)) col = t.text;
+                cv.text(line, ax, ly, size, col, { font: isBold ? 'bold' : 'normal', literal: true });
             });
-
-            // Scrollbar & Page indicator when content exceeds card
             if (lines.length > maxVisibleLines) {
-                const sbX = rx + rw - 14, sbY = ry + 20, sbH = (bar ? chipY - ry - 6 : rh) - 40;
-                cv.roundRect(sbX, sbY, 4, sbH, 2, withAlpha(t.panelEdge, 0.4));
+                const sbX = ax + aw + 14, sbH = textBottom - top - 6;
+                if (dialogueScroll > 0) S.shadeY(cv, ax, top, aw, 18, t.bg, 0.78, 0);
+                if (dialogueScroll < maxScroll) {
+                    S.shadeY(cv, ax, textBottom - 26, aw, 26, t.bg, 0, 0.92);
+                    const moreSz = Math.min(sz(cv, 11), 15);
+                    cv.text('↓ ' + (maxScroll - dialogueScroll) + ' more', ax + aw, textBottom - 4, moreSz, selC, { align: 'right', literal: true });
+                }
+                cv.fillRect(sbX, top, 2, sbH, withAlpha('#ffffff', 0.1));
                 const thumbH = Math.max(24, Math.floor((maxVisibleLines / lines.length) * sbH));
-                const thumbY = sbY + Math.floor((dialogueScroll / maxScroll) * (sbH - thumbH));
-                cv.roundRect(sbX, thumbY, 4, thumbH, 2, '#00a3e0');
-
-                // Page badge
-                const curPage = Math.floor(dialogueScroll / maxVisibleLines) + 1;
-                const totPages = Math.ceil(lines.length / maxVisibleLines);
-                const textH = bar ? chipY - ry - 6 : rh;
-                cv.text(`PAGE ${curPage}/${totPages}`, rx + rw - 24, ry + textH - 12, 12, t.dim, { align: 'right', font: 'num' });
-
-                // Touch targets to scroll
-                cv.target(rx, ry, rw, textH / 2, () => {
-                    dialogueScroll = Math.max(0, dialogueScroll - 4);
-                    render(true);
-                }, 'card_scroll_up', 4);
-
-                cv.target(rx, ry + textH / 2, rw, textH / 2, () => {
-                    dialogueScroll = Math.min(maxScroll, dialogueScroll + 4);
-                    render(true);
-                }, 'card_scroll_down', 4);
+                cv.fillRect(sbX, top + Math.floor((dialogueScroll / maxScroll) * (sbH - thumbH)), 2, thumbH, selC);
+                const textH = textBottom - top;
+                cv.target(ax, top, aw, textH / 2, () => { dialogueScroll = Math.max(0, dialogueScroll - 4); render(true); }, 'card_scroll_up', 3);
+                cv.target(ax, top + textH / 2, aw, textH / 2, () => { dialogueScroll = Math.min(maxScroll, dialogueScroll + 4); render(true); }, 'card_scroll_down', 3);
             }
+            // Cancel while it answers; the follow-ups after a real answer (adaptive sizing so all 3 fit even at 8.8")
+            let bSize = Math.min(sz(cv, 12), 17), bPad = 24;
+            if (chips) {
+                while (bSize > 13 && FOLLOW_UPS.reduce((sum, f) => sum + cv.textWidth(f.title, bSize) + bPad, 0) + (FOLLOW_UPS.length - 1) * 8 > aw) {
+                    bSize -= 1; bPad = Math.max(16, bPad - 2);
+                }
+            }
+            const btn = (label, bx, run, key) => {
+                const w = Math.round(cv.textWidth(label, bSize) + bPad);
+                cv.strokeRoundRect(bx + 0.5, btnY + 0.5, w - 1, btnH - 1, 3, 1, withAlpha('#ffffff', 0.24));
+                cv.text(label, bx + w / 2, btnY + btnH / 2 + bSize * 0.36, bSize, t.text, { align: 'center' });
+                cv.target(bx, btnY, w, btnH, run, key, 3);
+                return w;
+            };
+            if (isThinking) btn('Cancel', ax, cancelAnswer, 'cancel_answer');
+            if (chips) {
+                let bx = ax;
+                FOLLOW_UPS.forEach((f, i) => {
+                    if (bx + cv.textWidth(f.title, bSize) + bPad > ax + aw) return;
+                    bx += btn(f.title, bx, () => askCopilot(f.query, f.title, { fresh: false }), 'follow_' + i) + 8;
+                });
+            }
+
+            /* ----- the 3D band, or the keyboard while the question box is open ----- */
+            if (showKeyboard) drawKeyboard(cv, t, now);
+            else drawBand(cv, t, 700, 58, 860, bottom - 58);
+        }
+
+        /* ---------- Topics: the four categories, six topics each; a topic asks at once and shows the answer ---------- */
+        function drawTopics(cv, t) {
+            const ex = cv.extra || 0, bottom = 510 + ex;
+            const x = 56, w = 1488, acc = S.acc(t);
+            const segH = Math.min(sz(cv, 30), 44);
+            S.segmented(cv, t, x, 60, segH, TOPIC_CATEGORIES.map((c) => c.name.charAt(0) + c.name.slice(1).toLowerCase()), activeCategory, (cIdx) => {
+                activeCategory = cIdx;
+                selectedTopicIdx = 0;
+                render(true);
+            }, 'cat', Math.min(sz(cv, 13), 19), Math.min(w, sz(cv, 520)));
+            const cat = TOPIC_CATEGORIES[activeCategory] || TOPIC_CATEGORIES[0];
+            cv.text(cat.label, x + w, 60 + segH / 2 + sz(cv, 12) * 0.36, Math.min(sz(cv, 12), 18), t.dim, { align: 'right' });
+            // two columns of three: elevated dark cards with crisp 1-line descriptions and optional ECU badge
+            const top = 60 + segH + 18, colW = (w - 28) / 2, rowH = Math.floor((bottom - top) / 3);
+            const tSize = Math.min(sz(cv, 17), 24), dSize = Math.min(sz(cv, 12), 17);
+            cat.topics.forEach((p, idx) => {
+                const col = idx % 2, row = Math.floor(idx / 2);
+                const tx = x + col * (colW + 28), ty = top + row * rowH, th = rowH - 12;
+                const isSelected = selectedTopicIdx === idx, isCur = currentPrompt === p.title;
+                cv.roundRect(tx, ty, colW, th, 4, '#101218');
+                cv.strokeRoundRect(tx + 0.5, ty + 0.5, colW - 1, th - 1, 4, 1, withAlpha('#ffffff', isSelected ? 0.16 : 0.07));
+                if (isSelected) S.lit(cv, t, tx + 1, ty + 1, colW - 2, th - 2, 0.9);
+                if (isCur) S.mark(cv, tx + 10, ty + Math.round(th * 0.25), Math.round(th * 0.48), acc);
+                const padL = isCur ? 42 : 22;
+                const badgeTxt = p.faults ? 'ECU SCAN' : '';
+                const badgeW = badgeTxt ? Math.round(cv.textWidth(badgeTxt, 12, { font: 'bold' }) + 18) : 0;
+                const tY = ty + Math.round(th * 0.42);
+                cv.text(fitText(cv, p.title, colW - padL - badgeW - 24, tSize, { font: 'bold' }), tx + padL, tY, tSize, t.text, { font: 'bold' });
+                if (badgeTxt) {
+                    const bx = tx + colW - 18 - badgeW, by2 = tY - 17;
+                    cv.roundRect(bx, by2, badgeW, 22, 3, withAlpha(S.warnC(t), 0.14));
+                    cv.strokeRoundRect(bx + 0.5, by2 + 0.5, badgeW - 1, 21, 3, 1, withAlpha(S.warnC(t), 0.42));
+                    cv.text(badgeTxt, bx + badgeW / 2, by2 + 15, 12, S.warnC(t), { align: 'center', font: 'bold', literal: true });
+                }
+                const desc = p.desc || p.query;
+                cv.text(fitText(cv, desc, colW - padL - 20, dSize), tx + padL, tY + dSize + 14, dSize, t.dim);
+                cv.target(tx, ty, colW, th, () => {
+                    selectedTopicIdx = idx;
+                    showKeyboard = false;
+                    page = 0;
+                    engineLive(false);
+                    askCopilot(p.query, p.title, { fresh: true, faults: !!p.faults });
+                    render(true);
+                }, 'topic_' + idx, 4);
+            });
         }
 
         /* ---------- Data check: what this car gives, source by source ---------- */
@@ -1337,36 +1477,139 @@ mgu.run({
             });
             return { car: carRows, live, engine };
         }
+        let dataCheckTab = 0;
         function drawDataCheck(cv, t) {
-            const ex = cv.extra || 0;
-            G.panelExact(cv, t, 40, 52, 1520, 458 + ex, '');
-            const COL = { green: '#2af575', amber: '#ffb703', red: '#ef4444', grey: t.dim };
-            const step = 22 + Math.min(10, Math.floor(ex / 16)), top = 100;
-            const row = (x, w, i, label, st) => {
-                const y = top + i * step;
-                cv.circle(x + 6, y - 4, 4, COL[st.c] || t.dim);
-                cv.text(label, x + 18, y, 13, t.dim);
-                const v = st.v.length > 34 ? st.v.slice(0, 33) + '…' : st.v;
-                cv.text(v, x + w, y, 13, st.c === 'grey' ? t.dim : '#e2e8f0', { align: 'right' });
-            };
-            const head = (x, label) => cv.text(label, x, top - 26, 14, '#00a3e0', { font: 'bold', spacing: 1 });
+            const ex = cv.extra || 0, bottom = 510 + ex, gpu = !!cv.place;
+            const COL = { green: S.OK, amber: S.warnC(t), red: S.critC(t), grey: '#55565e' };
+            const selC = S.sel(t);
             const D = dataCheckData();
-            const x1 = 60, w1 = 460, x2 = 560, w2 = 460, x3 = 1060, w3 = 470;
-            head(x1, 'CAR & LINKS');
-            D.car.forEach((r, i) => row(x1, w1, i, r[0], r[1]));
-            head(x2, 'LIVE SIGNALS');
-            D.live.forEach((r, i) => row(x2, w2, i, r[0], r[1]));
-            head(x3, liveOn() && diag && diag.available ? 'ENGINE COMPUTER · LIVE' : 'ENGINE COMPUTER');
-            D.engine.forEach((r, i) => row(x3, w3, i, r[0], r[1]));
+            const isLive = !!(liveOn() && diag && diag.available);
+            const cats = [
+                { title: 'Car & links', panelTitle: 'Car & links', sub: 'VIN, ECUs, faults, AI, internet', list: D.car },
+                { title: 'Live signals', panelTitle: 'Live signals', sub: 'Speed, RPM, temps, tyres, fuel', list: D.live },
+                { title: 'Engine computer', panelTitle: isLive ? 'Engine computer · live' : 'Engine computer', sub: 'Boost, load, timing, fuel, misfires', list: D.engine },
+            ];
+            if (dataCheckTab < 0 || dataCheckTab >= cats.length) dataCheckTab = 0;
 
-            // buttons: read now (the same safety rules: steady car, never while asleep)
-            const by = top + 15 * step + 6, bw = 225, bh = Math.min(52, sz(cv, 32));
-            [['engine', 'READ ENGINE NOW', x3], ['faults', 'READ FAULTS NOW', x3 + bw + 20]].forEach(([what, label, bx]) => {
-                const busy = checking === what;
-                cv.roundRect(bx, by, bw, bh, 8, busy ? withAlpha('#00a3e0', 0.35) : '#004e8c');
-                cv.strokeRoundRect(bx, by, bw, bh, 8, 1.5, '#00a3e0');
-                cv.text(busy ? 'READING...' : label, bx + bw / 2, by + bh / 2 + sz(cv, 4), sz(cv, 12), '#ffffff', { align: 'center', font: 'bold' });
-                cv.target(bx, by, bw, bh, () => checkNow(what), 'dc_' + what, 8);
+            const tally = (list) => {
+                const n = { green: 0, amber: 0, red: 0, grey: 0, total: list.length };
+                list.forEach(([, st]) => { n[st.c] = (n[st.c] || 0) + 1; });
+                return n;
+            };
+            const all = D.car.concat(D.live, D.engine);
+            const tot = tally(all);
+            const activeTotal = Math.max(1, tot.total - tot.grey);
+            const pct = Math.round((tot.green / activeTotal) * 100);
+
+            /** Horizontal segmented status bar (green -> amber -> red -> grey) across w px. */
+            const statusBar = (x, y, w, h, counts) => {
+                cv.fillRect(x, y, w, h, withAlpha('#ffffff', 0.08));
+                let cx = x;
+                ['green', 'amber', 'red', 'grey'].forEach((k) => {
+                    const cnt = counts[k] || 0;
+                    if (!cnt || !counts.total) return;
+                    const seg = Math.max(2, Math.round((cnt / counts.total) * w));
+                    const drawW = Math.min(seg, x + w - cx);
+                    if (drawW > 0) {
+                        cv.fillRect(cx, y, drawW, h, k === 'grey' ? withAlpha('#ffffff', 0.16) : COL[k]);
+                        cx += drawW + 2;
+                    }
+                });
+            };
+
+            // ----- Left Zone: Readiness summary + 3 category selectors + action buttons -----
+            const lx = 56, lw = 436;
+            const glowCol = tot.red > 0 && tot.green === 0 ? COL.red : tot.green >= activeTotal * 0.7 ? S.OK : selC;
+            if (gpu) S.softEllipse(cv, lx + lw * 0.45, 128, 300, 140, glowCol, 0.15);
+
+            const labSz = Math.min(sz(cv, 11.5), 16);
+            if (isLive) {
+                S.led(cv, lx + 4, 70 - labSz * 0.35, S.OK, gpu);
+                cv.text('Telemetry coverage · live', lx + 18, 70, labSz, t.dim);
+            } else {
+                cv.text('Telemetry coverage', lx, 70, labSz, t.dim);
+            }
+
+            const bigSz = Math.min(sz(cv, 44), 56), subSz = Math.min(sz(cv, 18), 24);
+            const numY = 76 + bigSz * 0.96;
+            const gw0 = cv.text(String(tot.green), lx, numY, bigSz, t.text, { font: 'num', literal: true });
+            cv.text(' / ' + tot.total, lx + gw0 + 4, numY - 2, subSz, t.dim, { font: 'num', literal: true });
+            cv.text(pct + '% ready', lx + lw, numY - 2, Math.min(sz(cv, 13), 18), tot.green > 0 ? S.OK : t.dim, { align: 'right', literal: true });
+
+            statusBar(lx, numY + 16, lw, 4, tot);
+
+            // Action buttons anchored at bottom-left
+            const bh = Math.min(sz(cv, 28), 40), btnY = bottom - bh;
+            const bSize = Math.min(sz(cv, 11.5), 16), bGap = 10;
+            const w1 = Math.round(lw * 0.43), w2 = lw - w1 - bGap;
+            const b1Busy = checking === 'engine', b2Busy = checking === 'faults';
+            S.button(cv, t, lx, btnY, b1Busy ? 'Reading...' : 'Read engine', () => checkNow('engine'),
+                { w: w1, h: bh, size: bSize, key: 'dc_engine', busy: !!checking && !b1Busy, primary: b1Busy });
+            S.button(cv, t, lx + w1 + bGap, btnY, b2Busy ? 'Reading...' : 'Read fault memory', () => checkNow('faults'),
+                { w: w2, h: bh, size: bSize, key: 'dc_faults', busy: !!checking && !b2Busy, primary: b2Busy });
+
+            // 3 category selector cards between summary bar and action buttons
+            const catTop = numY + 36, catAvail = btnY - 16 - catTop, catGap = 10;
+            const catH = Math.min(82, Math.max(60, Math.floor((catAvail - catGap * 2) / 3)));
+            const ctSz = Math.min(sz(cv, 14), 20), csSz = Math.min(sz(cv, 11), 15), cnSz = Math.min(sz(cv, 12.5), 17);
+            cats.forEach((cat, idx) => {
+                const ry = catTop + idx * (catH + catGap), on = idx === dataCheckTab;
+                const c = tally(cat.list);
+                S.hairline(cv, lx, ry, lw, 0.1);
+                if (on) {
+                    S.lit(cv, t, lx, ry + 1, lw, catH - 1, 1.0);
+                    S.mark(cv, lx + 8, ry + 16, catH - 36, selC);
+                }
+                const tx = lx + (on ? 32 : 14);
+                const cntTxt = c.green + ' / ' + c.total;
+                const cntCol = c.green === c.total ? S.OK : c.red > 0 && c.green === 0 ? COL.red : on ? t.text : t.dim;
+                cv.text(cntTxt, lx + lw - 12, ry + Math.round(catH * 0.42), cnSz, cntCol, { align: 'right', font: 'num', literal: true });
+                cv.text(cat.title, tx, ry + Math.round(catH * 0.42), ctSz, on ? t.text : '#c8cad0', { font: 'bold' });
+                cv.text(fitText(cv, cat.sub, lw - (tx - lx) - 16, csSz), tx, ry + Math.round(catH * 0.72), csSz, t.dim);
+                statusBar(tx, ry + catH - 11, lw - (tx - lx) - 12, 3, c);
+                cv.target(lx, ry, lw, catH, () => { dataCheckTab = idx; render(true); }, 'dc_cat_' + idx, 3);
+            });
+
+            // ----- Right Zone: Selected category in 2 airy, readable columns -----
+            const rx = 540, rw = 1016;
+            const selCat = cats[dataCheckTab];
+            const sc = tally(selCat.list);
+            G.panelExact(cv, t, rx, 44, rw, bottom - 44, selCat.panelTitle);
+
+            // Inline status counts right-aligned in the header strip (replaces old bottom legend)
+            const pills = [['green', sc.green + ' ready'], ['amber', sc.amber + ' waiting'], ['red', sc.red + ' failed'], ['grey', sc.grey + ' n/a']]
+                .filter((p) => sc[p[0]] > 0);
+            const ps = Math.min(sz(cv, 11), 16);
+            let px = rx + rw;
+            for (let i = pills.length - 1; i >= 0; i--) {
+                const [k, txt] = pills[i];
+                const tw = cv.textWidth(txt, ps, { literal: true });
+                cv.text(txt, px, 76, ps, k === 'grey' ? t.dim : '#c8cad0', { align: 'right', literal: true });
+                cv.circle(px - tw - 10, 76 - ps * 0.34, 3.5, COL[k]);
+                px -= tw + 34;
+            }
+
+            // 2 balanced sub-columns (8-9 rows each -> generous row height and legible 18 px text)
+            const list = selCat.list;
+            const split = Math.ceil(list.length / 2);
+            const colGap = 40, colW = Math.floor((rw - colGap) / 2);
+            const top = 104, availH = bottom - top;
+            const step = Math.min(48, Math.max(32, Math.floor(availH / Math.max(1, split))));
+            const rs = Math.min(sz(cv, 12.5), Math.min(18, Math.round(step * 0.44)));
+            [list.slice(0, split), list.slice(split)].forEach((part, ci) => {
+                const cx = rx + ci * (colW + colGap);
+                part.forEach(([label, st], i) => {
+                    const y = top + i * step, cy = y + step / 2;
+                    S.hairline(cv, cx, y, colW, 0.08);
+                    const live = st.c === 'green';
+                    if (gpu && (live || st.c === 'red')) S.led(cv, cx + 6, cy, COL[st.c], true);
+                    else cv.circle(cx + 6, cy, 3.5, COL[st.c] || t.dim);
+                    cv.text(fitText(cv, label, colW * 0.48, rs), cx + 22, cy + rs * 0.35, rs, live ? '#d4d6dc' : t.dim);
+                    const valCol = live ? t.text : st.c === 'red' ? COL.red : t.dim;
+                    cv.text(fitText(cv, st.v, colW * 0.48, rs, { literal: true }), cx + colW, cy + rs * 0.35, rs, valCol,
+                        { align: 'right', font: live ? 'bold' : 'normal', literal: true });
+                });
+                if (part.length) S.hairline(cv, cx, top + part.length * step, colW, 0.08);
             });
         }
         async function checkNow(what) {
@@ -1401,11 +1644,12 @@ mgu.run({
 
         /* ---------- Adaptive Pacing Render Loop ---------- */
         let lastSig = '';
-        let page = ai.isConfigured() ? 0 : 2;   // 0 the co-driver, 1 Data check, 2 Connect (first, until paired)
+        let page = ai.isConfigured() ? 0 : 3;   // 0 the answer, 1 Topics, 2 Data check, 3 Connect (first, until paired)
         let showPhoneQr = false;            // Connect: the phone page's QR in place of the settings list
         async function render(force = false) {
             const now = Date.now();
-            if (!force && now - lastRenderTime < 250) return;
+            const animating = (bandSwitchAt && now - bandSwitchAt < BAND_SWITCH_MS + 60) || isThinking;
+            if (!force && !animating && now - lastRenderTime < 250) return;
             // the car started moving with the keyboard open, typing or not: it closes at the next frame (within
             // 250 ms of the speed crossing 8 km/h) and what was typed is kept for when the car stands
             if (showKeyboard && typingLocked()) {
@@ -1416,8 +1660,8 @@ mgu.run({
             // what the frame shows: unchanged, the frame isn't drawn again (a safety redraw every 2 s)
             const sig = [ai.hasInternet, ai.isConfigured(), showPhoneQr, showKeyboard, customQuery, activeCategory, selectedTopicIdx, currentPrompt, currentResponse,
                 dialogueScroll, canFollowUp, isThinking, telemetry.moving, vitalsLine(), statusMsg && now - statusTime < 3500 ? statusMsg : '', ai.modelLabel(), providerName(),
-                cv.extra || 0, page === 2 ? cloudPair.getPairingUrl() + JSON.stringify(vehicle.profile || {}) + (ai.config.model || '') : '', page, page === 1 ? Math.floor(now / 1000) + (checking || '') : ''].join('|');
-            if (!force && sig === lastSig && now - lastRenderTime < 2000) return;
+                cv.extra || 0, bandSignal, history.length, page === 3 ? cloudPair.getPairingUrl() + JSON.stringify(vehicle.profile || {}) + (ai.config.model || '') : '', page, page === 2 ? dataCheckTab + ':' + Math.floor(now / 1000) + (checking || '') : ''].join('|');
+            if (!force && !animating && sig === lastSig && now - lastRenderTime < 2000) return;
             lastSig = sig;
             lastRenderTime = now;
 
@@ -1426,8 +1670,10 @@ mgu.run({
 
             // Mandatory Online & Config Checks (the Data check page works without internet or pairing)
             if (page === 1) {
-                drawDataCheck(cv, t);
+                drawTopics(cv, t);
             } else if (page === 2) {
+                drawDataCheck(cv, t);
+            } else if (page === 3) {
                 drawConnect(cv, t);
             } else if (!ai.hasInternet) {
                 drawNoInternet(cv, t);
@@ -1443,8 +1689,10 @@ mgu.run({
             // Global Notification banner
             if (statusMsg && (now - statusTime < 3500)) {
                 const sy = H + (cv.extra || 0);
-                cv.roundRect(W / 2 - 320, sy - 56, 640, 42, 10, '#00a3e0');
-                cv.text(statusMsg, W / 2, sy - 29, 18, '#ffffff', { align: 'center', font: 'bold' });
+                cv.roundRect(W / 2 - 320, sy - 56, 640, 42, 3, '#17181d');
+                cv.strokeRoundRect(W / 2 - 319.5, sy - 55.5, 639, 41, 3, 1, withAlpha('#ffffff', 0.16));
+                S.mark(cv, W / 2 - 302, sy - 46, 22, S.acc(t));
+                cv.text(statusMsg, W / 2, sy - 29, 18, t.text, { align: 'center' });
             }
 
             await ui.image('MAIN_GFX', cv);
@@ -1471,15 +1719,15 @@ mgu.run({
         if (ctx.hideButton) { ctx.hideButton('BTN_PROMPT'); ctx.hideButton('BTN_REPAIR'); }
 
         ui.onClick('BTN_REPAIR', () => {
-            page = 2;
+            page = 3;
             showKeyboard = false;
             return render(true);
         });
 
         ctx.onTab((i) => {
-            page = i === 1 || i === 2 ? i : 0;
+            page = i >= 1 && i <= 3 ? i : 0;
             showKeyboard = false;
-            engineLive(page === 1);
+            engineLive(page === 2);
             return render(true);
         });
 
@@ -1493,17 +1741,19 @@ mgu.run({
             startCar();
             loadSampling(true);
             cloudPair.startPolling();
+            historyOn(true);
             // a fresh hello on the channel (the relay keeps it 12 h) shows the car's settings on a
             // phone page opened while the car is off; at most every 6 hours
             if (ai.isConfigured() && Date.now() - lastHello > 6 * 3600 * 1000) hello();
             ai.checkInternetConnection().catch(() => {});
-            engineLive(page === 1);
+            engineLive(page === 2);
             render(true).catch(() => {});
         }
         function background() {
             engineLive(false);
             stopCar();
             loadSampling(false);
+            historyOn(false);
             cloudPair.stopPolling();
             if (thinkTimer) { clearInterval(thinkTimer); thinkTimer = null; }   // an answer still lands
         }
@@ -1523,7 +1773,7 @@ mgu.run({
         process.on('SIGTERM', exitNow);
         process.on('SIGINT', exitNow);
 
-        ctx.loop('MAIN', 4, render, { maxFps: 10 });
+        ctx.loop('MAIN', 4, render, { maxFps: () => ((bandSwitchAt && Date.now() - bandSwitchAt < BAND_SWITCH_MS + 60) ? 30 : 10) });
         render(true).then(() => log.info('M-Copilot ready')).catch((e) => log.warn('M-Copilot render error: ' + e));
     }
 });

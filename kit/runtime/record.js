@@ -210,6 +210,18 @@ class Recorder {
         }
         this.n = i; return this;
     }
+    /**
+     * Triangles with a colour per corner (the GPU blends between them): v = [x, y, colour, x, y, colour, ...],
+     * three corners a triangle. Soft edges, shading and fades are made of these.
+     */
+    mesh(v) {
+        const k = Math.floor(v.length / 9);
+        if (!k) return this;
+        this._grow(2 + k * 9); const f = this.f, u = this.u; let i = this.n;
+        u[i++] = OP.TRIS; u[i++] = k;
+        for (let s = 0; s < k * 9; s += 3) { f[i++] = v[s]; f[i++] = v[s + 1]; u[i++] = pack(v[s + 2]); }
+        this.n = i; return this;
+    }
     /** Global opacity (0..1) for what follows; 1 to end. */
     alpha(a) { this._grow(2); this.u[this.n++] = OP.ALPHA; this.f[this.n++] = a; return this; }
     /**
@@ -344,7 +356,18 @@ function play(words, real) {
             const k = u[i++];
             for (let t = 0; t < k; t++) {
                 const b = i + t * 9;
-                cv.triangle([[f[b], f[b + 1]], [f[b + 3], f[b + 4]], [f[b + 6], f[b + 7]]], col(u[b + 2]));
+                // (software: one colour a triangle, the mean of its corners)
+                const c0 = unpack(u[b + 2]), c1 = unpack(u[b + 5]), c2 = unpack(u[b + 8]);
+                let a = Math.round((c0[3] + c1[3] + c2[3]) / 3);
+                if (alpha < 1) a = Math.round(a * alpha);
+                if (a > 0) {
+                    cv.triangle([[f[b], f[b + 1]], [f[b + 3], f[b + 4]], [f[b + 6], f[b + 7]]], [
+                        Math.round((c0[0] + c1[0] + c2[0]) / 3),
+                        Math.round((c0[1] + c1[1] + c2[1]) / 3),
+                        Math.round((c0[2] + c1[2] + c2[2]) / 3),
+                        a,
+                    ]);
+                }
             }
             i += k * 9; break;
         }

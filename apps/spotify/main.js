@@ -14,9 +14,10 @@
 const mgu = require('./kit/mgu');
 const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
-const { SpotifyClient } = require('./api');
+const { SpotifyClient, DEMO_PLAYLISTS } = require('./api');
 const { CloudPairManager } = require('./cloud_pair');
-const { AlbumArtManager, ART_IMG_ID } = require('./art');
+const { AlbumArtManager, ART_IMG_ID, ART_GROUND_ID, ART_QUEUE_ID } = require('./art');
+const S = require('./kit/scene');
 const qrcodegen = require('./kit/qrcodegen');
 
 const W = 1600, H = 520;
@@ -29,17 +30,14 @@ const PAGES = ['Playlists', 'Liked Songs', 'Now Playing', 'Connect'];
  */
 const kOf = (cv) => (cv.ui && cv.ui.k) || 1.44;
 const sz = (cv, n) => Math.round(n * kOf(cv));
-/** List metrics: song rows (step: one row to the next; h: drawn), playlist rows, the dock at the bottom. */
+/** List & dock vertical metrics (adapts to panel scale k and full-screen extra height). */
 function metrics(cv) {
     const ex = cv.extra || 0, dockH = sz(cv, 56);
     const dockY = 512 + ex - dockH;
-    const songStep = sz(cv, 44), plStep = sz(cv, 52);
     return {
         dockH, dockY,
         panelH: dockY - 6 - 44,                 // the panels over the dock
-        songStep, songH: songStep - 6, plStep, plH: plStep - 8,
         listTop: 98, listBottom: dockY - 14,     // where rows go inside a panel over the dock
-        title: sz(cv, 16), meta: sz(cv, 13.5), num: sz(cv, 12.5),
     };
 }
 
@@ -52,27 +50,24 @@ function fmtTime(ms) {
     return m + ':' + (rem < 10 ? '0' : '') + rem;
 }
 
-// Sleek iDrive vertical scrollbar
+// Format total playlist runtime (e.g. "27 min" or "1 hr 14 min")
+function fmtTotalRuntime(tracks) {
+    if (!Array.isArray(tracks) || !tracks.length) return '';
+    let totalMs = 0;
+    for (let i = 0; i < tracks.length; i++) totalMs += (tracks[i] && tracks[i].durationMs) || 0;
+    if (totalMs <= 0) return '';
+    const mins = Math.max(1, Math.round(totalMs / 60000));
+    if (mins < 60) return mins + ' min';
+    const hrs = Math.floor(mins / 60), rem = mins % 60;
+    return rem ? hrs + ' hr ' + rem + ' min' : hrs + ' hr';
+}
+
+/** A thin scrollbar (kit scene.js): a tap on its upper or lower half scrolls up or down. */
 function drawScrollbar(cv, t, x, y, h, total, visibleCount, scrollOffset, onScrollUp, onScrollDown) {
     if (total <= visibleCount) return;
-    const barW = 5;
-    // Track background
-    cv.roundRect(x, y, barW, h, 2.5, withAlpha(t.panelEdge, 0.4));
-    // Thumb calculation
-    const maxScroll = Math.max(1, total - visibleCount);
-    const thumbH = Math.max(30, Math.round((visibleCount / total) * h));
-    const travel = h - thumbH;
-    const thumbY = y + Math.round((Math.min(scrollOffset, maxScroll) / maxScroll) * travel);
-    // Thumb fill
-    cv.roundRect(x, thumbY, barW, thumbH, 2.5, withAlpha(t.accent, 0.7));
-
-    // Touch targets: tapping upper half scrolls up, lower half scrolls down
-    if (onScrollUp) {
-        cv.target(x - 12, y, 30, Math.floor(h / 2), onScrollUp, 'sb_up_' + x, 8);
-    }
-    if (onScrollDown) {
-        cv.target(x - 12, y + Math.floor(h / 2), 30, Math.ceil(h / 2), onScrollDown, 'sb_down_' + x, 8);
-    }
+    S.scrollbar(cv, t, x, y, h, total, visibleCount, scrollOffset);
+    if (onScrollUp) cv.target(x - 14, y, 30, Math.floor(h / 2), onScrollUp, 'sb_up_' + x, 3);
+    if (onScrollDown) cv.target(x - 14, y + Math.floor(h / 2), 30, Math.ceil(h / 2), onScrollDown, 'sb_down_' + x, 3);
 }
 
 // Mini animated equalizer icon for list rows (4 bars)
@@ -248,9 +243,9 @@ function drawSpinner(cv, cx, cy, r, col, lw) {
 function drawLoadingRow(cv, t, x, y, w, label, h) {
     h = h || 42;
     const size = sz(cv, 12.5);
-    cv.roundRect(x, y, w, h, 8, withAlpha(t.track, 0.6));
-    drawSpinner(cv, x + sz(cv, 18), y + h / 2, sz(cv, 7), t.accent);
-    cv.text(label, x + sz(cv, 38), y + h / 2 + size * 0.36, size, t.dim);
+    S.hairline(cv, x, y - 3, w);
+    drawSpinner(cv, x + sz(cv, 22), y + h / 2, sz(cv, 7), S.sel(t));
+    cv.text(label, x + sz(cv, 46), y + h / 2 + size * 0.36, size, t.dim);
 }
 
 /** A device's kind as a small line glyph (phone, computer, speaker, TV, car; others a speaker). */
@@ -279,12 +274,6 @@ function drawDeviceIcon(cv, cx, cy, type, col) {
         cv.arc(cx, cy + 3, 4, 6, 0, 360, col);
         cv.circle(cx, cy - 7, 2, col);
     }
-}
-
-/** A spinner just left of a centred loading title (str drawn at cx, baseline y, this size). */
-function drawSpinnerBefore(cv, str, cx, y, size, col) {
-    const w = cv.textWidth ? cv.textWidth(str, size, { font: 'bold', spacing: 1 }) : str.length * size * 0.6;
-    drawSpinner(cv, cx - w / 2 - size, y - size * 0.36, size * 0.42, col);
 }
 
 /** str cut (with "..") to fit maxW pixels at this size: room decides, not a character count. */
@@ -355,7 +344,6 @@ mgu.run({
         let playlistScroll = 0;
         let trackScroll = 0;
         let likedScroll = 0;
-        let queueScroll = 0;
 
         /*
          * Busy buttons. A tap that has to wait for Spotify (or the network) marks its button busy:
@@ -388,11 +376,11 @@ mgu.run({
         // Lists scroll with a finger (the list under it) or the controller (the page's main list).
         // listGeo is filled while a page draws: rows per list, how many show, the list's x range.
         const listGeo = {};
-        const scrollGet = { pl: () => playlistScroll, trk: () => trackScroll, liked: () => likedScroll, q: () => queueScroll };
-        const scrollSet = { pl: (v) => { playlistScroll = v; }, trk: (v) => { trackScroll = v; }, liked: (v) => { likedScroll = v; }, q: (v) => { queueScroll = v; } };
+        const scrollGet = { pl: () => playlistScroll, trk: () => trackScroll, liked: () => likedScroll };
+        const scrollSet = { pl: (v) => { playlistScroll = v; }, trk: (v) => { trackScroll = v; }, liked: (v) => { likedScroll = v; } };
         let scrollAcc = 0, scrollList = null;
         ctx.onScroll((dy, at) => {
-            const names = page === 0 ? ['pl', 'trk'] : page === 1 ? ['liked'] : page === 2 ? ['q'] : [];
+            const names = page === 0 ? ['pl', 'trk'] : page === 1 ? ['liked'] : [];
             const name = names.find((n) => at && listGeo[n] && at.x >= listGeo[n].x0 && at.x < listGeo[n].x1) || names[names.length - 1];
             const g = name && listGeo[name];
             if (!g) return false;
@@ -426,257 +414,302 @@ mgu.run({
             }
         }
 
-        /* ---------- Offline Safeguard Screen: No Internet Connection ---------- */
+        /* ---------- Offline: no internet ---------- */
         function drawNoInternet(cv, t) {
-            G.panel(cv, t, 24, 44, 1552, 468, 'Network Status: Offline');
-
-            cv.roundRect(48, 100, 1504, 388, 16, '#0f141f');
-            cv.strokeRoundRect(48, 100, 1504, 388, 16, 2, '#e1001a');
-
-            cv.circle(148, 250, 48, withAlpha('#e1001a', 0.2));
-            cv.text('!', 148, 266, 50, '#e1001a', { align: 'center', font: 'bold' });
-
-            cv.text('NO INTERNET CONNECTION', 228, 195, 28, '#e1001a', { font: 'bold', spacing: 1 });
-            cv.text('Spotify Online requires an active internet connection on your vehicle.', 228, 240, 19, '#ffffff');
-            cv.text('Please verify that your BMW has cellular data or is connected to a mobile Wi-Fi hotspot.', 228, 276, 17, '#94a3b8');
-
-            // Action Buttons: [RETRY CONNECTION] and [SWITCH TO DEMO MODE]
-            const btnW = 280, btnH = 52, btnY = 345;
-            const b1X = 228;
-            const netBusy = isBusy('net');
-            cv.roundRect(b1X, btnY, btnW, btnH, 10, netBusy ? '#00365f' : '#004e8c');
-            cv.strokeRoundRect(b1X, btnY, btnW, btnH, 10, 1.5, '#00a3e0');
-            if (netBusy) {
-                drawSpinner(cv, b1X + 62, btnY + btnH / 2, 10, '#ffffff');
-                cv.text('CHECKING...', b1X + btnW / 2 + 14, btnY + 32, 16, '#cbd5e1', { align: 'center', font: 'bold', spacing: 1 });
-            } else {
-                cv.text('RETRY CONNECTION', b1X + btnW / 2, btnY + 32, 16, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
-            }
-            cv.target(b1X, btnY, btnW, btnH, () => {
-                runBusy('net', () => spotify.checkInternetConnection());
-            }, 'btn_retry_net', 15);
-
-            const b2X = b1X + btnW + 24;
-            cv.roundRect(b2X, btnY, btnW, btnH, 10, '#1a2332');
-            cv.strokeRoundRect(b2X, btnY, btnW, btnH, 10, 1, '#334155');
-            cv.text('SWITCH TO DEMO MODE', b2X + btnW / 2, btnY + 32, 15, '#cbd5e1', { align: 'center', font: 'bold' });
-            cv.target(b2X, btnY, btnW, btnH, () => {
-                settings.set('demo', 'on');          // the change handler brings the demo in
-            }, 'btn_switch_demo', 15);
+            const y = S.state(cv, t, 64, 110, 1000, {
+                tone: 'error', glow: !!cv.place, title: 'No internet connection', size: sz(cv, 26),
+                lines: ['Spotify needs the car to be online.', 'Check the phone hotspot, the USB-tethered phone or the LTE stick.'],
+            });
+            const bh = sz(cv, 32), netBusy = isBusy('net');
+            let bx = 64;
+            bx += S.button(cv, t, bx, y + 20, netBusy ? 'Checking...' : 'Try again', () => runBusy('net', () => spotify.checkInternetConnection()),
+                { h: bh, primary: true, busy: netBusy, key: 'btn_retry_net', size: sz(cv, 13) }) + 16;
+            S.button(cv, t, bx, y + 20, 'Use demo mode', () => settings.set('demo', 'on'), { h: bh, key: 'btn_switch_demo', size: sz(cv, 13) });
         }
 
-        /* ---------- Gating Screen: Authentication Required in Online Mode ---------- */
+        /* ---------- Not paired: connect the account first ---------- */
         function drawRequireConnect(cv, t) {
-            G.panel(cv, t, 24, 44, 1552, 468, 'Spotify Login Required');
-
-            cv.roundRect(48, 100, 1504, 388, 16, '#0c1522');
-            cv.strokeRoundRect(48, 100, 1504, 388, 16, 2, '#1ed760');
-
-            cv.circle(148, 250, 48, withAlpha('#1ed760', 0.2));
-            drawPlayIcon(cv, 151, 250, 36, '#1ed760');
-
-            cv.text('SPOTIFY LOGIN REQUIRED', 228, 195, 28, '#ffffff', { font: 'bold', spacing: 1 });
-            cv.text('Online Mode is active. Please pair your personal Spotify account to browse your library and control playback.', 228, 240, 18, '#cbd5e1');
-            cv.text('Scan the QR code with your phone to sync your playlists and Spotify Connect target devices.', 228, 276, 16, '#94a3b8');
-
-            const btnW = 340, btnH = 52, btnY = 345, bX = 228;
-            cv.roundRect(bX, btnY, btnW, btnH, 10, '#1ed760');
-            cv.text('PAIR PHONE (SCAN QR CODE)', bX + btnW / 2, btnY + 32, 16, '#000000', { align: 'center', font: 'bold', spacing: 1 });
-            cv.target(bX, btnY, btnW, btnH, () => {
-                page = 3; // Switch to Connect tab
-            }, 'btn_goto_connect', 15);
+            const y = S.state(cv, t, 64, 110, 1000, {
+                tone: 'info', glow: !!cv.place, title: 'Connect your Spotify account', size: sz(cv, 26),
+                lines: ['Scan the code on the Connect tab with your phone and sign in to Spotify there.', 'Your playlists, liked songs and devices then show here.'],
+            });
+            S.button(cv, t, 64, y + 20, 'Pair your phone', () => { page = 3; }, { h: sz(cv, 32), primary: true, key: 'btn_goto_connect', size: sz(cv, 13) });
         }
 
-        /* ---------- Bottom Now Playing Player Dock ---------- */
-        function drawBottomPlayerDock(cv, t) {
+        /* ---------- The mini player along the bottom (Playlists, Liked Songs, Connect) ---------- */
+        function drawBottomPlayerDock(cv, t, m) {
             const curTrk = spotify.currentTrack;
             const isPlaying = spotify.isPlaying;
-            const m = metrics(cv);
+            m = m || metrics(cv);
+            const acc = S.acc(t);
             const dockX = 24, dockY = m.dockY, dockW = 1552, dockH = m.dockH;
 
-            // Dock backdrop & border
-            cv.roundRect(dockX, dockY, dockW, dockH, 12, withAlpha(t.panelEdge, 0.9));
-            cv.strokeRoundRect(dockX, dockY, dockW, dockH, 12, 1, isPlaying ? withAlpha(t.accent, 0.4) : withAlpha(t.panelEdge, 0.8));
-
-            // Mini artwork / Equalizer box
-            const miniSz = dockH - 18, miniX = dockX + 10, miniY = dockY + 9;
-            cv.roundRect(miniX, miniY, miniSz, miniSz, 8, withAlpha(t.panelEdge, 0.9));
-            if (artManager.hasArt) {
-                cv.image(ART_IMG_ID, miniX, miniY, miniSz, miniSz, miniSz * 0.07);   // (the GPU rounds the corners smoothly; art.js cuts them for software)
-                cv.strokeRoundRect(miniX, miniY, miniSz, miniSz, 8, 1, withAlpha(t.accent, 0.35));
-            } else {
-                cv.strokeRoundRect(miniX, miniY, miniSz, miniSz, 8, 1, withAlpha(t.accent, 0.3));
-                drawMiniEqualizer(cv, miniX + miniSz / 2, miniY + miniSz / 2, isPlaying ? t.accent : t.dim, isPlaying, spectrumSeed);
+            // subtle elevated dock surface + ambient cover tint (GPU only)
+            cv.fillRect(dockX, dockY, dockW, dockH, '#101218');
+            if (cv.place && curTrk && artManager.hasArt) {
+                cv.clip(dockX, dockY, dockW, dockH);
+                cv.alpha(0.18);
+                cv.image(ART_GROUND_ID, dockX, dockY - 360, dockW, dockW * 0.6, 0);
+                cv.alpha(1);
+                cv.noclip();
             }
 
-            // Controls on the right, from the dock's right end: Now Playing button, Next, Play / Pause, Prev
-            const bh = sz(cv, 36), by = dockY + (dockH - bh) / 2, gap = sz(cv, 10);
-            const npW = sz(cv, 124), npX = dockX + dockW - 16 - npW;
-            const skW = sz(cv, 46), nextX = npX - sz(cv, 18) - skW;
-            const playW = sz(cv, 60), playH = sz(cv, 42), playX = nextX - gap - playW, playY = dockY + (dockH - playH) / 2;
-            const prevX = playX - gap - skW;
-
-            // Track metadata: up to the time, left of the controls
-            const timeW = sz(cv, 100), timeX = prevX - sz(cv, 24) - timeW / 2;
-            const textX = miniX + miniSz + 14, dockTextW = timeX - timeW / 2 - 16 - textX;
-            const tSize = sz(cv, 15), mSize = sz(cv, 12);
-            const tY = dockY + dockH / 2 - 3, mY = tY + mSize + 6;
-            if (curTrk) {
-                cv.text(fitText(cv, curTrk.title, dockTextW, tSize, { font: 'bold' }), textX, tY, tSize, isPlaying ? t.accent : t.text, { font: 'bold' });
-                const metaStr = curTrk.artist + (curTrk.album ? '  -  ' + curTrk.album : '');
-                cv.text(fitText(cv, metaStr, dockTextW, mSize), textX, mY, mSize, t.dim);
-            } else {
-                cv.text('No Track Playing', textX, tY, tSize, t.dim, { font: 'bold' });
-                cv.text(fitText(cv, 'Select any song from Playlists or Liked Songs to begin', dockTextW, mSize), textX, mY, mSize, t.dim);
-            }
-
-            // Tapping the track's part opens the full Now Playing screen
-            cv.target(dockX, dockY, prevX - 12 - dockX, dockH, () => {
-                page = 2; // Switch to Now Playing screen
-                render();
-            }, 'dock_open_np', 10);
-
-            // Elapsed / Duration timestamp
-            if (curTrk) {
-                cv.text(fmtTime(spotify.progressMs) + ' / ' + fmtTime(curTrk.durationMs), timeX, dockY + dockH / 2 + sz(cv, 4.5), sz(cv, 12.5), t.dim, { align: 'center', font: 'num' });
-            }
-
-            // 1. Prev
-            cv.roundRect(prevX, by, skW, bh, 8, withAlpha(t.panelEdge, 0.7));
-            if (busyOn('transport', 'prev')) drawSpinner(cv, prevX + skW / 2, by + bh / 2, sz(cv, 8), t.text);
-            else drawPrevIcon(cv, prevX + skW / 2, by + bh / 2, sz(cv, 14), isBusy('transport') ? t.dim : t.text);
-            cv.target(prevX, by, skW, bh, () => {
-                runBusy('transport', () => spotify.prevTrack(), 'prev');
-            }, 'dock_prev', 12);
-
-            // 2. Play / Pause
-            cv.roundRect(playX, playY, playW, playH, playH / 2, isBusy('transport') ? withAlpha(t.accent, 0.6) : t.accent);
-            if (busyOn('transport', 'play')) {
-                drawSpinner(cv, playX + playW / 2, playY + playH / 2, sz(cv, 9), '#000000');
-            } else if (isPlaying) {
-                drawPauseIcon(cv, playX + playW / 2, playY + playH / 2, sz(cv, 15), '#000000');
-            } else {
-                drawPlayIcon(cv, playX + playW / 2, playY + playH / 2, sz(cv, 15), '#000000');
-            }
-            cv.target(playX, playY, playW, playH, () => {
-                runBusy('transport', () => spotify.togglePlay(), 'play');
-            }, 'dock_play', playH / 2);
-
-            // 3. Next
-            cv.roundRect(nextX, by, skW, bh, 8, withAlpha(t.panelEdge, 0.7));
-            if (busyOn('transport', 'next')) drawSpinner(cv, nextX + skW / 2, by + bh / 2, sz(cv, 8), t.text);
-            else drawNextIcon(cv, nextX + skW / 2, by + bh / 2, sz(cv, 14), isBusy('transport') ? t.dim : t.text);
-            cv.target(nextX, by, skW, bh, () => {
-                runBusy('transport', () => spotify.nextTrack(), 'next');
-            }, 'dock_next', 12);
-
-            // 4. "NOW PLAYING >" button
-            cv.roundRect(npX, by, npW, bh, 8, withAlpha(t.accent, 0.2));
-            cv.strokeRoundRect(npX, by, npW, bh, 8, 1, withAlpha(t.accent, 0.4));
-            const npSize = sz(cv, 11);
-            cv.text('NOW PLAYING >', npX + npW / 2, by + bh / 2 + npSize * 0.36, npSize, t.accent, { align: 'center', font: 'bold', spacing: 0.5 });
-            cv.target(npX, by, npW, bh, () => {
-                page = 2; // Switch to Now Playing screen
-                render();
-            }, 'dock_btn_np', 12);
-
-            // Thin progress line along the bottom edge of dock
+            // a hairline over it, the progress along it in the theme's ramp (M blues in Afterglow)
+            S.hairline(cv, dockX, dockY, dockW, 0.12);
             const dur = (curTrk && curTrk.durationMs) ? curTrk.durationMs : 1;
-            const pFrac = Math.min(1, Math.max(0, spotify.progressMs / dur));
-            cv.roundRect(dockX + 4, dockY + dockH - 4, dockW - 8, 3, 1.5, t.tick);
-            if (pFrac > 0) {
-                cv.roundRect(dockX + 4, dockY + dockH - 4, Math.round((dockW - 8) * pFrac), 3, 1.5, t.accent);
+            const pFrac = curTrk ? Math.min(1, Math.max(0, spotify.progressMs / dur)) : 0;
+            const pStops = (t.style !== 'afterglow' && t.ramp && t.ramp.length >= 2) ? [t.ramp[0], t.ramp[1]] : [S.M2, S.M1];
+            if (pFrac > 0) cv.rampRect(dockX, dockY - 1, Math.round(dockW * pFrac), 3, 0, pStops, dockX, Math.max(1, Math.round(dockW * pFrac)));
+
+            // the cover, small
+            const miniSz = dockH - 22, miniX = dockX + 16, miniY = dockY + 12;
+            if (artManager.hasArt && curTrk) {
+                cv.image(ART_IMG_ID, miniX, miniY, miniSz, miniSz, 4);
+                cv.strokeRoundRect(miniX + 0.5, miniY + 0.5, miniSz - 1, miniSz - 1, 4, 1, withAlpha('#ffffff', 0.14));
+            } else {
+                cv.roundRect(miniX, miniY, miniSz, miniSz, 4, withAlpha('#ffffff', 0.05));
+                drawMiniEqualizer(cv, miniX + miniSz / 2, miniY + miniSz / 2, isPlaying ? acc : t.dim, isPlaying, spectrumSeed);
             }
+
+            // the controls from the right: Now Playing, next, play, previous, heart
+            const hit = Math.min(sz(cv, 38), dockH - 12), cy = dockY + dockH / 2 + 3, iconSz = Math.min(sz(cv, 15), 22);
+            const playR = Math.min(sz(cv, 19), Math.floor(dockH * 0.34)), gap = Math.min(sz(cv, 10), 14);
+            const npSize = Math.min(sz(cv, 12.5), 19), npH = Math.min(sz(cv, 30), dockH - 16);
+            const npW = Math.round(cv.textWidth('Now playing', npSize) + sz(cv, 32)), npX = dockX + dockW - 12 - npW;
+            const nextX = npX - sz(cv, 22) - hit, playX = nextX - gap - playR * 2, prevX = playX - gap - hit;
+            const heartX = prevX - gap - hit;
+            S.button(cv, t, npX, cy - Math.round(npH / 2), 'Now playing', () => { page = 2; render(); }, { h: npH, size: npSize, key: 'dock_btn_np', w: npW });
+            const tb = isBusy('transport');
+            if (curTrk) {
+                const liked = !!spotify.isCurrentLiked;
+                if (isBusy('like')) drawSpinner(cv, heartX + hit / 2, cy, sz(cv, 7), S.critC(t));
+                else drawHeartIcon(cv, heartX + hit / 2, cy + 1, iconSz, liked ? S.critC(t) : '#aeb4bd', liked);
+                cv.target(heartX, cy - hit / 2, hit, hit, () => runBusy('like', () => spotify.toggleLikeCurrent()), 'dock_like', hit / 2);
+            }
+            if (busyOn('transport', 'prev')) drawSpinner(cv, prevX + hit / 2, cy, sz(cv, 7), '#ffffff');
+            else drawPrevIcon(cv, prevX + hit / 2, cy, iconSz, tb ? '#6b7280' : '#ffffff');
+            cv.target(prevX, cy - hit / 2, hit, hit, () => runBusy('transport', () => spotify.prevTrack(), 'prev'), 'dock_prev', hit / 2);
+            cv.circle(playX + playR, cy, playR, tb ? withAlpha('#ffffff', 0.6) : '#ffffff');
+            if (busyOn('transport', 'play')) drawSpinner(cv, playX + playR, cy, sz(cv, 8), '#0b0c0f');
+            else if (isPlaying) drawPauseIcon(cv, playX + playR, cy, Math.round(playR * 0.72), '#0b0c0f');
+            else drawPlayIcon(cv, playX + playR + 1, cy, Math.round(playR * 0.72), '#0b0c0f');
+            cv.target(playX, cy - playR, playR * 2, playR * 2, () => runBusy('transport', () => spotify.togglePlay(), 'play'), 'dock_play', playR);
+            if (busyOn('transport', 'next')) drawSpinner(cv, nextX + hit / 2, cy, sz(cv, 7), '#ffffff');
+            else drawNextIcon(cv, nextX + hit / 2, cy, iconSz, tb ? '#6b7280' : '#ffffff');
+            cv.target(nextX, cy - hit / 2, hit, hit, () => runBusy('transport', () => spotify.nextTrack(), 'next'), 'dock_next', hit / 2);
+
+            // the song: title and artist, the time right of them
+            const timeSize = Math.min(sz(cv, 12), 18), timeText = curTrk ? fmtTime(spotify.progressMs) + ' / ' + fmtTime(curTrk.durationMs) : '';
+            const timeW = timeText ? cv.textWidth(timeText, timeSize, { font: 'num' }) : 0, timeR = (curTrk ? heartX : prevX) - sz(cv, 20);
+            const textX = miniX + miniSz + 18, textW = Math.max(120, timeR - timeW - 22 - textX);
+            const tSize = Math.min(sz(cv, 15), 22), mSize = Math.min(sz(cv, 12), 18);
+            if (curTrk) {
+                cv.text(fitText(cv, curTrk.title, textW, tSize, { font: 'bold' }), textX, cy - 4, tSize, t.text, { font: 'bold' });
+                cv.text(fitText(cv, curTrk.artist + (curTrk.album ? '  ·  ' + curTrk.album : ''), textW, mSize), textX, cy + mSize + 4, mSize, t.dim);
+                cv.text(timeText, timeR, cy + timeSize * 0.36, timeSize, t.dim, { align: 'right', font: 'num' });
+            } else {
+                cv.text('Nothing playing', textX, cy - 4, tSize, t.dim, { font: 'bold' });
+                cv.text(fitText(cv, 'Start a song from Playlists or Liked Songs', textW, mSize), textX, cy + mSize + 4, mSize, t.dim);
+            }
+            cv.target(dockX, dockY, (curTrk ? heartX : prevX) - 12 - dockX, dockH, () => { page = 2; render(); }, 'dock_open_np', 3);
+        }
+
+        /** Rounded cover thumbnail (real album/playlist art when loaded, glowing heart or monogram fallback). */
+        function drawCoverThumb(cv, t, url, x, y, size, r, o) {
+            const opt = o || {};
+            if (opt.heart) {
+                cv.roundRect(x, y, size, size, r, withAlpha(S.M3, opt.lit ? 0.30 : 0.20));
+                cv.strokeRoundRect(x + 0.5, y + 0.5, size - 1, size - 1, r, 1, withAlpha(S.M3, opt.lit ? 0.65 : 0.42));
+                drawHeartIcon(cv, x + size / 2, y + size / 2 + 1, Math.round(size * 0.42), S.M3, true);
+                return;
+            }
+            const tid = url ? artManager.thumbId(url) : 0;
+            if (tid) {
+                cv.image(tid, x, y, size, size, r);
+                cv.strokeRoundRect(x + 0.5, y + 0.5, size - 1, size - 1, r, 1, withAlpha('#ffffff', opt.lit ? 0.22 : 0.12));
+                return;
+            }
+            const col = opt.accent || S.M1;
+            cv.roundRect(x, y, size, size, r, withAlpha(col, opt.lit ? 0.26 : 0.14));
+            cv.strokeRoundRect(x + 0.5, y + 0.5, size - 1, size - 1, r, 1, withAlpha(col, opt.lit ? 0.55 : 0.28));
+            const ch = String(opt.letter || '♪').charAt(0).toUpperCase();
+            cv.text(ch, x + size / 2, y + size / 2 + Math.round(size * 0.16), Math.max(14, Math.round(size * 0.42)), '#ffffff', { align: 'center', font: 'bold', literal: true });
+        }
+
+        /** Compact icon+label pill button for editorial headers (Play / Shuffle). */
+        function drawHeroAction(cv, t, x, y, w, h, label, iconFn, run, o) {
+            const opt = o || {};
+            const selC = S.sel(t), szT = opt.size || 16;
+            const r = Math.min(6, Math.round(h / 2));
+            if (opt.primary) {
+                cv.roundRect(x, y, w, h, r, selC);
+                cv.strokeRoundRect(x + 0.5, y + 0.5, w - 1, h - 1, r, 1, withAlpha('#ffffff', 0.22));
+            } else if (opt.active) {
+                cv.roundRect(x, y, w, h, r, withAlpha(selC, 0.20));
+                cv.strokeRoundRect(x + 0.5, y + 0.5, w - 1, h - 1, r, 1, withAlpha(selC, 0.72));
+            } else {
+                cv.roundRect(x, y, w, h, r, '#161922');
+                cv.strokeRoundRect(x + 0.5, y + 0.5, w - 1, h - 1, r, 1, withAlpha('#ffffff', 0.18));
+            }
+            const cy = y + h / 2;
+            const col = opt.primary ? '#ffffff' : opt.active ? '#ffffff' : t.text;
+            const tw = cv.textWidth(label, szT, { font: opt.primary ? 'bold' : 'normal' });
+            const icoGap = 10, icoW = 14;
+            const startX = x + Math.round((w - (icoW + icoGap + tw)) / 2);
+            if (opt.busy) drawSpinner(cv, startX + icoW / 2, cy, 7, col);
+            else if (iconFn) iconFn(startX + icoW / 2, cy, col);
+            cv.text(label, startX + icoW + icoGap, cy + szT * 0.35, szT, col, { font: opt.primary ? 'bold' : 'normal' });
+            if (run) cv.target(x, y, w, h, run, opt.key || label, r);
         }
 
         /**
-         * A song row (playlist songs, Liked Songs), m.songH high at y: number (or the equalizer / a spinner while it
-         * plays or starts), a heart (heart: Liked Songs), title, artist - album, length and a PLAYING tag.
-         * o = { x, w, y, idx, trk, playing, starting, heart }
+         * Modern 2-line track row with rounded album cover thumbnail, bold title over muted artist·album,
+         * and crisp tabular duration. Active track renders as a softly lit elevated card with animated EQ.
+         * o = { x, w, y, h, idx, trk, playing, starting, heart, card, showIndex }
          */
         function drawSongRow(cv, t, m, o) {
-            const { x, w, y, trk } = o, h = m.songH, cy = y + h / 2;
-            const base = (size) => cy + size * 0.36;
+            const { x, w, y, trk } = o, h = o.h || 58, cy = y + h / 2;
+            const acc = S.acc(t), selC = S.sel(t);
+            const isCard = !!o.card;
+
             if (o.playing) {
-                cv.roundRect(x, y, w, h, 8, withAlpha(t.accent, 0.22));
-                cv.strokeRoundRect(x, y, w, h, 8, 1.5, t.accent);
-                if (o.starting) drawSpinner(cv, x + sz(cv, 18), cy, sz(cv, 7), t.accent);
-                else drawMiniEqualizer(cv, x + sz(cv, 18), cy, t.accent, spotify.isPlaying, spectrumSeed);
+                cv.roundRect(x, y, w, h, 6, '#131a26');
+                S.shadeX(cv, x + 1, y + 1, Math.round(w * 0.62), h - 2, acc, 0.16, 0);
+                cv.strokeRoundRect(x + 0.5, y + 0.5, w - 1, h - 1, 6, 1, withAlpha(selC, 0.42));
+                S.mark(cv, x + 7, y + Math.round(h * 0.24), Math.round(h * 0.52), acc);
+            } else if (isCard) {
+                cv.roundRect(x, y, w, h, 6, '#101218');
+                cv.strokeRoundRect(x + 0.5, y + 0.5, w - 1, h - 1, 6, 1, withAlpha('#ffffff', 0.07));
             } else {
-                cv.roundRect(x, y, w, h, 8, t.track);
-                cv.text(String(o.idx + 1), x + sz(cv, 18), base(m.num), m.num, t.dim, { align: 'center', font: 'num' });
+                if (o.idx % 2 === 1) cv.roundRect(x, y, w, h, 4, withAlpha('#ffffff', 0.022));
+                if (o.idx > 0) S.hairline(cv, x + 46, y - 3, w - 46, 0.07);
             }
-            let tx = x + sz(cv, 42);
-            if (o.heart) { drawHeartIcon(cv, tx + sz(cv, 8), cy, sz(cv, 13), '#1ed760', true); tx += sz(cv, 28); }
-            // the PLAYING tag at the right end, the length left of it; the columns never overlap
-            const tagW = sz(cv, 58), tagH = Math.round(h * 0.56), tagX = x + w - 12 - tagW;
-            const timeR = o.playing ? tagX - 14 : x + w - 22;
-            const metaX = x + Math.round(w * (o.heart ? 0.42 : 0.36));
-            const metaR = timeR - sz(cv, 48);
-            cv.text(fitText(cv, trk.title, metaX - 18 - tx, m.title, { font: 'bold' }), tx, base(m.title), m.title, o.playing ? t.accent : t.text, { font: 'bold' });
-            const metaText = trk.artist + (trk.album ? '  -  ' + trk.album : '');
-            cv.text(fitText(cv, metaText, metaR - metaX, m.meta), metaX, base(m.meta), m.meta, t.dim);
-            cv.text(fmtTime(trk.durationMs), timeR, base(m.num), m.num, t.dim, { align: 'right', font: 'num' });
-            if (o.playing) {
-                const ts = sz(cv, 9.5);
-                cv.roundRect(tagX, cy - tagH / 2, tagW, tagH, 6, o.starting ? withAlpha(t.accent, 0.35) : t.accent);
-                cv.text(o.starting ? 'WAIT' : 'PLAYING', tagX + tagW / 2, cy + ts * 0.36, ts, o.starting ? t.accent : '#000000', { align: 'center', font: 'bold' });
+
+            // Optional track index or playing EQ on the left
+            let curX = x + (o.playing ? 26 : 12);
+            if (o.showIndex) {
+                const idxCx = x + (o.playing ? 32 : 24);
+                if (o.playing) {
+                    if (o.starting) drawSpinner(cv, idxCx, cy, 7, acc);
+                    else drawMiniEqualizer(cv, idxCx, cy, acc, spotify.isPlaying, spectrumSeed);
+                } else {
+                    const nSz = Math.min(sz(cv, 11.5), 16);
+                    cv.text(String(o.idx + 1), idxCx, cy + nSz * 0.35, nSz, t.dim, { align: 'center', font: 'num' });
+                }
+                curX = x + 52;
             }
+
+            // Rounded album cover thumbnail
+            const thumbSz = Math.max(34, Math.min(46, h - 14));
+            const thumbY = y + Math.round((h - thumbSz) / 2);
+            drawCoverThumb(cv, t, trk.albumArt, curX, thumbY, thumbSz, 4, {
+                lit: o.playing, accent: o.playing ? selC : S.M2, letter: trk.title || '♪',
+            });
+
+            // Right side: tabular duration + optional heart / EQ badge (for card mode without left index)
+            const timeSz = Math.min(sz(cv, 11.5), 16);
+            const timeR = x + w - 16;
+            const timeStr = fmtTime(trk.durationMs);
+            const timeW = cv.textWidth(timeStr, timeSz, { font: 'num' });
+            cv.text(timeStr, timeR, cy + timeSz * 0.35, timeSz, o.playing ? '#d6dde8' : t.dim, { align: 'right', font: 'num' });
+
+            let rightLimit = timeR - timeW - 14;
+            if (!o.showIndex && o.playing) {
+                if (o.starting) drawSpinner(cv, rightLimit - 10, cy, 7, acc);
+                else drawMiniEqualizer(cv, rightLimit - 12, cy, acc, spotify.isPlaying, spectrumSeed);
+                rightLimit -= 30;
+            } else if (o.heart) {
+                drawHeartIcon(cv, rightLimit - 8, cy + 1, Math.min(13, Math.round(h * 0.24)), S.critC(t), true);
+                rightLimit -= 24;
+            }
+
+            // Two-line editorial stack: Bold title over muted artist · album
+            const tx = curX + thumbSz + 14;
+            const textW = Math.max(80, rightLimit - tx);
+            const tSz = Math.min(sz(cv, 13.5), 19);
+            const aSz = Math.min(sz(cv, 11), 15.5);
+            const lineGap = Math.max(4, Math.round((h - tSz - aSz) * 0.18));
+            const titleY = cy - Math.round(lineGap * 0.5) - 1;
+            const metaY = cy + aSz + Math.round(lineGap * 0.5);
+            cv.text(fitText(cv, trk.title, textW, tSz, { font: 'bold' }), tx, titleY, tSz, o.playing ? '#ffffff' : t.text, { font: 'bold' });
+            const metaText = trk.artist + (trk.album ? '  ·  ' + trk.album : '');
+            cv.text(fitText(cv, metaText, textW, aSz), tx, metaY, aSz, o.playing ? '#aeb8c8' : t.dim);
+        }
+
+        /** A list that is empty, or still loading: a headline (a spinner before it while loading), a line, a button. */
+        function drawEmptyList(cv, t, x, y, w, o) {
+            const s = sz(cv, 20);
+            if (o.loading) drawSpinner(cv, x + s * 0.45, y + s * 0.62, s * 0.38, S.sel(t));
+            const end = S.state(cv, t, x + (o.loading ? s * 1.2 : 0), y, w, { tone: 'none', title: o.title, size: s, lines: [o.line] });
+            if (o.button) S.button(cv, t, x, end + 14, o.button.label, o.button.run, { h: sz(cv, 30), size: sz(cv, 12.5), key: o.button.key, busy: o.button.busy });
         }
 
         /* ---------- Page 0: Playlists & Tracks ---------- */
         function drawPlaylists(cv, t) {
             const playlists = spotify.getPlaylists();
+            const m = metrics(cv), gpu = !!cv.place;
 
             if (!playlists || playlists.length === 0) {
                 if (isOnlineMode() && !spotify.isAuthenticated()) {
                     drawRequireConnect(cv, t);
-                } else {
-                    G.panelExact(cv, t, 24, 44, 1552, metrics(cv).panelH, 'Your Playlists (0)');
-
-                    cv.roundRect(48, 100, 1504, 200, 12, t.track);
-                    cv.strokeRoundRect(48, 100, 1504, 200, 12, 1, t.panelEdge);
-
-                    const loading = spotify.isLoadingPlaylists || spotify.syncing;
-                    cv.text(loading ? 'LOADING PLAYLISTS...' : 'NO PLAYLISTS FOUND', 800, 175, 22, t.dim, { align: 'center', font: 'bold', spacing: 1 });
-                    if (loading) drawSpinnerBefore(cv, 'LOADING PLAYLISTS...', 800, 175, 22, t.accent);
-                    cv.text(loading ? 'Fetching your playlists from Spotify cloud...' : 'Create or follow playlists on Spotify, or browse Liked Songs.', 800, 210, 16, t.dim, { align: 'center' });
-
-                    const rfW = 240, rfH = 44, rfX = 680, rfY = 236;
-                    const plBusy = isBusy('playlists') || spotify.isLoadingPlaylists;
-                    cv.roundRect(rfX, rfY, rfW, rfH, 8, withAlpha(t.accent, plBusy ? 0.1 : 0.22));
-                    cv.strokeRoundRect(rfX, rfY, rfW, rfH, 8, 1.5, withAlpha(t.accent, plBusy ? 0.5 : 1));
-                    if (plBusy) {
-                        drawSpinner(cv, rfX + 40, rfY + rfH / 2, 9, t.accent);
-                        cv.text('LOADING...', rfX + rfW / 2 + 12, rfY + 27, 14, withAlpha(t.accent, 0.8), { align: 'center', font: 'bold', spacing: 1 });
-                    } else {
-                        cv.text('REFRESH PLAYLISTS', rfX + rfW / 2, rfY + 27, 14, t.accent, { align: 'center', font: 'bold', spacing: 1 });
-                    }
-                    cv.target(rfX, rfY, rfW, rfH, () => {
-                        if (!spotify.isLoadingPlaylists) runBusy('playlists', () => spotify.fetchPlaylists());
-                    }, 'btn_refresh_pls', 12);
-
-                    drawBottomPlayerDock(cv, t);
+                    return;
                 }
+                G.panelExact(cv, t, 24, 44, 1552, m.panelH, 'Your playlists');
+                const loading = spotify.isLoadingPlaylists || spotify.syncing;
+                const plBusy = isBusy('playlists') || spotify.isLoadingPlaylists;
+                drawEmptyList(cv, t, 48, 120, 1000, {
+                    loading, title: loading ? 'Loading your playlists' : 'No playlists yet',
+                    line: loading ? 'Fetching them from Spotify.' : 'Create or follow playlists in Spotify, or open Liked Songs.',
+                    button: loading ? null : { label: 'Refresh', key: 'btn_refresh_pls', busy: plBusy, run: () => { if (!spotify.isLoadingPlaylists) runBusy('playlists', () => spotify.fetchPlaylists()); } },
+                });
+                drawBottomPlayerDock(cv, t);
                 return;
             }
 
-            // Keep selected index valid
             if (selectedPlaylistIdx >= playlists.length) selectedPlaylistIdx = 0;
+            const curPl = playlists[selectedPlaylistIdx] || playlists[0];
+            spotify.ensureTracks(curPl);
 
-            // Visible window for playlists (scrolled freely: not pulled back to the selection)
-            const m = metrics(cv), listH = m.listBottom - m.listTop;
-            const VISIBLE_PL = Math.max(1, Math.floor((listH + 8) / m.plStep));
+            const plCoverOf = (pl) => (pl && pl.image) || (pl && pl.tracks && pl.tracks[0] && pl.tracks[0].albumArt) || '';
+
+            // Left sidebar geometry: sleek cover-art playlist cards
+            const leftX = 24, leftW = 460, listH = m.listBottom - m.listTop;
+            const plH = Math.min(72, Math.max(56, Math.round(sz(cv, 46))));
+            const plStep = plH + 8;
+            const VISIBLE_PL = Math.max(1, Math.floor((listH + 8) / plStep));
             playlistScroll = Math.max(0, Math.min(playlistScroll, Math.max(0, playlists.length - VISIBLE_PL)));
-            listGeo.pl = { x0: 24, x1: 532, rowH: m.plStep, count: playlists.length, visible: VISIBLE_PL };
+            listGeo.pl = { x0: leftX, x1: leftX + leftW + 18, rowH: plStep, count: playlists.length, visible: VISIBLE_PL };
             cv.scroll = true;
 
-            // Left Pane: Playlists (w: 500)
-            const plTitle = 'Your Playlists (' + (selectedPlaylistIdx + 1) + '/' + playlists.length + ')';
-            G.panelExact(cv, t, 24, 44, 500, m.panelH, plTitle);
+            // Right pane geometry: compact editorial hero banner + modern 2-line track list
+            const rx = 516, rw = 1060;
+            const heroH = Math.min(100, Math.max(82, Math.round(sz(cv, 64))));
+            const heroY = 48;
+            const trkTop = heroY + heroH + 12;
+            const trkListH = Math.max(60, m.listBottom - trkTop);
+            const songH = Math.min(60, Math.max(50, Math.round(sz(cv, 39))));
+            const songStep = songH + 6;
+            const VISIBLE_TRK = Math.max(1, Math.floor((trkListH + 6) / songStep));
 
-            // Left Pane Scrollbar
-            drawScrollbar(cv, t, 508, m.listTop, listH, playlists.length, VISIBLE_PL, playlistScroll, () => {
+            // Request thumbnails for all visible playlists + selected hero + visible tracks
+            const thumbUrls = [];
+            const visPls = playlists.slice(playlistScroll, playlistScroll + VISIBLE_PL);
+            visPls.forEach((pl) => { const u = plCoverOf(pl); if (u) thumbUrls.push(u); });
+            const heroUrl = plCoverOf(curPl);
+            if (heroUrl) thumbUrls.push(heroUrl);
+            const curTracks = (curPl && curPl.tracks) || [];
+            const moreTrk = spotify.hasMoreTracks(curPl);
+            const trkRows = curTracks.length + (moreTrk ? 1 : 0);
+            trackScroll = Math.max(0, Math.min(trackScroll, Math.max(0, trkRows - VISIBLE_TRK)));
+            curTracks.slice(trackScroll, trackScroll + VISIBLE_TRK).forEach((trk) => {
+                if (trk && trk.albumArt) thumbUrls.push(trk.albumArt);
+            });
+            artManager.loadThumbs(thumbUrls);
+
+            // ----- Left Sidebar: Your playlists -----
+            G.panelExact(cv, t, leftX, 44, leftW + 8, m.panelH, 'Your playlists');
+            cv.text((selectedPlaylistIdx + 1) + ' of ' + playlists.length, leftX + leftW, 44 + 32, Math.min(sz(cv, 11.5), 16), t.dim, { align: 'right' });
+            drawScrollbar(cv, t, leftX + leftW + 10, m.listTop, listH, playlists.length, VISIBLE_PL, playlistScroll, () => {
                 playlistScroll = Math.max(0, playlistScroll - 1);
                 selectedPlaylistIdx = Math.max(0, selectedPlaylistIdx - 1);
                 spotify.selectPlaylist(playlists[selectedPlaylistIdx]);
@@ -686,94 +719,129 @@ mgu.run({
                 spotify.selectPlaylist(playlists[selectedPlaylistIdx]);
             });
 
-            const visiblePlaylists = playlists.slice(playlistScroll, playlistScroll + VISIBLE_PL);
-            visiblePlaylists.forEach((pl, vIdx) => {
+            const PL_ACCENTS = [S.M1, S.M2, S.M3, S.BLUE, '#7cc8f0'];
+            visPls.forEach((pl, vIdx) => {
                 const realIdx = playlistScroll + vIdx;
-                const py = m.listTop + vIdx * m.plStep, ph = m.plH;
-                const isSel = realIdx === selectedPlaylistIdx;
-                const isPlPlaying = playingFrom(pl);       // the playlist Spotify plays from, selected or not
+                const py = m.listTop + vIdx * plStep;
+                const isSel = realIdx === selectedPlaylistIdx, isPlPlaying = playingFrom(pl);
+                const isLikedPl = /liked/i.test(pl.name || '');
 
-                cv.roundRect(38, py, 460, ph, 10, isSel ? withAlpha(t.accent, 0.22) : t.track);
-                if (isSel) cv.strokeRoundRect(38, py, 460, ph, 10, 2, t.accent);
+                cv.roundRect(leftX, py, leftW, plH, 6, '#101218');
+                cv.strokeRoundRect(leftX + 0.5, py + 0.5, leftW - 1, plH - 1, 6, 1, withAlpha('#ffffff', isSel ? 0.18 : 0.07));
+                if (isSel) S.lit(cv, t, leftX + 1, py + 1, leftW - 2, plH - 2, 0.92);
+                if (isPlPlaying) S.mark(cv, leftX + 7, py + Math.round(plH * 0.24), Math.round(plH * 0.52), S.acc(t));
 
-                // Accent tag
-                cv.roundRect(44, py + 8, 5, ph - 16, 2.5, isPlPlaying ? t.accent : (pl.accent || t.accent));
-                const plTextW = (isPlPlaying ? 452 : 486) - 62;     // up to the equalizer, or the row's end
-                const nSize = sz(cv, 17), dSize = sz(cv, 12.5);
-                const nY = py + ph / 2 - (ph * 0.06), dY = nY + dSize + ph * 0.14;
-                cv.text(fitText(cv, pl.name, plTextW, nSize, { font: 'bold' }), 62, nY, nSize, isSel ? t.text : '#e0e0e0', { font: 'bold' });
-                cv.text(fitText(cv, (pl.trackCount || 0) + ' songs  -  ' + (pl.description || 'Playlist'), plTextW, dSize), 62, dY, dSize, t.dim);
+                const tileSz = Math.max(38, plH - 16);
+                const tileX = leftX + (isPlPlaying ? 26 : 10), tileY = py + Math.round((plH - tileSz) / 2);
+                const pCol = pl.accent || PL_ACCENTS[realIdx % PL_ACCENTS.length];
+                drawCoverThumb(cv, t, isLikedPl ? '' : plCoverOf(pl), tileX, tileY, tileSz, 4, {
+                    heart: isLikedPl, lit: isSel, accent: pCol, letter: pl.name || 'P',
+                });
 
-                if (isPlPlaying) {
-                    drawMiniEqualizer(cv, 470, py + ph / 2, t.accent, spotify.isPlaying, spectrumSeed);
-                }
+                const textX = tileX + tileSz + 13;
+                const textW = leftX + leftW - textX - (isPlPlaying ? 44 : 14);
+                const nSize = Math.min(sz(cv, 13.5), 19), dSize = Math.min(sz(cv, 11), 15.5);
+                const nY = py + Math.round(plH * 0.44), dY = nY + dSize + 7;
+                cv.text(fitText(cv, pl.name, textW, nSize, { font: 'bold' }), textX, nY, nSize, isSel ? '#ffffff' : t.text, { font: 'bold' });
+                const sub = (pl.trackCount || 0) + ' songs' + (isPlPlaying ? (spotify.isPlaying ? '  ·  Playing' : '  ·  Paused') : '');
+                cv.text(fitText(cv, sub, textW, dSize), textX, dY, dSize, isPlPlaying ? S.acc(t) : t.dim);
+                if (isPlPlaying) drawMiniEqualizer(cv, leftX + leftW - 22, py + plH / 2, S.acc(t), spotify.isPlaying, spectrumSeed);
 
-                cv.target(38, py, 460, ph, () => {
+                cv.target(leftX, py, leftW, plH, () => {
                     selectedPlaylistIdx = realIdx;
                     trackScroll = 0;
                     spotify.selectPlaylist(pl);
-                }, 'pl_' + realIdx, 10);
+                }, 'pl_' + realIdx, 6);
             });
 
-            // Right Pane: Tracks of selected playlist (x: 540, w: 1036, h: 396)
-            const curPl = playlists[selectedPlaylistIdx] || playlists[0];
-            // the track that plays, in this playlist (another playlist's context marks nothing here)
+            // ----- Right Pane: Editorial Playlist Hero Header -----
             const ctxHere = !spotify.contextUri || !/:playlist:/.test(spotify.contextUri) || playingFrom(curPl);
-            const trackTotal = curPl.trackCount || (curPl.tracks ? curPl.tracks.length : 0);
+            const isHeroLiked = /liked/i.test(curPl.name || '');
+            const heroAccent = isHeroLiked ? S.M3 : (curPl.accent || S.M1);
+            const trackTotal = curPl.trackCount || curTracks.length;
 
-            G.panelExact(cv, t, 540, 44, 1036, metrics(cv).panelH, fitText(cv, curPl.name, 760, 26, { font: 'bold' }) + ' (' + trackTotal + ' tracks)');
+            cv.roundRect(rx, heroY, rw, heroH, 6, '#101218');
+            if (gpu) {
+                cv.clip(rx, heroY, rw, heroH);
+                S.softEllipse(cv, rx + 110, heroY + heroH * 0.5, 320, 120, heroAccent, 0.22);
+                cv.noclip();
+            }
+            cv.strokeRoundRect(rx + 0.5, heroY + 0.5, rw - 1, heroH - 1, 6, 1, withAlpha('#ffffff', 0.10));
 
-            // the songs of the playlist shown: fetched (and retried) from here, whatever selected it
-            spotify.ensureTracks(curPl);
+            const covSz = heroH - 20, covX = rx + 12, covY = heroY + 10;
+            if (gpu) S.softEllipse(cv, covX + covSz / 2, covY + covSz + 2, covSz * 0.52, 8, '#000000', 0.65);
+            drawCoverThumb(cv, t, isHeroLiked ? '' : heroUrl, covX, covY, covSz, 5, {
+                heart: isHeroLiked, lit: true, accent: heroAccent, letter: curPl.name || 'P',
+            });
 
-            if (!curPl.tracks || curPl.tracks.length === 0) {
+            // Hero action buttons: Play/Pause + Shuffle (right-aligned inside hero card)
+            const actH = Math.min(40, Math.max(34, Math.round(heroH * 0.44)));
+            const actSz = Math.min(sz(cv, 11.5), 16);
+            const actY = heroY + Math.round((heroH - actH) / 2);
+            const shufW = Math.round(cv.textWidth('Shuffle', actSz) + 48);
+            const playPlayingHere = playingFrom(curPl) && spotify.isPlaying;
+            const playLabel = playPlayingHere ? 'Pause' : 'Play';
+            const playW = Math.round(cv.textWidth('Pause', actSz, { font: 'bold' }) + 50);
+            const shufX = rx + rw - 14 - shufW;
+            const playX = shufX - 10 - playW;
+            const canPlayPl = curTracks.length > 0;
+
+            drawHeroAction(cv, t, playX, actY, playW, actH, playLabel,
+                (ix, iy, c) => (playPlayingHere ? drawPauseIcon(cv, ix, iy, 12, c) : drawPlayIcon(cv, ix + 1, iy, 12, c)),
+                canPlayPl ? () => {
+                    if (playingFrom(curPl)) runBusy('transport', () => spotify.togglePlay(), 'play');
+                    else runBusy('start', () => spotify.playPlaylist(curPl, false), 'pl_play:' + curPl.id);
+                } : null,
+                { primary: true, size: actSz, key: 'pl_hero_play', busy: busyOn('start', 'pl_play:' + curPl.id) || busyOn('transport', 'play') });
+
+            drawHeroAction(cv, t, shufX, actY, shufW, actH, 'Shuffle',
+                (ix, iy, c) => drawShuffleIcon(cv, ix, iy, 13, c),
+                canPlayPl ? () => runBusy('start', () => spotify.playPlaylist(curPl, true), 'pl_shuf:' + curPl.id) : null,
+                { active: !!spotify.shuffle && playingFrom(curPl), size: actSz, key: 'pl_hero_shuffle', busy: busyOn('start', 'pl_shuf:' + curPl.id) });
+
+            // Hero title, description & runtime summary
+            const hTx = covX + covSz + 18, hTw = Math.max(140, playX - 16 - hTx);
+            const hTitleSz = Math.min(sz(cv, 18.5), 26);
+            const hDescSz = Math.min(sz(cv, 11), 15.5);
+            const runtime = fmtTotalRuntime(curTracks);
+            const metaLine = trackTotal + ' songs' + (runtime ? '  ·  ' + runtime : '') + (curPl.description ? '  ·  ' + curPl.description : '');
+            cv.text(fitText(cv, curPl.name, hTw, hTitleSz, { font: 'bold' }), hTx, heroY + Math.round(heroH * 0.44), hTitleSz, t.text, { font: 'bold' });
+            cv.text(fitText(cv, metaLine, hTw, hDescSz), hTx, heroY + Math.round(heroH * 0.74), hDescSz, t.dim);
+
+            // ----- Right Pane: Modern 2-Line Track List -----
+            if (!curTracks.length) {
                 const none = !!curPl.tracksLoaded;
-                cv.roundRect(556, 120, 1004, 180, 12, t.track);
-                cv.text(none ? 'NO SONGS' : 'LOADING SONGS...', 1058, 195, 22, t.dim, { align: 'center', font: 'bold', spacing: 1 });
-                if (!none) drawSpinnerBefore(cv, 'LOADING SONGS...', 1058, 195, 22, t.accent);
-                cv.text(none ? 'This playlist has no songs that can be played here.' : 'Fetching track list from Spotify cloud...', 1058, 230, 16, t.dim, { align: 'center' });
+                drawEmptyList(cv, t, rx + 16, trkTop + 20, 880, { loading: !none, title: none ? 'No songs' : 'Loading songs', line: none ? 'This playlist has no songs that can be played here.' : 'Fetching them from Spotify.' });
             } else {
-                const m = metrics(cv), listH = m.listBottom - m.listTop;
-                const VISIBLE_TRK = Math.max(1, Math.floor((listH + 6) / m.songStep));
-                // more songs than loaded: a "loading" row closes the list, and the next page comes
-                // as the list nears its end
-                const moreTrk = spotify.hasMoreTracks(curPl);
-                const trkRows = curPl.tracks.length + (moreTrk ? 1 : 0);
-                trackScroll = Math.max(0, Math.min(trackScroll, Math.max(0, trkRows - VISIBLE_TRK)));
-                listGeo.trk = { x0: 540, x1: 1576, rowH: m.songStep, count: trkRows, visible: VISIBLE_TRK };
-                if (moreTrk && trackScroll + VISIBLE_TRK >= curPl.tracks.length - 5) spotify.loadMoreTracks(curPl);
-
-                // Right Pane Tracks Scrollbar
-                drawScrollbar(cv, t, 1554, m.listTop, listH, trkRows, VISIBLE_TRK, trackScroll, () => {
+                listGeo.trk = { x0: rx - 10, x1: 1576, rowH: songStep, count: trkRows, visible: VISIBLE_TRK };
+                if (moreTrk && trackScroll + VISIBLE_TRK >= curTracks.length - 5) spotify.loadMoreTracks(curPl);
+                drawScrollbar(cv, t, 1574, trkTop, trkListH, trkRows, VISIBLE_TRK, trackScroll, () => {
                     trackScroll = Math.max(0, trackScroll - VISIBLE_TRK);
                 }, () => {
                     trackScroll = Math.min(Math.max(0, trkRows - VISIBLE_TRK), trackScroll + VISIBLE_TRK);
                 });
-
-                const visibleTracks = curPl.tracks.slice(trackScroll, trackScroll + VISIBLE_TRK);
-                if (moreTrk && trackScroll + VISIBLE_TRK > curPl.tracks.length) {
-                    drawLoadingRow(cv, t, 556, m.listTop + (curPl.tracks.length - trackScroll) * m.songStep, 980,
-                        'Loading more songs (' + curPl.tracks.length + ' of ' + (curPl._total || trackTotal) + ')...', m.songH);
+                const rowW = trkRows > VISIBLE_TRK ? rw - 16 : rw;
+                if (moreTrk && trackScroll + VISIBLE_TRK > curTracks.length) {
+                    drawLoadingRow(cv, t, rx, trkTop + (curTracks.length - trackScroll) * songStep, rowW,
+                        'Loading more songs (' + curTracks.length + ' of ' + (curPl._total || trackTotal) + ')...', songH);
                 }
-
-                visibleTracks.forEach((trk, vIdx) => {
+                curTracks.slice(trackScroll, trackScroll + VISIBLE_TRK).forEach((trk, vIdx) => {
                     const realIdx = trackScroll + vIdx;
-                    const ty = m.listTop + vIdx * m.songStep;
+                    const ty = trkTop + vIdx * songStep;
                     const startKey = 'pl:' + curPl.id + ':' + realIdx;
                     const starting = busyOn('start', startKey);
                     const isPlayingThis = starting || (ctxHere && isPlayingTrack(trk));
-                    drawSongRow(cv, t, m, { x: 556, w: 980, y: ty, idx: realIdx, trk, playing: isPlayingThis, starting });
-                    cv.target(556, ty, 980, m.songH, () => {
+                    drawSongRow(cv, t, m, { x: rx, w: rowW, y: ty, h: songH, idx: realIdx, trk, playing: isPlayingThis, starting, showIndex: true });
+                    cv.target(rx, ty, rowW, songH, () => {
                         runBusy('start', () => spotify.playTrack(curPl, realIdx), startKey);
-                    }, 'trk_' + realIdx, 8);
+                    }, 'trk_' + realIdx, 6);
                 });
             }
 
-            // Bottom Player Dock
             drawBottomPlayerDock(cv, t);
         }
 
-        /* ---------- Page 1: Liked Songs ---------- */
+        /* ---------- Page 1: Liked Songs (Hero Header + Modern 2-Column Track Card Grid) ---------- */
         function drawLibrary(cv, t) {
             if (isOnlineMode() && !spotify.isAuthenticated()) {
                 drawRequireConnect(cv, t);
@@ -782,65 +850,146 @@ mgu.run({
 
             const liked = (spotify.likedSongs && spotify.likedSongs.length)
                 ? spotify.likedSongs
-                : (spotify.isDemoMode ? require('./api').DEMO_PLAYLISTS[3].tracks : []);
+                : (spotify.isDemoMode ? DEMO_PLAYLISTS[3].tracks : []);
 
             const total = spotify.likedTotal || liked.length;
-            const m = metrics(cv), listH = m.listBottom - m.listTop;
-            const VISIBLE_LIKED = Math.max(1, Math.floor((listH + 6) / m.songStep));
-            // more liked songs than loaded: a "loading" row closes the list, the next page comes near its end
+            const m = metrics(cv), gpu = !!cv.place;
+            const gx = 24, gw = 1552;
+
+            // Hero Header with M-crimson glow + Play / Shuffle pills
+            const heroY = 48, heroH = Math.min(92, Math.max(76, Math.round(sz(cv, 58))));
+            cv.roundRect(gx, heroY, gw, heroH, 6, '#101218');
+            if (gpu) {
+                cv.clip(gx, heroY, gw, heroH);
+                S.softEllipse(cv, gx + 120, heroY + heroH * 0.5, 360, 120, S.M3, 0.24);
+                cv.noclip();
+            }
+            cv.strokeRoundRect(gx + 0.5, heroY + 0.5, gw - 1, heroH - 1, 6, 1, withAlpha('#ffffff', 0.10));
+
+            const badgeSz = heroH - 20;
+            drawCoverThumb(cv, t, '', gx + 12, heroY + 10, badgeSz, 5, { heart: true, lit: true });
+
+            const actH = Math.min(40, Math.max(34, Math.round(heroH * 0.46)));
+            const actSz = Math.min(sz(cv, 11.5), 16);
+            const actY = heroY + Math.round((heroH - actH) / 2);
+            const shufW = Math.round(cv.textWidth('Shuffle', actSz) + 48);
+            const playW = Math.round(cv.textWidth('Pause', actSz, { font: 'bold' }) + 50);
+            const shufX = gx + gw - 14 - shufW;
+            const playX = shufX - 10 - playW;
+            const playingLikedCtx = !!(/:collection$/.test(spotify.contextUri || '') || (!spotify.isOnline && spotify.currentPlaylist && spotify.currentPlaylist.id === 'pl_liked'));
+            const likedPlayingNow = playingLikedCtx && spotify.isPlaying;
+
+            drawHeroAction(cv, t, playX, actY, playW, actH, likedPlayingNow ? 'Pause' : 'Play',
+                (ix, iy, c) => (likedPlayingNow ? drawPauseIcon(cv, ix, iy, 12, c) : drawPlayIcon(cv, ix + 1, iy, 12, c)),
+                liked.length ? () => {
+                    if (playingLikedCtx) runBusy('transport', () => spotify.togglePlay(), 'play');
+                    else runBusy('start', () => spotify.playLiked(false), 'liked_play');
+                } : null,
+                { primary: true, size: actSz, key: 'liked_hero_play', busy: busyOn('start', 'liked_play') || busyOn('transport', 'play') });
+
+            drawHeroAction(cv, t, shufX, actY, shufW, actH, 'Shuffle',
+                (ix, iy, c) => drawShuffleIcon(cv, ix, iy, 13, c),
+                liked.length ? () => runBusy('start', () => spotify.playLiked(true), 'liked_shuf') : null,
+                { active: !!spotify.shuffle && playingLikedCtx, size: actSz, key: 'liked_hero_shuffle', busy: busyOn('start', 'liked_shuf') });
+
+            // 2-Column Track Card Grid geometry
+            const gridTop = heroY + heroH + 12;
+            const gridH = Math.max(60, m.listBottom - gridTop);
+            const cardH = Math.min(64, Math.max(52, Math.round(sz(cv, 42))));
+            const rowStep = cardH + 8;
+            const VISIBLE_ROWS = Math.max(1, Math.floor((gridH + 8) / rowStep));
             const moreLiked = liked === spotify.likedSongs && spotify.hasMoreLiked();
-            const likedRows = liked.length + (moreLiked ? 1 : 0);
-            likedScroll = Math.max(0, Math.min(likedScroll, Math.max(0, likedRows - VISIBLE_LIKED)));
-            listGeo.liked = { x0: 24, x1: 1576, rowH: m.songStep, count: likedRows, visible: VISIBLE_LIKED };
-            if (moreLiked && likedScroll + VISIBLE_LIKED >= liked.length - 5) spotify.loadMoreLiked();
+            const totalGridRows = Math.ceil((liked.length + (moreLiked ? 1 : 0)) / 2);
+            likedScroll = Math.max(0, Math.min(likedScroll, Math.max(0, totalGridRows - VISIBLE_ROWS)));
+            listGeo.liked = { x0: gx, x1: gx + gw, rowH: rowStep, count: totalGridRows, visible: VISIBLE_ROWS };
+            if (moreLiked && (likedScroll + VISIBLE_ROWS) * 2 >= liked.length - 6) spotify.loadMoreLiked();
             cv.scroll = true;
-            const startIdx = total > 0 ? likedScroll + 1 : 0;
-            const endIdx = Math.min(likedScroll + VISIBLE_LIKED, liked.length, total);
-            const title = 'Liked Songs (' + (total > 0 ? (startIdx + '-' + endIdx + ' of ' + total) : '0') + ' tracks)';
 
-            G.panelExact(cv, t, 24, 44, 1552, m.panelH, title);
-
-            // Liked Songs Scrollbar
-            drawScrollbar(cv, t, 1554, m.listTop, listH, likedRows, VISIBLE_LIKED, likedScroll, () => {
-                likedScroll = Math.max(0, likedScroll - VISIBLE_LIKED);
-            }, () => {
-                likedScroll = Math.min(Math.max(0, likedRows - VISIBLE_LIKED), likedScroll + VISIBLE_LIKED);
-            });
+            // Hero text (title + range/runtime subtitle)
+            const hTx = gx + 12 + badgeSz + 18, hTw = Math.max(160, playX - 18 - hTx);
+            const hTitleSz = Math.min(sz(cv, 18.5), 26), hSubSz = Math.min(sz(cv, 11), 15.5);
+            const startIdx = liked.length ? likedScroll * 2 + 1 : 0;
+            const endIdx = Math.min((likedScroll + VISIBLE_ROWS) * 2, liked.length, total);
+            const runtime = fmtTotalRuntime(liked);
+            const subLine = total > 0
+                ? total + ' saved songs' + (endIdx < total ? '  ·  showing ' + startIdx + '–' + endIdx : '') + (runtime && liked.length === total ? '  ·  ' + runtime : '')
+                : 'Your saved tracks from Spotify';
+            cv.text('Liked Songs', hTx, heroY + Math.round(heroH * 0.45), hTitleSz, t.text, { font: 'bold' });
+            cv.text(fitText(cv, subLine, hTw, hSubSz), hTx, heroY + Math.round(heroH * 0.75), hSubSz, t.dim);
 
             if (!liked || liked.length === 0) {
-                cv.roundRect(48, 100, 1504, 200, 12, t.track);
-                cv.strokeRoundRect(48, 100, 1504, 200, 12, 1, t.panelEdge);
                 const loading = spotify.isLoadingLiked || spotify.syncing;
-                cv.text(loading ? 'LOADING LIKED SONGS...' : 'NO LIKED SONGS FOUND', 800, 180, 22, t.dim, { align: 'center', font: 'bold', spacing: 1 });
-                if (loading) drawSpinnerBefore(cv, 'LOADING LIKED SONGS...', 800, 180, 22, t.accent);
-                cv.text(loading ? 'Fetching your saved songs from Spotify cloud...' : 'Like songs on Spotify to access them directly here.', 800, 215, 16, t.dim, { align: 'center' });
+                drawEmptyList(cv, t, gx + 16, gridTop + 20, 1000, { loading, title: loading ? 'Loading your liked songs' : 'No liked songs yet', line: loading ? 'Fetching them from Spotify.' : 'Like songs in Spotify and they show here.' });
                 drawBottomPlayerDock(cv, t);
                 return;
             }
 
-            const visible = liked.slice(likedScroll, likedScroll + VISIBLE_LIKED);
-            if (moreLiked && likedScroll + VISIBLE_LIKED > liked.length) {
-                drawLoadingRow(cv, t, 40, m.listTop + (liked.length - likedScroll) * m.songStep, 1500,
-                    'Loading more liked songs (' + liked.length + ' of ' + total + ')...', m.songH);
+            const hasScroll = totalGridRows > VISIBLE_ROWS;
+            if (hasScroll) {
+                drawScrollbar(cv, t, 1574, gridTop, gridH, totalGridRows, VISIBLE_ROWS, likedScroll, () => {
+                    likedScroll = Math.max(0, likedScroll - VISIBLE_ROWS);
+                }, () => {
+                    likedScroll = Math.min(Math.max(0, totalGridRows - VISIBLE_ROWS), likedScroll + VISIBLE_ROWS);
+                });
             }
-            visible.forEach((trk, vIdx) => {
-                const realIdx = likedScroll + vIdx;
-                const ty = m.listTop + vIdx * m.songStep;
+
+            const usableW = hasScroll ? gw - 16 : gw;
+            const colGap = 16, colW = Math.floor((usableW - colGap) / 2);
+            const firstItem = likedScroll * 2;
+            const visItems = liked.slice(firstItem, firstItem + VISIBLE_ROWS * 2);
+            artManager.loadThumbs(visItems.map((trk) => trk && trk.albumArt).filter(Boolean));
+
+            visItems.forEach((trk, k) => {
+                const realIdx = firstItem + k;
+                const col = k % 2, row = Math.floor(k / 2);
+                const cx = gx + col * (colW + colGap);
+                const cy = gridTop + row * rowStep;
                 const startKey = 'liked:' + realIdx;
                 const starting = busyOn('start', startKey);
                 const isPlayingThis = starting || isPlayingTrack(trk);
-                drawSongRow(cv, t, m, { x: 40, w: 1500, y: ty, idx: realIdx, trk, playing: isPlayingThis, starting, heart: true });
-
-                cv.target(40, ty, 1500, m.songH, () => {
+                drawSongRow(cv, t, m, { x: cx, w: colW, y: cy, h: cardH, idx: realIdx, trk, playing: isPlayingThis, starting, heart: true, card: true, showIndex: false });
+                cv.target(cx, cy, colW, cardH, () => {
                     runBusy('start', () => spotify.playLikedSong(realIdx), startKey);
-                }, 'liked_' + realIdx, 8);
+                }, 'liked_' + realIdx, 6);
             });
 
-            // Bottom Player Dock
+            if (moreLiked && firstItem + VISIBLE_ROWS * 2 > liked.length) {
+                const k = liked.length - firstItem;
+                if (k >= 0 && k < VISIBLE_ROWS * 2) {
+                    const col = k % 2, row = Math.floor(k / 2);
+                    drawLoadingRow(cv, t, gx + col * (colW + colGap), gridTop + row * rowStep, colW,
+                        'Loading more (' + liked.length + ' of ' + total + ')...', cardH);
+                }
+            }
+
             drawBottomPlayerDock(cv, t);
         }
 
-        /* ---------- Page 2: Now Playing & Queue ---------- */
+        /* ---------- Page 2: Now Playing ---------- */
+        /**
+         * The song that plays, on a ground made of its own cover (blurred and dark), with the next songs
+         * standing behind it to the right: smaller, darker and softer the later they come. Text and controls
+         * on the left stay plain: title, a progress line in the M blues, five controls and the heart.
+         */
+        function upNext(curTrk) {
+            if (spotify.remoteQueue && spotify.remoteQueue.length) return spotify.remoteQueue;
+            const from = spotify.currentPlaylist && spotify.currentPlaylist.tracks ? spotify.currentPlaylist.tracks
+                : spotify.likedSongs && spotify.likedSongs.length ? spotify.likedSongs : [];
+            const i = from.findIndex((x) => curTrk && x.id === curTrk.id);
+            return i >= 0 ? from.slice(i + 1) : [];
+        }
+        function playUpcoming(trk, key) {
+            // what plays now, from this song on (a song queued by hand: that song alone)
+            const pl = spotify.currentPlaylist;
+            const pIdx = !spotify.contextUri && pl && pl.tracks ? pl.tracks.findIndex((x) => x.id === trk.id) : -1;
+            if (pIdx >= 0) runBusy('start', () => spotify.playTrack(pl, pIdx), key);
+            else runBusy('start', () => spotify.playQueued(trk), key);
+        }
+
+        let lastTrackId = null;
+        let trackSlideAt = 0;
+        const TRACK_SLIDE_MS = 340;
+
         function drawNowPlaying(cv, t) {
             if (isOnlineMode() && !spotify.isAuthenticated()) {
                 drawRequireConnect(cv, t);
@@ -849,369 +998,280 @@ mgu.run({
 
             const curTrk = spotify.currentTrack;
             const isPlaying = spotify.isPlaying;
-            const npEx = cv.extra || 0;        // the panels reach the screen's bottom: controls move with it
+            const ex = cv.extra || 0;
+            const gpu = !!cv.place;                 // the GPU draws: soft shapes and smooth scaling
+            const bottom = 512 + ex;
+            const selC = S.sel(t), acc = S.acc(t), crit = S.critC(t), warn = S.warnC(t);
 
-            // Left Pane: Now Playing Cockpit (w: 880, h: 468)
-            G.panel(cv, t, 24, 44, 880, 468, 'Now Playing');
+            // detect track switch for a smooth depth-queue glide-in (340 ms ease-out)
+            const tid = curTrk ? curTrk.id : null;
+            if (tid && lastTrackId && tid !== lastTrackId) trackSlideAt = Date.now();
+            lastTrackId = tid;
+            const slideRaw = trackSlideAt ? Math.max(0, 1 - (Date.now() - trackSlideAt) / TRACK_SLIDE_MS) : 0;
+            const slide = slideRaw * slideRaw * (3 - 2 * slideRaw);   // smoothstep 1 -> 0
+
+            // the ground: the cover, very blurred and dark, then darker towards the text and the bottom
+            if (gpu && curTrk && artManager.hasArt) {
+                cv.clip(0, 0, W, bottom);
+                cv.image(ART_GROUND_ID, -160, -620, 1920, 1920, 0);
+                cv.noclip();
+                S.shadeX(cv, 0, 0, 1000, bottom, t.bg, 0.72, 0.34);
+                S.shadeX(cv, 1000, 0, W - 1000, bottom, t.bg, 0.34, 0.56);
+                S.shadeY(cv, 0, bottom - 220, W, 220, t.bg, 0, 0.9);
+            }
 
             if (!curTrk) {
-                cv.roundRect(48, 120, 832, 220, 12, t.track);
-                cv.text('NO TRACK PLAYING', 464, 215, 22, t.dim, { align: 'center', font: 'bold', spacing: 1 });
-                cv.text('Select any song from Playlists or Liked Songs to begin playback.', 464, 255, 16, t.dim, { align: 'center' });
-            } else {
-                // Vinyl / Album Art Box
-                const artX = 54, artY = 104, artSz = Math.min(244, sz(cv, 190));      // as tall as the room over the progress bar allows
-                cv.roundRect(artX, artY, artSz, artSz, 14, '#0c1015');
-
-                if (artManager.hasArt) {
-                    cv.image(ART_IMG_ID, artX, artY, artSz, artSz, artSz * 0.07);
-                    cv.strokeRoundRect(artX, artY, artSz, artSz, 14, 1.5, isPlaying ? withAlpha(t.accent, 0.4) : withAlpha(t.panelEdge, 0.8));
-                } else {
-                    cv.strokeRoundRect(artX, artY, artSz, artSz, 14, 1.5, isPlaying ? withAlpha(t.accent, 0.4) : withAlpha(t.panelEdge, 0.8));
-
-                    // Vinyl disc representation
-                    const cx = artX + artSz / 2, cy = artY + artSz / 2;
-                    cv.circle(cx, cy, 98, '#07090c');
-                    cv.circle(cx, cy, 80, '#12161c');
-                    cv.circle(cx, cy, 60, '#0a0d12');
-                    cv.circle(cx, cy, 40, isPlaying ? withAlpha(t.accent, 0.3) : withAlpha(t.panelEdge, 0.5));
-                    cv.circle(cx, cy, 14, isPlaying ? t.accent : t.dim);
-
-                    // Multi-bar animated visualizer in center
-                    drawMiniEqualizer(cv, cx, cy, '#ffffff', isPlaying, spectrumSeed);
-                }
-
-                // Right of Album Art: Track Info, as wide as the panel lets it be
-                const metaX = artX + artSz + 26, metaW = 880 - metaX;
-                const devSize = sz(cv, 10.5), devH = sz(cv, 24), tSize = sz(cv, 27), aSize = sz(cv, 18), alSize = sz(cv, 14);
-                const devY = 106, titleY = devY + devH + 14 + tSize, artistY = titleY + aSize + 14, albumY = artistY + alSize + 12;
-
-                // where it plays: a pill as wide as its text, a live dot when music plays
-                const devOpts = { font: 'bold', spacing: 1 };
-                const devName = spotify.activeDevice ? spotify.activeDevice.toUpperCase() : '';
-                const devLabel = !devName ? 'SPOTIFY CONNECT'
-                    : spotify.stalled ? devName + '  -  NOT RESPONDING'
-                    : (isPlaying ? 'PLAYING ON  ' : 'PAUSED ON  ') + devName;
-                const devText = fitText(cv, devLabel, metaW - 20 - devH * 1.5, devSize, devOpts);
-                const devW = cv.textWidth(devText, devSize, devOpts) + devH * 1.5 + 14;
-                cv.roundRect(metaX, devY, devW, devH, devH / 2, withAlpha(t.accent, 0.16));
-                cv.circle(metaX + devH * 0.6, devY + devH / 2, devH * 0.16, isPlaying ? t.accent : withAlpha(t.accent, 0.45));
-                cv.text(devText, metaX + devH * 1.1, devY + devH / 2 + devSize * 0.36, devSize, t.accent, devOpts);
-
-                // Title, artist, album: cut only where the panel ends
-                cv.text(fitText(cv, curTrk.title, metaW, tSize, { font: 'bold' }), metaX, titleY, tSize, t.text, { font: 'bold' });
-                cv.text(fitText(cv, curTrk.artist, metaW, aSize), metaX, artistY, aSize, '#d4d8de');
-                if (curTrk.album) {
-                    cv.text(fitText(cv, curTrk.album, metaW, alSize), metaX, albumY, alSize, t.dim);
-                }
-
-                // what it plays from: the playlist, Liked Songs or the album
-                const ctxUri = spotify.contextUri || '';
-                let fromKind = '', fromName = '';
-                if (/:collection$/.test(ctxUri)) { fromKind = 'LIKED SONGS'; }
-                else if (/:playlist:/.test(ctxUri)) {
-                    const pl = (spotify.playlists || []).find((p) => p.uri === ctxUri);
-                    fromKind = 'PLAYLIST'; fromName = pl ? pl.name : '';
-                } else if (/:album:/.test(ctxUri)) { fromKind = 'ALBUM'; fromName = curTrk.album || ''; }
-                else if (/:artist:/.test(ctxUri)) { fromKind = 'ARTIST'; }
-                if (fromKind) {
-                    const fkSize = sz(cv, 9.5), fnSize = sz(cv, 14), fkY = albumY + 22 + fkSize;
-                    cv.text('PLAYING FROM ' + fromKind, metaX, fkY, fkSize, t.dim, { font: 'bold', spacing: 1.5 });
-                    if (fromName) cv.text(fitText(cv, fromName, metaW, fnSize, { font: 'bold' }), metaX, fkY + fnSize + 8, fnSize, t.text, { font: 'bold' });
-                }
-
-                // Progress Bar
-                const progX = 54, progY = 360 + npEx, progW = 820, progH = 6;
-                const dur = (curTrk && curTrk.durationMs) ? curTrk.durationMs : 1;
-                const pFrac = Math.min(1, Math.max(0, spotify.progressMs / dur));
-                cv.roundRect(progX, progY, progW, progH, 3, t.tick);
-                if (pFrac > 0) {
-                    cv.roundRect(progX, progY, Math.round(progW * pFrac), progH, 3, t.accent);
-                    cv.circle(progX + Math.round(progW * pFrac), progY + 3, 6, '#ffffff');
-                }
-                cv.text(fmtTime(spotify.progressMs), progX, progY + 24, 15, t.accent, { font: 'num' });
-                cv.text(fmtTime(curTrk.durationMs), progX + progW, progY + 24, 15, t.dim, { align: 'right', font: 'num' });
-                // a tap on the bar jumps there; the controller pressed on it jumps 15 s on
-                const seekPad = 10;
-                cv.target(progX - seekPad, progY - 16, progW + seekPad * 2, 34, (at) => {
-                    const to = at && at.w
-                        ? (Math.max(0, Math.min(progW, at.x - seekPad)) / progW) * dur
-                        : spotify.progressMs + 15000;
-                    runBusy('seek', () => spotify.seek(to));
-                }, 'np_seek', 6);
-
-                // Transport Controls: shuffle, previous, play, next, repeat centred under the panel,
-                // the heart at the right end. Secondary buttons are quiet until they are on.
-                // (sized for this display: sz)
-                const bh = sz(cv, 43), iconSz = sz(cv, 20);
-                const cy = 472 + npEx - bh / 2;
-                const midX = 464;
-                const btnBg = withAlpha(t.panelEdge, 0.55);
-                const toggle = (x, w, on, key, icon, run) => {
-                    const y = cy - bh / 2, h = bh;
-                    cv.roundRect(x, y, w, h, h / 2, on ? withAlpha(t.accent, 0.18) : btnBg);
-                    if (on) cv.strokeRoundRect(x, y, w, h, h / 2, 1.5, withAlpha(t.accent, 0.8));
-                    if (isBusy(key)) {
-                        drawSpinner(cv, x + w / 2, cy, sz(cv, 8), on ? t.accent : '#aeb4bd');
-                    } else {
-                        if (on) cv.circle(x + w / 2, y + h - 7, 2.5, t.accent);      // "on" dot, as Spotify marks it
-                        icon(x + w / 2, on ? cy - 2 : cy, on ? t.accent : '#aeb4bd');
-                    }
-                    cv.target(x, y, w, h, () => runBusy(key, run), key, h / 2);
-                };
-
-                // 3. Play / Pause: the big round one
-                const playR = sz(cv, 30);
-                cv.circle(midX, cy, playR, isBusy('transport') ? withAlpha(t.accent, 0.6) : t.accent);
-                if (busyOn('transport', 'play')) drawSpinner(cv, midX, cy, sz(cv, 11), '#000000', 4);
-                else if (isPlaying) drawPauseIcon(cv, midX, cy, sz(cv, 23), '#000000');
-                else drawPlayIcon(cv, midX + 2, cy, sz(cv, 23), '#000000');
-                cv.target(midX - playR, cy - playR, playR * 2, playR * 2, () => {
-                    runBusy('transport', () => spotify.togglePlay(), 'play');
-                }, 'np_play', playR);
-
-                // 2. / 4. Previous, Next: plain white glyphs on a soft round button
-                const skipW = sz(cv, 53), skipGap = sz(cv, 16);
-                const prevX = midX - playR - skipGap - skipW, nextX = midX + playR + skipGap;
-                [[prevX, 'np_prev', 'prev', drawPrevIcon, () => spotify.prevTrack()],
-                 [nextX, 'np_next', 'next', drawNextIcon, () => spotify.nextTrack()]].forEach(([x, key, id, icon, run]) => {
-                    cv.roundRect(x, cy - bh / 2, skipW, bh, bh / 2, btnBg);
-                    if (busyOn('transport', id)) drawSpinner(cv, x + skipW / 2, cy, sz(cv, 8), '#ffffff');
-                    else icon(cv, x + skipW / 2, cy, iconSz, isBusy('transport') ? '#6b7280' : '#ffffff');
-                    cv.target(x, cy - bh / 2, skipW, bh, () => runBusy('transport', run, id), key, bh / 2);
-                });
-
-                // 1. / 5. Shuffle, Repeat
-                const togW = sz(cv, 50), togGap = sz(cv, 14);
-                toggle(prevX - togGap - togW, togW, !!spotify.shuffle, 'np_shuffle',
-                    (x, y, c) => drawShuffleIcon(cv, x, y, iconSz, c), () => spotify.toggleShuffle());
-                const repMode = spotify.repeat;
-                toggle(nextX + skipW + togGap, togW, !!(repMode && repMode !== 'off'), 'np_repeat',
-                    (x, y, c) => drawRepeatIcon(cv, x, y, iconSz, c, repMode), () => spotify.toggleRepeat());
-
-                // 6. Like: at the end of the progress bar's line
-                const isLiked = !!spotify.isCurrentLiked;
-                const likeW = togW, likeX = 874 - likeW;
-                cv.roundRect(likeX, cy - bh / 2, likeW, bh, bh / 2, isLiked ? withAlpha(t.accent, 0.18) : btnBg);
-                if (isLiked) cv.strokeRoundRect(likeX, cy - bh / 2, likeW, bh, bh / 2, 1.5, withAlpha(t.accent, 0.8));
-                if (isBusy('like')) drawSpinner(cv, likeX + likeW / 2, cy, sz(cv, 8), isLiked ? t.accent : '#aeb4bd');
-                else drawHeartIcon(cv, likeX + likeW / 2, cy + 1, iconSz, isLiked ? t.accent : '#aeb4bd', isLiked);
-                cv.target(likeX, cy - bh / 2, likeW, bh, () => runBusy('like', () => spotify.toggleLikeCurrent()), 'np_like', bh / 2);
-            }
-
-            // Right Pane: Up Next in Queue (w: 656, h: 468)
-            let upcoming = (spotify.remoteQueue && spotify.remoteQueue.length) ? spotify.remoteQueue : [];
-            if (!upcoming.length && spotify.currentPlaylist && spotify.currentPlaylist.tracks) {
-                const trks = spotify.currentPlaylist.tracks;
-                const curIdx = trks.findIndex((x) => curTrk && x.id === curTrk.id);
-                if (curIdx >= 0 && curIdx < trks.length - 1) {
-                    upcoming = trks.slice(curIdx + 1);
-                }
-            } else if (!upcoming.length && spotify.likedSongs && spotify.likedSongs.length) {
-                const curIdx = spotify.likedSongs.findIndex((x) => curTrk && x.id === curTrk.id);
-                if (curIdx >= 0 && curIdx < spotify.likedSongs.length - 1) {
-                    upcoming = spotify.likedSongs.slice(curIdx + 1);
-                }
-            }
-
-            G.panel(cv, t, 920, 44, 656, 468, 'Up Next (' + upcoming.length + ')');
-
-            if (!upcoming || upcoming.length === 0) {
-                cv.roundRect(938, 120, 620, 180, 10, t.track);
-                cv.text('Queue is currently empty.', 1248, 195, 19, t.dim, { align: 'center', font: 'bold' });
-                cv.text('Play any track from Playlists or Liked Songs to queue up songs.', 1248, 230, 14, t.dim, { align: 'center' });
+                cv.text('Nothing playing', 56, 160, sz(cv, 30), t.text, { font: 'bold' });
+                cv.text('Start a song from Playlists or Liked Songs.', 56, 160 + sz(cv, 24), sz(cv, 14), t.dim);
                 return;
             }
 
-            const m = metrics(cv), qTop = 100, qStep = m.songStep, qH = m.songH;
-            const VISIBLE_Q = Math.max(1, Math.floor((498 + npEx - qTop + 6) / qStep));
-            queueScroll = Math.max(0, Math.min(queueScroll, Math.max(0, upcoming.length - VISIBLE_Q)));
-            listGeo.q = { x0: 920, x1: 1576, rowH: qStep, count: upcoming.length, visible: VISIBLE_Q };
-            cv.scroll = true;
-            const visibleQ = upcoming.slice(queueScroll, queueScroll + VISIBLE_Q);
-            visibleQ.forEach((trk, idx) => {
-                const qy = qTop + idx * qStep, qc = qy + qH / 2, base = (s) => qc + s * 0.36;
-                cv.roundRect(938, qy, 620, qH, 8, t.track);
-                cv.text(String(queueScroll + idx + 1), 938 + sz(cv, 16), base(m.num), m.num, t.dim, { align: 'center', font: 'num' });
-                const titleX = 938 + sz(cv, 36), artistX = 1250;
-                cv.text(fitText(cv, trk.title, artistX - 14 - titleX, m.title, { font: 'bold' }), titleX, base(m.title), m.title, t.text, { font: 'bold' });
-                const timeR = 1540;
-                cv.text(fitText(cv, trk.artist, timeR - sz(cv, 44) - artistX, m.meta), artistX, base(m.meta), m.meta, t.dim);
-                const startKey = 'q:' + trk.id;
-                if (busyOn('start', startKey)) drawSpinner(cv, timeR - 10, qc, sz(cv, 7), t.accent);
-                else cv.text(fmtTime(trk.durationMs), timeR, base(m.num), m.num, t.dim, { align: 'right', font: 'num' });
+            // the cover, with a soft shadow + subtle floor glow under it and a razor-sharp GPU SDF rounded edge matching the border
+            const artX = 56, artY = 72;
+            const artSz = Math.max(216, Math.min(340, bottom - artY - 54));
+            const artR = 6;
+            const coverOff = Math.round(slide * 18);
+            if (gpu) {
+                S.softEllipse(cv, artX + coverOff + artSz / 2, artY + artSz + 10, artSz * 0.52, 22, '#000000', 0.78);
+                S.softRect(cv, artX + coverOff + 16, artY + 32, artSz - 32, artSz - 24, 34, '#000000', 0.65);
+            }
+            if (artManager.hasArt) {
+                cv.image(ART_IMG_ID, artX + coverOff, artY, artSz, artSz, artR);
+            } else {
+                cv.roundRect(artX + coverOff, artY, artSz, artSz, artR, t.track);
+                drawMiniEqualizer(cv, artX + coverOff + artSz / 2, artY + artSz / 2, isPlaying ? acc : t.dim, isPlaying, spectrumSeed);
+            }
+            cv.strokeRoundRect(artX + coverOff + 0.5, artY + 0.5, artSz - 1, artSz - 1, artR, 1, withAlpha('#ffffff', 0.14));
 
-                cv.target(938, qy, 620, qH, () => {
-                    // what plays now, from this song on (a song queued by hand: that song alone)
-                    const pl = spotify.currentPlaylist;
-                    const pIdx = !spotify.contextUri && pl && pl.tracks ? pl.tracks.findIndex((x) => x.id === trk.id) : -1;
-                    if (pIdx >= 0) runBusy('start', () => spotify.playTrack(pl, pIdx), startKey);
-                    else runBusy('start', () => spotify.playQueued(trk), startKey);
-                }, 'q_trk_' + (queueScroll + idx), 8);
-            });
+            // where it plays (animated mini equalizer while playing, calm LED when paused), title, artist, album
+            const mx = artX + artSz + 38, mw = 994 - mx;
+            const lab = Math.min(sz(cv, 12), 18), tSize = Math.min(sz(cv, 38), 54), aSize = Math.min(sz(cv, 18), 26), alSize = Math.min(sz(cv, 13), 19);
+            const devName = spotify.activeDevice || '';
+            const devLabel = !devName ? 'Spotify Connect' : spotify.stalled ? devName + ' is not responding'
+                : (isPlaying ? 'Playing on ' : 'Paused on ') + devName;
+            const ledC = spotify.stalled ? warn : isPlaying ? acc : t.dim;
+            if (isPlaying && !spotify.stalled) {
+                drawMiniEqualizer(cv, mx + 10, 90 - lab * 0.36, acc, true, spectrumSeed);
+                cv.text(fitText(cv, devLabel, mw - 28, lab), mx + 28, 90, lab, t.dim);
+            } else {
+                if (gpu) S.softEllipse(cv, mx + 4, 90 - lab * 0.36, 9, 9, ledC, 0.7);
+                cv.circle(mx + 4, 90 - lab * 0.36, 4, ledC);
+                cv.text(fitText(cv, devLabel, mw - 20, lab), mx + 18, 90, lab, t.dim);
+            }
+            const titleY = 90 + 12 + tSize * 0.94, artistY = titleY + aSize + 12, albumY = artistY + alSize + 10;
+            cv.text(fitText(cv, curTrk.title, mw, tSize, { font: 'bold' }), mx, titleY, tSize, t.text, { font: 'bold' });
+            cv.text(fitText(cv, curTrk.artist, mw, aSize), mx, artistY, aSize, t.text);
+            const ctxUri = spotify.contextUri || '';
+            let from = '';
+            if (/:collection$/.test(ctxUri)) from = 'Liked Songs';
+            else if (/:playlist:/.test(ctxUri)) { const pl = (spotify.playlists || []).find((p) => p.uri === ctxUri); from = pl ? pl.name : 'a playlist'; }
+            else if (/:artist:/.test(ctxUri)) from = curTrk.artist;
+            const albumLine = [curTrk.album, from && from !== curTrk.album ? 'from ' + from : ''].filter(Boolean).join('  ·  ');
+            if (albumLine) cv.text(fitText(cv, albumLine, mw, alSize), mx, albumY, alSize, t.dim);
+
+            // controls sizing first (adaptive to mw so Repeat and Heart never overlap even on 8.8" panels)
+            const playR = Math.min(sz(cv, 26), Math.floor(mw * 0.082));
+            const hit = Math.min(sz(cv, 44), Math.floor(mw * 0.12));
+            const iconSz = Math.min(sz(cv, 18), Math.round(hit * 0.44));
+            const maxGap = Math.floor((mw - (hit * 5 + playR * 2) - 18) / 5);
+            const gap = Math.max(8, Math.min(sz(cv, 20), maxGap));
+
+            // progress: the line, the times under it; a tap on it jumps there, the controller pressed on it 15 s on
+            const tm = Math.min(sz(cv, 12), 18);
+            const cy = Math.round(Math.min(bottom - playR - 14, Math.max(albumY + 96 + playR, artY + artSz - playR - 2)));
+            const progY = Math.round(Math.min(cy - playR - tm - 30, Math.max(albumY + 34, artY + artSz * 0.68)));
+            const progW = mw;
+            const dur = curTrk.durationMs || 1, pFrac = Math.min(1, Math.max(0, spotify.progressMs / dur));
+            S.progress(cv, mx, progY, progW, pFrac, t);
+            cv.text(fmtTime(spotify.progressMs), mx, progY + 14 + tm, tm, t.dim, { font: 'num' });
+            cv.text('-' + fmtTime(Math.max(0, dur - spotify.progressMs)), mx + progW, progY + 14 + tm, tm, t.dim, { align: 'right', font: 'num' });
+            const seekPad = 10;
+            cv.target(mx - seekPad, progY - 16, progW + seekPad * 2, 34, (at) => {
+                const to = at && at.w ? (Math.max(0, Math.min(progW, at.x - seekPad)) / progW) * dur : spotify.progressMs + 15000;
+                runBusy('seek', () => spotify.seek(to));
+            }, 'np_seek', 6);
+
+            // controls: shuffle, previous, play (with BMW-blue focus halo), next, repeat from the left; heart at the end
+            let x = mx - 4;
+            const plain = (key, id, icon, run, on, busyKey) => {
+                const bx = x;
+                const busyHere = busyKey ? busyOn(busyKey, id) : isBusy(key);
+                if (busyHere) drawSpinner(cv, bx + hit / 2, cy, sz(cv, 8), on ? selC : '#ffffff');
+                else icon(bx + hit / 2, cy, on === undefined ? (isBusy('transport') ? '#6b7280' : '#ffffff') : on ? selC : '#aeb4bd');
+                if (on) cv.circle(bx + hit / 2, cy + iconSz * 0.85, 2.5, selC);
+                cv.target(bx, cy - hit / 2, hit, hit, run, key, hit / 2);
+                x += hit + gap;
+            };
+            plain('np_shuffle', null, (px, py, c) => drawShuffleIcon(cv, px, py, iconSz, c), () => runBusy('np_shuffle', () => spotify.toggleShuffle()), !!spotify.shuffle);
+            plain('np_prev', 'prev', (px, py, c) => drawPrevIcon(cv, px, py, iconSz, c), () => runBusy('transport', () => spotify.prevTrack(), 'prev'), undefined, 'transport');
+            // play / pause: white disc inside the Afterglow BMW-blue ring + soft halo
+            const px = x + playR;
+            if (gpu) S.softEllipse(cv, px, cy, playR + 20, playR + 20, selC, 0.36);
+            cv.arc(px, cy, playR + 3, playR + 5.2, 0, 360, selC);
+            cv.circle(px, cy, playR, isBusy('transport') ? withAlpha('#ffffff', 0.6) : '#ffffff');
+            if (busyOn('transport', 'play')) drawSpinner(cv, px, cy, sz(cv, 9), '#0b0c0f', 4);
+            else if (isPlaying) drawPauseIcon(cv, px, cy, Math.round(playR * 0.72), '#0b0c0f');
+            else drawPlayIcon(cv, px + 2, cy, Math.round(playR * 0.72), '#0b0c0f');
+            cv.target(px - playR - 4, cy - playR - 4, (playR + 4) * 2, (playR + 4) * 2, () => runBusy('transport', () => spotify.togglePlay(), 'play'), 'np_play', playR + 4);
+            x = px + playR + gap;
+            plain('np_next', 'next', (qx, qy, c) => drawNextIcon(cv, qx, qy, iconSz, c), () => runBusy('transport', () => spotify.nextTrack(), 'next'), undefined, 'transport');
+            const repMode = spotify.repeat;
+            plain('np_repeat', null, (qx, qy, c) => drawRepeatIcon(cv, qx, qy, iconSz, c, repMode), () => runBusy('np_repeat', () => spotify.toggleRepeat()), !!(repMode && repMode !== 'off'));
+            // the heart: theme crit/M red when liked
+            const isLiked = !!spotify.isCurrentLiked, lx = mx + progW - hit + 4;
+            if (isBusy('like')) drawSpinner(cv, lx + hit / 2, cy, sz(cv, 8), crit);
+            else drawHeartIcon(cv, lx + hit / 2, cy + 1, iconSz, isLiked ? crit : '#aeb4bd', isLiked);
+            cv.target(lx, cy - hit / 2, hit, hit, () => runBusy('like', () => spotify.toggleLikeCurrent()), 'np_like', hit / 2);
+
+            // up next: the next songs' covers standing back in depth (the GPU only: in software, the next one)
+            const upcoming = upNext(curTrk);
+            artManager.loadQueue(upcoming.slice(0, 4).map((x2) => x2.albumArt));
+            const qx = 1036;
+            const qMax = Math.floor((1564 - qx) / 2.26);      // guarantees slot 3 ends <= 1564 on every screen
+            const q = Math.min(qMax, Math.round(artSz * 0.64));
+            cv.text(upcoming.length ? 'Up next' : 'Nothing queued', qx, 90, lab, t.dim);
+            const SLOTS = [
+                [qx, 112, q],
+                [qx + Math.round(q * 0.87), 112 + Math.round(q * 0.055), Math.round(q * 0.71)],
+                [qx + Math.round(q * 1.48), 112 + Math.round(q * 0.1), Math.round(q * 0.5)],
+                [qx + Math.round(q * 1.9), 112 + Math.round(q * 0.136), Math.round(q * 0.355)],
+            ];
+            // faint horizon / floor line the depth queue stands on
+            if (upcoming.length) {
+                const floorY = SLOTS[0][1] + SLOTS[0][2] + 6;
+                S.shadeX(cv, qx - 16, floorY, 1564 - (qx - 16), 1, '#ffffff', 0.12, 0.02);
+            }
+            const n = Math.min(upcoming.length, gpu ? 4 : 1);
+            for (let k = n - 1; k >= 0; k--) {
+                const dst = SLOTS[k], src = SLOTS[Math.min(SLOTS.length - 1, k + 1)];
+                const sx = Math.round(dst[0] + (src[0] - dst[0]) * slide);
+                const sy = Math.round(dst[1] + (src[1] - dst[1]) * slide);
+                const s = Math.round(dst[2] + (src[2] - dst[2]) * slide);
+                const trk = upcoming[k], cr = Math.max(3, Math.round(s * 0.024));
+                if (gpu) S.softEllipse(cv, sx + s / 2, sy + s + 4, s * 0.56, Math.max(8, s * 0.075), '#000000', 0.8);
+                if (artManager.hasQueueArt(k)) cv.image(ART_QUEUE_ID + k, sx, sy, s, s, cr);
+                else cv.roundRect(sx, sy, s, s, cr, withAlpha('#ffffff', 0.05 - k * 0.01));
+                if (k === 0) cv.strokeRoundRect(sx + 0.5, sy + 0.5, s - 1, s - 1, cr, 1, withAlpha('#ffffff', 0.14));
+                const key = 'q:' + trk.id;
+                const x0 = k ? Math.max(dst[0], SLOTS[k - 1][0] + SLOTS[k - 1][2]) : dst[0];      // the part not behind the one in front
+                cv.target(x0, dst[1], dst[0] + dst[2] - x0, dst[2], () => playUpcoming(trk, key), 'q_trk_' + k, 4);
+            }
+            if (upcoming.length) {
+                const nx = upcoming[0], [sx, sy, s] = SLOTS[0], nt = Math.min(sz(cv, 15), 22), na = Math.min(sz(cv, 12), 18);
+                const inMs = Math.max(0, dur - spotify.progressMs);
+                const infoMaxW = 1564 - sx;
+                if (busyOn('start', 'q:' + nx.id)) drawSpinner(cv, sx + s - 14, sy + s + 20 + nt * 0.6, sz(cv, 7), selC);
+                cv.text(fitText(cv, nx.title, infoMaxW - 24, nt, { font: 'bold' }), sx, sy + s + 22 + nt, nt, t.text, { font: 'bold' });
+                const moreTxt = upcoming.length > 4 ? '+' + (upcoming.length - 4) + ' more' : '';
+                const moreW = moreTxt ? cv.textWidth(moreTxt, na) + 16 : 0;
+                cv.text(fitText(cv, nx.artist + '  ·  in ' + fmtTime(inMs), Math.max(120, infoMaxW - moreW), na), sx, sy + s + 30 + nt + na, na, t.dim);
+                if (moreTxt) cv.text(moreTxt, 1564, sy + s + 30 + nt + na, na, t.dim, { align: 'right' });
+            }
         }
 
         /* ---------- Page 3: Connect & Real Cloud Pairing ---------- */
+        /** A QR code on a white square with a soft shadow under it, size px, top left x, y. */
+        function drawQrBlock(cv, qr, url, x, y, size) {
+            const modCount = qr.size, modPx = Math.floor(size / modCount), actualSz = modPx * modCount;
+            const ox = x + Math.floor((size - actualSz) / 2), oy = y + Math.floor((size - actualSz) / 2);
+            if (cv.place) S.softRect(cv, ox, oy + 14, actualSz, actualSz, 26, '#000000', 0.7);
+            cv.roundRect(ox - 12, oy - 12, actualSz + 24, actualSz + 24, 4, '#ffffff');
+            // drawn once as a layer (kit gauges.qrCode), not a rectangle per module every frame
+            G.qrCode(cv, qr, url, ox, oy, modPx);
+        }
+
         function drawConnect(cv, t) {
-            // Left: Real Cloud Pairing QR Code or Connected Status
-            G.panelExact(cv, t, 24, 44, 580, metrics(cv).panelH, spotify.isAuthenticated() ? 'Spotify Account Status' : 'Scan to Connect Phone');
-
-            const authed = spotify.isAuthenticated();
+            const m = metrics(cv), authed = spotify.isAuthenticated(), acc = S.acc(t);
             if (!authed) showPhoneQr = false;
+
+            // left: the account, or the code to pair with
+            G.panelExact(cv, t, 24, 44, 560, m.panelH, authed && !showPhoneQr ? 'Your account' : authed ? 'Phone page' : 'Connect your phone');
+            const lx = 24, lw = 540, panelBottom = m.listBottom;
             if (authed && !showPhoneQr) {
-                // Connected Card
-                const GREEN = '#1ed760';
-                cv.roundRect(48, 98, 532, 284, 14, '#0a1612');
-                cv.strokeRoundRect(48, 98, 532, 284, 14, 1.5, withAlpha(GREEN, 0.55));
-
-                // badge: a check in a green disc, a soft ring around it
-                const cx = 314, by = 140;
-                cv.circle(cx, by, 36, withAlpha(GREEN, 0.12));
-                cv.arc(cx, by, 30, 32, 0, 360, withAlpha(GREEN, 0.45));
-                cv.circle(cx, by, 25, GREEN);
-                cv.polyline([[cx - 11, by + 1], [cx - 4, by + 8], [cx + 11, by - 8]], 4.5, '#04140b');
-                cv.circle(cx - 4, by + 8, 2.2, '#04140b');       // round the check's corner
-
-                cv.text('CONNECTED TO SPOTIFY', cx, 202, 20, '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
+                const headSize = Math.min(sz(cv, 19), 28);
+                const y = S.state(cv, t, lx, 104, lw, { tone: 'info', glow: !!cv.place, title: 'Connected to Spotify', size: headSize, lines: [] });
                 const prof = spotify.profile;
                 const plan = prof && prof.product ? prof.product.charAt(0).toUpperCase() + prof.product.slice(1) : '';
-                cv.text(prof ? fitText(cv, prof.name + (plan ? '  -  ' + plan : ''), 480, 16) : 'Signed in', cx, 226, 16, '#cbd5e1', { align: 'center' });
-
-                // where the music plays: a pill with a live dot, or how to start
-                const pillW = 380, pillX = cx - pillW / 2, pillY = 240, pillH = 32;
-                if (spotify.activeDevice) {
-                    cv.roundRect(pillX, pillY, pillW, pillH, 16, withAlpha(GREEN, 0.14));
-                    const label = fitText(cv, 'Playing on ' + spotify.activeDevice, pillW - 50, 15, { font: 'bold' });
-                    const lw = cv.textWidth(label, 15, { font: 'bold' });
-                    const lx = cx - (lw + 18) / 2;
-                    cv.circle(lx + 5, pillY + pillH / 2, 5, spotify.isPlaying ? GREEN : withAlpha(GREEN, 0.5));
-                    cv.text(label, lx + 18, pillY + 21, 15, GREEN, { font: 'bold' });
-                } else {
-                    cv.roundRect(pillX, pillY, pillW, pillH, 16, withAlpha('#ffffff', 0.06));
-                    cv.text(fitText(cv, 'No device playing - open Spotify on your phone', pillW - 24, 14), cx, pillY + 21, 14, '#94a3b8', { align: 'center' });
-                }
-
-                // the library at a glance
-                const nPl = (spotify.playlists || []).length;
-                const nLiked = spotify.likedTotal || (spotify.likedSongs || []).length;
-                cv.text(nPl + ' playlist' + (nPl === 1 ? '' : 's') + '   |   ' + nLiked + ' liked song' + (nLiked === 1 ? '' : 's'), cx, 294, 14, '#64748b', { align: 'center' });
-
-                // disconnecting or switching account is the phone's: the car follows it live. The
-                // phone page's QR code puts this car on a phone again (a new phone, cleared browser)
-                const qbW = 380, qbX = 314 - qbW / 2, qbH = Math.min(56, sz(cv, 36)), qbY = 376 - qbH;
-                cv.roundRect(qbX, qbY, qbW, qbH, 10, '#0f1a14');
-                cv.strokeRoundRect(qbX, qbY, qbW, qbH, 10, 1, withAlpha(GREEN, 0.6));
-                cv.text('SHOW QR FOR THE PHONE PAGE', qbX + qbW / 2, qbY + qbH / 2 + sz(cv, 4), sz(cv, 11), GREEN, { align: 'center', font: 'bold', spacing: 1 });
-                cv.target(qbX, qbY, qbW, qbH, () => { showPhoneQr = true; render().catch(() => {}); }, 'btn_phone_qr', 15);
-                cv.text('Disconnect or switch account on your phone.', cx, 404, 13, '#64748b', { align: 'center' });
+                const nPl = (spotify.playlists || []).length, nLiked = spotify.likedTotal || (spotify.likedSongs || []).length;
+                const rows = [
+                    ['Account', prof ? prof.name : 'Signed in'],
+                    ['Plan', plan || '--'],
+                    ['Playing on', spotify.activeDevice || 'No device: open Spotify on your phone'],
+                    ['Library', nPl + ' playlist' + (nPl === 1 ? '' : 's') + ' · ' + nLiked + ' liked song' + (nLiked === 1 ? '' : 's')],
+                ];
+                // size rows + button to stay strictly above the bottom dock even on 8.8" standard layout
+                const bh = Math.min(sz(cv, 28), 42), hintSz = Math.min(sz(cv, 11), 16);
+                const availRows = Math.max(96, panelBottom - (y + 4) - bh - hintSz - 36);
+                const rh = Math.min(sz(cv, 26), Math.floor(availRows / rows.length));
+                const rs = Math.min(sz(cv, 12.5), Math.round(rh * 0.48));
+                rows.forEach((r, i) => S.pair(cv, t, lx, y + 4 + i * rh, lw, rh, r[0], fitText(cv, r[1], lw - 160, rs), { size: rs, dot: i === 2 && spotify.activeDevice ? (spotify.isPlaying ? acc : t.dim) : null }));
+                const by = Math.min(panelBottom - bh - hintSz - 16, y + 4 + rows.length * rh + 16);
+                S.button(cv, t, lx, by, 'Show phone QR', () => { showPhoneQr = true; render().catch(() => {}); }, { h: bh, size: Math.min(sz(cv, 12), 18), key: 'btn_phone_qr' });
+                cv.text(fitText(cv, 'Disconnect or switch account on your phone.', lw, hintSz), lx, by + bh + hintSz + 10, hintSz, t.dim);
             } else {
-                // Real Cloud Pairing QR Code
-                const qrx = 224, qry = 100, qrsz = 180;
+                // Clean elevated dark QR card (generous centered QR, crisp pairing code, zero wall of tiny text)
+                const cardY = 104, cardH = Math.max(200, panelBottom - cardY);
+                cv.roundRect(lx, cardY, lw, cardH, 6, '#101218');
+                cv.strokeRoundRect(lx + 0.5, cardY + 0.5, lw - 1, cardH - 1, 6, 1, withAlpha('#ffffff', 0.09));
                 const qr = getQrMatrix();
-                if (qr) {
-                    const modCount = qr.size;
-                    const modPx = Math.floor(qrsz / modCount);
-                    const actualSz = modPx * modCount;
-                    const ox = qrx + Math.floor((qrsz - actualSz) / 2);
-                    const oy = qry + Math.floor((qrsz - actualSz) / 2);
-
-                    // White backdrop for clean camera scanning
-                    cv.roundRect(ox - 10, oy - 10, actualSz + 20, actualSz + 20, 10, '#ffffff');
-                    // drawn once as a layer (kit gauges.qrCode), not a rectangle per module every frame
-                    G.qrCode(cv, qr, cachedQrUrl, ox, oy, modPx);
-                }
-
-                const cx = 314;
-                cv.text(authed ? 'Scan to open this car on your phone' : 'Scan with phone to connect Spotify', cx, 320, 17, t.text, { align: 'center', font: 'bold' });
-                cv.text('PAIRING CODE: ' + cloudPair.getShortCode(), cx, 344, 14, '#00f0ff', { align: 'center', font: 'bold', spacing: 1 });
-                // paired: the phone that scans it may have the app installed; the camera opens the
-                // browser, and on iPhone the Home Screen app keeps its own cars
-                if (authed) cv.text('Installed the phone app? Scan with its Scan car QR, not the camera.', cx, 364, 12, '#64748b', { align: 'center' });
-                else cv.text('https://hexlay.github.io/idrive7-custom-apps/pair.html', cx, 364, 11, '#64748b', { align: 'center' });
+                const qrsz = Math.max(128, Math.min(200, cardH - 52));
+                const qx = lx + 28, qy = cardY + Math.round((cardH - qrsz) / 2);
+                if (qr) drawQrBlock(cv, qr, cachedQrUrl, qx, qy, qrsz);
+                const tx = qx + qrsz + 34, tw = lx + lw - tx - 20;
+                const ts = Math.min(sz(cv, 15.5), 22), ds = Math.min(sz(cv, 11.5), 16), codeSz = Math.min(sz(cv, 21), 28);
+                const title = authed ? 'Phone page' : 'Scan with your phone';
+                cv.text(fitText(cv, title, tw, ts, { font: 'bold' }), tx, qy + ts, ts, t.text, { font: 'bold' });
+                const sub = authed ? 'Manage account & car settings.' : 'Sign in to Spotify on your phone.';
+                cv.text(fitText(cv, sub, tw, ds), tx, qy + ts + ds + 10, ds, t.dim);
+                const codeY = qy + ts + ds + 44;
+                cv.text('Pairing code', tx, codeY, ds, t.dim);
+                cv.text(cloudPair.getShortCode(), tx, codeY + codeSz + 4, codeSz, acc, { font: 'bold', literal: true });
+                cv.text(fitText(cv, 'hexlay.github.io/.../pair.html', tw, Math.max(13, ds - 1), { literal: true }), tx, codeY + codeSz + 26, Math.max(13, ds - 1), t.dim, { literal: true });
                 if (authed) {
-                    const bbW = 380, bbX = 314 - bbW / 2, bbY = 384, bbH = Math.min(52, sz(cv, 34));
-                    cv.roundRect(bbX, bbY, bbW, bbH, 10, '#004e3a');
-                    cv.strokeRoundRect(bbX, bbY, bbW, bbH, 10, 1.5, '#1ed760');
-                    cv.text('BACK TO THE ACCOUNT', bbX + bbW / 2, bbY + bbH / 2 + sz(cv, 4), sz(cv, 11), '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
-                    cv.target(bbX, bbY, bbW, bbH, () => { showPhoneQr = false; render().catch(() => {}); }, 'btn_phone_qr_back', 15);
+                    const bbh = Math.min(sz(cv, 28), 38);
+                    S.button(cv, t, tx, qy + qrsz - bbh + 6, 'Back to account', () => { showPhoneQr = false; render().catch(() => {}); },
+                        { h: bbh, size: Math.min(sz(cv, 11.5), 16), key: 'btn_phone_qr_back', w: Math.min(tw, 190) });
                 }
             }
 
-            // Right: Spotify Connect Target Devices
-            G.panelExact(cv, t, 620, 44, 956, metrics(cv).panelH, 'Spotify Connect Devices');
+            // right: the Spotify Connect devices
+            G.panelExact(cv, t, 620, 44, 956, m.panelH, 'Spotify Connect devices');
             const devices = spotify.getDevices();
-
+            const devBusy = isBusy('devices');
             if (!devices || devices.length === 0) {
-                cv.roundRect(644, 100, 908, 230, 14, t.track);
-                cv.strokeRoundRect(644, 100, 908, 230, 14, 1, t.panelEdge);
-
-                cv.circle(714, 170, 30, withAlpha(t.accent, 0.22));
-                cv.text('!', 714, 180, 26, t.accent, { align: 'center', font: 'bold' });
-
-                cv.text('NO ACTIVE SPOTIFY DEVICES FOUND', 770, 158, 20, t.text, { font: 'bold' });
-                cv.text('Open Spotify on your iPhone, Mac, or car to connect playback.', 770, 186, 15, '#cbd5e1');
-                cv.text('Spotify Connect routes audio to an active device running Spotify.', 770, 210, 13, t.dim);
-
-                // Refresh Button
-                const rfW = 220, rfH = 42, rfX = 770, rfY = 240;
-                const devBusy = isBusy('devices');
-                cv.roundRect(rfX, rfY, rfW, rfH, 8, withAlpha(t.accent, devBusy ? 0.1 : 0.22));
-                cv.strokeRoundRect(rfX, rfY, rfW, rfH, 8, 1.5, withAlpha(t.accent, devBusy ? 0.5 : 1));
-                if (devBusy) {
-                    drawSpinner(cv, rfX + 44, rfY + rfH / 2, 9, t.accent);
-                    cv.text('SEARCHING...', rfX + rfW / 2 + 12, rfY + 26, 14, withAlpha(t.accent, 0.8), { align: 'center', font: 'bold', spacing: 1 });
-                } else {
-                    cv.text('REFRESH DEVICES', rfX + rfW / 2, rfY + 26, 14, t.accent, { align: 'center', font: 'bold', spacing: 1 });
-                }
-                cv.target(rfX, rfY, rfW, rfH, () => {
-                    runBusy('devices', () => spotify.fetchDevices());
-                }, 'btn_refresh_devs', 12);
+                drawEmptyList(cv, t, 644, 120, 880, {
+                    loading: devBusy, title: devBusy ? 'Looking for devices' : 'No Spotify devices found',
+                    line: 'Open Spotify on your phone, computer or speaker and it shows here.',
+                    button: devBusy ? null : { label: 'Refresh', key: 'btn_refresh_devs', run: () => runBusy('devices', () => spotify.fetchDevices()) },
+                });
             } else {
                 // as many as the panel holds; the one that plays first
-                // (sized for this display: sz)
-                const m = metrics(cv), rowH = sz(cv, 54), step = rowH + 10, devTop = 102;
-                const DEV_ROWS = Math.max(1, Math.floor((m.listBottom - devTop + 10) / step));
-                const nSize = sz(cv, 17), sSize = sz(cv, 12.5), bSize = sz(cv, 11);
+                const rowH = sz(cv, 52), step = rowH + 6, devTop = m.listTop;
+                const DEV_ROWS = Math.max(1, Math.floor((m.listBottom - devTop + 6) / step));
+                const nSize = sz(cv, 16), sSize = sz(cv, 12);
                 const shown = devices.slice().sort((x, y) => (y.isActive ? 1 : 0) - (x.isActive ? 1 : 0)).slice(0, DEV_ROWS);
+                const rx = 620, rw = 956;
                 shown.forEach((dev, idx) => {
                     const dy = devTop + idx * step, mid = dy + rowH / 2;
-                    const isCur = !!dev.isActive;
-                    const moving = busyOn('transfer', dev.id);
-                    cv.roundRect(644, dy, 908, rowH, 12, isCur ? withAlpha(t.accent, 0.16) : t.track);
-                    if (isCur || moving) cv.strokeRoundRect(644, dy, 908, rowH, 12, 1.5, withAlpha(t.accent, isCur ? 0.8 : 0.4));
-
-                    // the device's kind, in a round tile
-                    const iconR = Math.round(rowH * 0.32), iconX = 644 + 18 + iconR;
-                    cv.circle(iconX, mid, iconR, isCur ? withAlpha(t.accent, 0.2) : withAlpha('#ffffff', 0.06));
-                    drawDeviceIcon(cv, iconX, mid, dev.type, isCur ? t.accent : '#aeb4bd');
-
-                    // the action: where it plays, or "play here"
-                    const bw = sz(cv, 104), bh = sz(cv, 30), bx = 644 + 908 - 20 - bw, by = mid - bh / 2;
-                    const textX = iconX + iconR + 18;
-                    cv.text(fitText(cv, dev.name, bx - 20 - textX, nSize, { font: 'bold' }), textX, mid - 4, nSize, isCur ? t.text : '#dddddd', { font: 'bold' });
-                    const vol = typeof dev.volume === 'number' ? '  |  Volume ' + dev.volume + '%' : '';
-                    cv.text(fitText(cv, (isCur ? (spotify.isPlaying ? 'Playing now' : 'Paused here') : dev.type) + vol, bx - 20 - textX, sSize), textX, mid + sSize + 4, sSize, isCur ? t.accent : t.dim);
-                    const bBase = by + bh / 2 + bSize * 0.36;
+                    const isCur = !!dev.isActive, moving = busyOn('transfer', dev.id);
+                    S.hairline(cv, rx, dy - 3, rw);
+                    if (isCur) { S.shadeX(cv, rx, dy, rw * 0.55, rowH, acc, 0.14, 0); S.mark(cv, rx + 2, dy + rowH * 0.22, rowH * 0.56, acc); }
+                    drawDeviceIcon(cv, rx + 40, mid, dev.type, isCur ? acc : '#aeb4bd');
+                    const textX = rx + 82, bw = sz(cv, 104), bx = rx + rw - 12 - bw;
+                    const vol = typeof dev.volume === 'number' ? '  ·  volume ' + dev.volume + ' %' : '';
+                    cv.text(fitText(cv, dev.name, bx - 20 - textX, nSize, { font: 'bold' }), textX, mid - 3, nSize, t.text, { font: 'bold' });
+                    cv.text(fitText(cv, (isCur ? (spotify.isPlaying ? 'Playing here' : 'Paused here') : dev.type) + vol, bx - 20 - textX, sSize), textX, mid + sSize + 5, sSize, isCur ? acc : t.dim);
                     if (isCur) {
-                        cv.roundRect(bx, by, bw, bh, bh / 2, withAlpha(t.accent, 0.22));
-                        cv.circle(bx + bh * 0.6, by + bh / 2, 4, t.accent);
-                        cv.text('ACTIVE', bx + bw / 2 + 8, bBase, bSize, t.accent, { align: 'center', font: 'bold', spacing: 1 });
-                    } else if (moving) {
-                        cv.roundRect(bx, by, bw, bh, bh / 2, withAlpha('#ffffff', 0.06));
-                        drawSpinner(cv, bx + bw / 2, by + bh / 2, sz(cv, 8), t.accent);
-                    } else {
-                        const dim = isBusy('transfer');
-                        cv.strokeRoundRect(bx, by, bw, bh, bh / 2, 1.5, withAlpha('#ffffff', dim ? 0.15 : 0.45));
-                        cv.text('PLAY HERE', bx + bw / 2, bBase, bSize, dim ? '#64748b' : '#ffffff', { align: 'center', font: 'bold', spacing: 1 });
-                    }
-
-                    cv.target(644, dy, 908, rowH, () => {
+                        S.led(cv, bx + bw - cv.textWidth('Active', sSize) - 16, mid, acc, !!cv.place);
+                        cv.text('Active', bx + bw, mid + sSize * 0.36, sSize, t.text, { align: 'right' });
+                    } else if (moving) drawSpinner(cv, bx + bw / 2, mid, sz(cv, 8), acc);
+                    else S.button(cv, t, bx, mid - sz(cv, 15), 'Play here', null, { h: sz(cv, 30), size: sz(cv, 12), w: bw, busy: isBusy('transfer') });
+                    cv.target(rx, dy, rw, rowH, () => {
                         if (!isCur) runBusy('transfer', () => spotify.transferToDevice(dev.id), dev.id);
-                    }, 'dev_' + idx, 12);
+                    }, 'dev_' + idx, 3);
                 });
             }
 
-            // Bottom Player Dock
             drawBottomPlayerDock(cv, t);
         }
 
@@ -1221,19 +1281,20 @@ mgu.run({
         // the pairing call render() themselves and always draw.
         function frameSig() {
             const trk = spotify.currentTrack, pl = spotify.currentPlaylist, n = spotify.notice;
-            return [page, showPhoneQr, selectedPlaylistIdx, playlistScroll, trackScroll, likedScroll, queueScroll,
-                settings.get('theme'), settings.get('demo'), spotify.hasInternet, spotify.isAuthenticated(),
+            return [page, showPhoneQr, selectedPlaylistIdx, playlistScroll, trackScroll, likedScroll,
+                settings.get('demo'), spotify.hasInternet, spotify.isAuthenticated(),
                 trk ? trk.id : '', spotify.isPlaying, spotify.stalled, spotify.shuffle, spotify.repeat, spotify.isCurrentLiked,
                 Math.floor((spotify.progressMs || 0) / 1000), spotify.contextUri, spotify.activeDevice,
                 (spotify.playlists || []).length, pl ? pl.id + ':' + ((pl.tracks && pl.tracks.length) || 0) : '',
                 (spotify.likedSongs || []).length, spotify.likedTotal, (spotify.remoteQueue || []).length,
                 (spotify.devices || []).map((d) => d.id + (d.isActive ? '*' : '')).join(','),
-                artManager.hasArt, artManager.currentUrl, n && Date.now() - n.at <= NOTICE_MS ? n.text : ''].join('|');
+                artManager.hasArt, artManager.currentUrl, artManager.queueSig(), artManager.thumbSig(), n && Date.now() - n.at <= NOTICE_MS ? n.text : ''].join('|');
         }
         let lastSig = '', lastDrawAt = 0;
-        /** The loop's frame: drawn while something moves (music, a spinner), on a change, or once a second. */
+        /** The loop's frame: drawn while something moves (music, a spinner, cover transition), on a change, or once a second. */
         function loopFrame() {
-            const moving = spotify.isPlaying || Object.keys(busy).some(isBusy) || spotify.isLoadingPlaylists || spotify.isLoadingLiked;
+            const sliding = trackSlideAt && Date.now() - trackSlideAt < TRACK_SLIDE_MS + 50;
+            const moving = spotify.isPlaying || sliding || Object.keys(busy).some(isBusy) || spotify.isLoadingPlaylists || spotify.isLoadingLiked;
             if (!moving && Date.now() - lastDrawAt < 1000) {
                 spotify.tick();                 // the polls go on
                 if (frameSig() === lastSig) return Promise.resolve();
@@ -1303,12 +1364,11 @@ mgu.run({
             const text = fitText(cv, n.text, maxW, size, opts);
             const w = cv.textWidth(text, size, opts) + 76, h = 46;
             const x = Math.round(cx - w / 2), y = 446 + (cv.extra || 0) - h - (onNp ? -40 : 12);
-            cv.roundRect(x, y, w, h, h / 2, '#2a1d10');
-            cv.strokeRoundRect(x, y, w, h, h / 2, 1.5, withAlpha('#ffb703', 0.8));
-            cv.circle(x + 26, y + h / 2, 9, '#ffb703');
-            cv.text('!', x + 26, y + h / 2 + 5, 14, '#2a1d10', { align: 'center', font: 'bold' });
-            cv.text(text, x + 46, y + h / 2 + 6, size, '#ffe2a8', opts);
-            cv.target(x, y, w, h, () => { spotify.notice = null; render(); }, 'notice', 23);
+            cv.roundRect(x, y, w, h, 3, '#17181d');
+            cv.strokeRoundRect(x + 0.5, y + 0.5, w - 1, h - 1, 3, 1, withAlpha('#ffffff', 0.16));
+            S.mark(cv, x + 18, y + 12, h - 24, S.warnC(t));
+            cv.text(text, x + 46, y + h / 2 + 6, size, '#ffffff', opts);
+            cv.target(x, y, w, h, () => { spotify.notice = null; render(); }, 'notice', 3);
             // over the list rows: a tap on it is its own (the first target under a finger wins)
             if (Array.isArray(cv.targets)) cv.targets.unshift(cv.targets.pop());
         }

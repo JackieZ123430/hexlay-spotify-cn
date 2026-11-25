@@ -162,7 +162,8 @@ class Display {
 
     /** Start / stop the GPU path for the 'renderer' setting; wait for the socket if it isn't there yet. */
     _mode() {
-        const want = (process.env.MGU_RENDERER || this.settings.get('renderer') || 'auto') !== 'software';
+        const setting = this.settings.item && this.settings.item('renderer') ? this.settings.get('renderer') : 'auto';
+        const want = (process.env.MGU_RENDERER || setting || 'auto') !== 'software';
         if (this.poll) { clearInterval(this.poll); this.poll = null; }
         if (!want) {
             if (this.gpu) { this.gpu.show(false); this.gpu.close(); this.gpu = null; this.place = null; this._lost(); }
@@ -625,7 +626,7 @@ class Display {
     }
 
     layout() {
-        const v = this.settings.get('layout') || 'full';
+        const v = (this.settings.item && this.settings.item('layout') ? this.settings.get('layout') : 'full') || 'full';
         return LAYOUTS.indexOf(v) >= 0 ? v : 'full';
     }
 
@@ -906,12 +907,16 @@ class Display {
             this.screen.title || this.spec.title, tb.tabs, tb.sel, tb.badges, true, true, this.chromeK());
         // the HMI's own title is in the strip under the header: a narrower header (a sheet: no tabs) stays
         // as wide as the app's widest, so none of that title shows beside it
+        const ag = t.style === 'afterglow';
         if (!this.sheet) this.headMax = Math.max(this.headMax || 0, end);
         const sx = this.headEnd = Math.min(geo.statusX - pl.x, Math.ceil(Math.max(end, this.headMax || 0)));
-        if (sx > end) { c.fillRect(end, 0, sx - end, geo.headH - 2, HMI.headBg); c.fillRect(end, geo.headH - 2, sx - end, 2, G.withAlpha('#ffffff', 0.22)); }
+        if (sx > end) { c.fillRect(end, 0, sx - end, geo.headH - (ag ? 1 : 2), HMI.headBg); c.fillRect(end, geo.headH - (ag ? 1 : 2), sx - end, ag ? 1 : 2, G.withAlpha('#ffffff', ag ? 0.12 : 0.22)); }
         // the tab the controller is on (the kit holds it: Display._ccu)
         const ft = this.focusTab != null && (!this.sheet || this.sheetHead) && (c.tabRects || []).find((q) => q.i === this.focusTab);
-        if (ft) c.strokeRoundRect(ft.x + 4, ft.y + 10, ft.w - 8, ft.h - 20, 10, 2, t.sel || t.accent);
+        if (ft) {
+            if (ag) c.strokeRoundRect(ft.x + 3, ft.y + 8, ft.w - 6, ft.h - 14, 4, 2, t.sel || t.accent);
+            else c.strokeRoundRect(ft.x + 4, ft.y + 10, ft.w - 8, ft.h - 20, 10, 2, t.sel || t.accent);
+        }
         // the page button (or row) the controller is on, and one just pressed
         const k = pl.scale, onPage = (key) => !this.sheet && key && (this.pageTargets || []).find((q) => 'tgt:' + q.key === key);
         const pt = onPage(this.focusKey), pp = Date.now() - this.pressedT < 300 && onPage(this.pressed);
@@ -919,12 +924,15 @@ class Display {
         // the controller on a page that scrolls: a frame round the page; on a list (cv.scroll = { y, bar }) its
         // scroll bar in the colour of the selection (bar: where the page drew it, so it moves with the list)
         const sb = this.focusKey === 'scroll' && !this.sheet && this.pageScroll;
-        if (sb === true) c.strokeRoundRect(hx + 6, geo.headH + 6, W - hx - 12, H - this.barH() - geo.headH - 12, 14, 3, G.withAlpha(t.sel || t.accent, 0.8));
+        if (sb === true) c.strokeRoundRect(hx + 6, geo.headH + 6, W - hx - 12, H - this.barH() - geo.headH - 12, ag ? 6 : 14, ag ? 2 : 3, G.withAlpha(t.sel || t.accent, 0.8));
         else if (sb && sb.bar) c.roundRect((sb.bar.x - 2) * k + pl.ox, sb.bar.y * k + pl.oy, (sb.bar.w + 4) * k, sb.bar.h * k, (sb.bar.w / 2 + 2) * k, t.sel || t.accent);
-        if (pt) c.strokeRoundRect(pt.x * k + pl.ox - 5, pt.y * k + pl.oy - 5, pt.w * k + 10, pt.h * k + 10, (pt.r != null ? pt.r : pt.h / 2) * k + 5, 3, t.sel || t.accent);
+        if (pt) {
+            const pad = ag ? 3 : 5, lw = ag ? 2.5 : 3;
+            c.strokeRoundRect(pt.x * k + pl.ox - pad, pt.y * k + pl.oy - pad, pt.w * k + pad * 2, pt.h * k + pad * 2, (pt.r != null ? pt.r : pt.h / 2) * k + pad, lw, t.sel || t.accent);
+        }
         // the strip's bottom edge continues under the see-through part
         c.fillRect(sx, 0, W - sx, geo.headH, HMI.headBg);
-        c.fillRect(sx, geo.headH - 2, W - sx, 2, G.withAlpha('#ffffff', 0.22));
+        c.fillRect(sx, geo.headH - (ag ? 1 : 2), W - sx, ag ? 1 : 2, G.withAlpha('#ffffff', ag ? 0.12 : 0.22));
         // slim bar: each label over its HMI button
         const by = H - this.barH();
         const btns = this.buttons().map((b) => ({ id: b.id, label: b.label, x: b.x - this.barOff - pl.x, w: b.w }));
@@ -936,6 +944,8 @@ class Display {
         // mark the HMI draws above it when its bar is wider than the screen (eDrive's "Reset drive totals")
         c.clip(sx, 0, W - sx, geo.statusH).clear(0).noclip();
         if (hx > 0) c.clip(0, 0, hx, geo.colEnd - pl.y).clear(0).noclip();
+        // subtle vertical cockpit frame seam separating the app surface from BMW's back-arrow column
+        if (ag && hx > 0) c.fillRect(hx, geo.headH, 1, H - geo.headH, G.withAlpha('#ffffff', 0.08));
         drawCredit(c, W - 18, geo.headH + 17);
         r.xf(1, 0, 0).append(c).xf();
     }

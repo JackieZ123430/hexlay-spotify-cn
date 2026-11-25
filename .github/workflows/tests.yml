@@ -28,6 +28,7 @@ jobs:
         run: git ls-files 'apps/*.js' 'kit/runtime/*.js' 'kit/renderd/js/*.js' 'kit/renderd/prebuilt/*.js' 'kit/tools/oapgen/*.js' 'deploy/*.js' | xargs -n1 node --check
       - run: node kit/tools/test_spotify.js
       - run: node kit/tools/test_spotify_auth.js
+      - run: node kit/tools/test_afterglow.js
       - run: node kit/tools/test_diag_options.js
       - run: node kit/tools/test_copilot_signals.js
       - run: node kit/tools/test_copilot_engines.js
@@ -52,6 +53,7 @@ jobs:
       - run: node kit/tools/test_carlink.js
       - run: node kit/tools/test_spotify.js
       - run: node kit/tools/test_spotify_auth.js
+      - run: node kit/tools/test_afterglow.js
       - run: node kit/tools/test_diag_options.js
       - run: node kit/tools/test_copilot_signals.js
       - run: node kit/tools/test_copilot_engines.js

@@ -70,15 +70,16 @@ const DEMO_PLAYLISTS = [
         description: 'High adrenaline soundtracks for sport mode & open roads',
         trackCount: 7,
         accent: '#e1001a',
+        image: 'demo:t1',
         uri: 'spotify:playlist:demo_m',
         tracks: [
-            { id: 't1', title: 'Midnight City', artist: 'M83', album: 'Hurry Up, We\'re Dreaming', durationMs: 243000, uri: 'spotify:track:t1', albumArt: DEMO_ART },
-            { id: 't2', title: 'Turbo Killer', artist: 'Carpenter Brut', album: 'Trilogy', durationMs: 208000, uri: 'spotify:track:t2', albumArt: DEMO_ART },
-            { id: 't3', title: 'Nightcall', artist: 'Kavinsky', album: 'Drive OST', durationMs: 259000, uri: 'spotify:track:t3', albumArt: DEMO_ART },
-            { id: 't4', title: 'Blinding Lights', artist: 'The Weeknd', album: 'After Hours', durationMs: 200000, uri: 'spotify:track:t4', albumArt: DEMO_ART },
-            { id: 't5', title: 'Resonance', artist: 'HOME', album: 'Odyssey', durationMs: 212000, uri: 'spotify:track:t5', albumArt: DEMO_ART },
-            { id: 't6', title: 'Starboy', artist: 'The Weeknd, Daft Punk', album: 'Starboy', durationMs: 230000, uri: 'spotify:track:t6', albumArt: DEMO_ART },
-            { id: 't7', title: 'Days of Thunder', artist: 'The Midnight', album: 'Days of Thunder', durationMs: 278000, uri: 'spotify:track:t7', albumArt: DEMO_ART },
+            { id: 't1', title: 'Midnight City', artist: 'M83', album: 'Hurry Up, We\'re Dreaming', durationMs: 243000, uri: 'spotify:track:t1', albumArt: 'demo:t1' },
+            { id: 't2', title: 'Turbo Killer', artist: 'Carpenter Brut', album: 'Trilogy', durationMs: 208000, uri: 'spotify:track:t2', albumArt: 'demo:t2' },
+            { id: 't3', title: 'Nightcall', artist: 'Kavinsky', album: 'Drive OST', durationMs: 259000, uri: 'spotify:track:t3', albumArt: 'demo:t3' },
+            { id: 't4', title: 'Blinding Lights', artist: 'The Weeknd', album: 'After Hours', durationMs: 200000, uri: 'spotify:track:t4', albumArt: 'demo:t4' },
+            { id: 't5', title: 'Resonance', artist: 'HOME', album: 'Odyssey', durationMs: 212000, uri: 'spotify:track:t5', albumArt: 'demo:t5' },
+            { id: 't6', title: 'Starboy', artist: 'The Weeknd, Daft Punk', album: 'Starboy', durationMs: 230000, uri: 'spotify:track:t6', albumArt: 'demo:t6' },
+            { id: 't7', title: 'Days of Thunder', artist: 'The Midnight', album: 'Days of Thunder', durationMs: 278000, uri: 'spotify:track:t7', albumArt: 'demo:t7' },
         ]
     },
     {
@@ -87,13 +88,14 @@ const DEMO_PLAYLISTS = [
         description: 'Ambient neon vibes for late night highway drives',
         trackCount: 5,
         accent: '#81c4ff',
+        image: 'demo:t8',
         uri: 'spotify:playlist:demo_night',
         tracks: [
-            { id: 't8', title: 'Sunset', artist: 'The Midnight', album: 'Endless Summer', durationMs: 326000, uri: 'spotify:track:t8' },
-            { id: 't9', title: 'Tech Noir', artist: 'Gunship', album: 'GUNSHIP', durationMs: 297000, uri: 'spotify:track:t9' },
-            { id: 't10', title: 'Running in the 90s', artist: 'Maurizio De Jorio', album: 'Initial D', durationMs: 282000, uri: 'spotify:track:t10' },
-            { id: 't11', title: 'Crockett\'s Theme', artist: 'Jan Hammer', album: 'Miami Vice', durationMs: 215000, uri: 'spotify:track:t11' },
-            { id: 't12', title: 'Far Away', artist: 'Power Glove', album: 'Far Away', durationMs: 252000, uri: 'spotify:track:t12' },
+            { id: 't8', title: 'Sunset', artist: 'The Midnight', album: 'Endless Summer', durationMs: 326000, uri: 'spotify:track:t8', albumArt: 'demo:t8' },
+            { id: 't9', title: 'Tech Noir', artist: 'Gunship', album: 'GUNSHIP', durationMs: 297000, uri: 'spotify:track:t9', albumArt: 'demo:t9' },
+            { id: 't10', title: 'Running in the 90s', artist: 'Maurizio De Jorio', album: 'Initial D', durationMs: 282000, uri: 'spotify:track:t10', albumArt: 'demo:t10' },
+            { id: 't11', title: 'Crockett\'s Theme', artist: 'Jan Hammer', album: 'Miami Vice', durationMs: 215000, uri: 'spotify:track:t11', albumArt: 'demo:t11' },
+            { id: 't12', title: 'Far Away', artist: 'Power Glove', album: 'Far Away', durationMs: 252000, uri: 'spotify:track:t12', albumArt: 'demo:t12' },
         ]
     },
     {
@@ -102,12 +104,13 @@ const DEMO_PLAYLISTS = [
         description: 'V8 roar & electronic energy for unrestricted lanes',
         trackCount: 4,
         accent: '#1db954',
+        image: 'demo:t13',
         uri: 'spotify:playlist:demo_speed',
         tracks: [
-            { id: 't13', title: 'Strobe', artist: 'deadmau5', album: 'For Lack of a Better Name', durationMs: 637000, uri: 'spotify:track:t13' },
-            { id: 't14', title: 'Teardrop', artist: 'Massive Attack', album: 'Mezzanine', durationMs: 329000, uri: 'spotify:track:t14' },
-            { id: 't15', title: 'Fast Car', artist: 'Jonas Blue, Dakota', album: 'Blue', durationMs: 212000, uri: 'spotify:track:t15' },
-            { id: 't16', title: 'Speed King', artist: 'Deep Purple', album: 'In Rock', durationMs: 349000, uri: 'spotify:track:t16' },
+            { id: 't13', title: 'Strobe', artist: 'deadmau5', album: 'For Lack of a Better Name', durationMs: 637000, uri: 'spotify:track:t13', albumArt: 'demo:t13' },
+            { id: 't14', title: 'Teardrop', artist: 'Massive Attack', album: 'Mezzanine', durationMs: 329000, uri: 'spotify:track:t14', albumArt: 'demo:t14' },
+            { id: 't15', title: 'Fast Car', artist: 'Jonas Blue, Dakota', album: 'Blue', durationMs: 212000, uri: 'spotify:track:t15', albumArt: 'demo:t15' },
+            { id: 't16', title: 'Speed King', artist: 'Deep Purple', album: 'In Rock', durationMs: 349000, uri: 'spotify:track:t16', albumArt: 'demo:t16' },
         ]
     },
     {
@@ -118,10 +121,14 @@ const DEMO_PLAYLISTS = [
         accent: '#1ed760',
         uri: 'spotify:playlist:demo_liked',
         tracks: [
-            { id: 't1', title: 'Midnight City', artist: 'M83', album: 'Hurry Up, We\'re Dreaming', durationMs: 243000, uri: 'spotify:track:t1' },
-            { id: 't3', title: 'Nightcall', artist: 'Kavinsky', album: 'Drive OST', durationMs: 259000, uri: 'spotify:track:t3' },
-            { id: 't4', title: 'Blinding Lights', artist: 'The Weeknd', album: 'After Hours', durationMs: 200000, uri: 'spotify:track:t4' },
-            { id: 't8', title: 'Sunset', artist: 'The Midnight', album: 'Endless Summer', durationMs: 326000, uri: 'spotify:track:t8' },
+            { id: 't1', title: 'Midnight City', artist: 'M83', album: 'Hurry Up, We\'re Dreaming', durationMs: 243000, uri: 'spotify:track:t1', albumArt: 'demo:t1' },
+            { id: 't3', title: 'Nightcall', artist: 'Kavinsky', album: 'Drive OST', durationMs: 259000, uri: 'spotify:track:t3', albumArt: 'demo:t3' },
+            { id: 't4', title: 'Blinding Lights', artist: 'The Weeknd', album: 'After Hours', durationMs: 200000, uri: 'spotify:track:t4', albumArt: 'demo:t4' },
+            { id: 't8', title: 'Sunset', artist: 'The Midnight', album: 'Endless Summer', durationMs: 326000, uri: 'spotify:track:t8', albumArt: 'demo:t8' },
+            { id: 't5', title: 'Resonance', artist: 'HOME', album: 'Odyssey', durationMs: 212000, uri: 'spotify:track:t5', albumArt: 'demo:t5' },
+            { id: 't6', title: 'Starboy', artist: 'The Weeknd, Daft Punk', album: 'Starboy', durationMs: 230000, uri: 'spotify:track:t6', albumArt: 'demo:t6' },
+            { id: 't9', title: 'Tech Noir', artist: 'Gunship', album: 'GUNSHIP', durationMs: 297000, uri: 'spotify:track:t9', albumArt: 'demo:t9' },
+            { id: 't13', title: 'Strobe', artist: 'deadmau5', album: 'For Lack of a Better Name', durationMs: 637000, uri: 'spotify:track:t13', albumArt: 'demo:t13' },
         ]
     }
 ];
@@ -430,7 +437,7 @@ class SpotifyClient {
             playlists: this.playlists
                 .filter((pl) => pl && pl.id && !String(pl.uri || '').startsWith('spotify:playlist:demo'))
                 .map((pl) => ({
-                    id: pl.id, name: pl.name, description: pl.description, trackCount: pl.trackCount, uri: pl.uri, accent: pl.accent,
+                    id: pl.id, name: pl.name, description: pl.description, trackCount: pl.trackCount, uri: pl.uri, accent: pl.accent, image: pl.image || '',
                     tracks: pl.tracksLoaded ? pl.tracks.slice(0, CACHE_TRACKS).map(slim) : undefined,
                 })),
             likedTotal: this.likedTotal || 0,
@@ -849,12 +856,15 @@ class SpotifyClient {
             if (got) {
                 const list = items.map((pl, i) => {
                     const count = pl.tracks ? (pl.tracks.total != null ? pl.tracks.total : 0) : (pl.items ? (pl.items.total != null ? pl.items.total : 0) : 0);
+                    const imgs = Array.isArray(pl.images) ? pl.images : [];
+                    const bestImg = imgs.find((im) => im && im.width >= 120 && im.width <= 320) || imgs[imgs.length - 1] || imgs[0];
                     return {
                         id: pl.id,
                         name: decodeHtmlEntities(pl.name),
                         description: decodeHtmlEntities(pl.description || 'User playlist'),
                         trackCount: count,
                         uri: pl.uri,
+                        image: bestImg && bestImg.url ? bestImg.url : '',
                         accent: ['#1db954', '#e1001a', '#81c4ff', '#ff9d00', '#1ed760'][i % 5],
                         tracks: []
                     };
@@ -1065,6 +1075,9 @@ class SpotifyClient {
     }
 
     playLikedSong(index) {
+        if (!this.isOnline && (!this.likedSongs || !this.likedSongs.length)) {
+            return this.playTrack(DEMO_PLAYLISTS[3], index);
+        }
         if (!this.likedSongs || !this.likedSongs[index]) return;
         const trk = this.likedSongs[index];
         this.currentTrack = trk;
@@ -1331,7 +1344,11 @@ class SpotifyClient {
      * A refused command (a free account, a device that does not take it) lets the poll put it back.
      */
     toggleShuffle() {
-        this.shuffle = !this.shuffle;
+        return this.setShuffle(!this.shuffle);
+    }
+
+    setShuffle(on) {
+        this.shuffle = !!on;
         if (this.isOnline) {
             this._holdShuffle = { v: this.shuffle, until: Date.now() + 4000 };
             return this._request('PUT', '/v1/me/player/shuffle?state=' + this.shuffle).then(() => this._pollSoon(600), (e) => {
@@ -1339,6 +1356,43 @@ class SpotifyClient {
                 this._fail('Shuffle', e);
             });
         }
+        return Promise.resolve();
+    }
+
+    /** Start a playlist from the first song, or shuffled (picks a random starting song + turns shuffle on). */
+    playPlaylist(playlist, shuffled) {
+        if (!playlist || !playlist.tracks || !playlist.tracks.length) return Promise.resolve();
+        const idx = shuffled ? Math.floor(Math.random() * playlist.tracks.length) : 0;
+        const go = () => this.playTrack(playlist, idx);
+        if (shuffled) {
+            this.shuffle = true;
+            if (this.isOnline) {
+                this._holdShuffle = { v: true, until: Date.now() + 4000 };
+                return this._request('PUT', '/v1/me/player/shuffle?state=true').catch(() => {}).then(go);
+            }
+        }
+        return Promise.resolve(go());
+    }
+
+    /** Start Liked Songs from the top, or shuffled. */
+    playLiked(shuffled) {
+        const list = (this.likedSongs && this.likedSongs.length) ? this.likedSongs
+            : (this.isDemoMode ? DEMO_PLAYLISTS[3].tracks : []);
+        if (!list.length) return Promise.resolve();
+        const idx = shuffled ? Math.floor(Math.random() * list.length) : 0;
+        if (!this.likedSongs || !this.likedSongs.length) {
+            // Demo mode fallback: play from DEMO_PLAYLISTS[3]
+            return this.playPlaylist(DEMO_PLAYLISTS[3], shuffled);
+        }
+        const go = () => this.playLikedSong(idx);
+        if (shuffled) {
+            this.shuffle = true;
+            if (this.isOnline) {
+                this._holdShuffle = { v: true, until: Date.now() + 4000 };
+                return this._request('PUT', '/v1/me/player/shuffle?state=true').catch(() => {}).then(go);
+            }
+        }
+        return Promise.resolve(go());
     }
 
     toggleRepeat() {
